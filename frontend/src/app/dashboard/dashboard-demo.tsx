@@ -18,7 +18,15 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import type { AppointmentStatus, QueueStatus } from "@/lib/hospital-data";
 
-export function DashboardDemo() {
+export function DashboardDemo({
+  eyebrow = "Hospital Workspace",
+  title = "A shared operations view for appointments, queues, notices, and daily activity",
+  description = "MediVanta brings essential hospital information into one clear workspace so front-desk teams, clinicians, and support staff can stay aligned during the day.",
+}: {
+  eyebrow?: string;
+  title?: string;
+  description?: string;
+}) {
   const {
     activeQueueEntries,
     getDepartmentName,
@@ -60,11 +68,7 @@ export function DashboardDemo() {
 
   return (
     <div className="min-w-0 max-w-full space-y-6 md:space-y-8">
-      <PageHeader
-        eyebrow="Hospital Workspace"
-        title="A shared operations view for appointments, queues, notices, and daily activity"
-        description="MediVanta brings essential hospital information into one clear workspace so front-desk teams, clinicians, and support staff can stay aligned during the day."
-      />
+      <PageHeader eyebrow={eyebrow} title={title} description={description} />
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         {statCards.map((stat) => (

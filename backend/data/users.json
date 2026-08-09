@@ -1,0 +1,57 @@
+[
+  {
+    "id": "user-patient",
+    "organizationId": "org-medivanta-general",
+    "email": "patient@medivanta.demo",
+    "displayName": "Ritesh Nair",
+    "role": "patient",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "patientName": "Ritesh Nair"
+  },
+  {
+    "id": "user-doctor",
+    "organizationId": "org-medivanta-general",
+    "email": "doctor@medivanta.demo",
+    "displayName": "Dr. Vivek Menon",
+    "role": "doctor",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "doctorId": "doc-vivek-menon"
+  },
+  {
+    "id": "user-receptionist",
+    "organizationId": "org-medivanta-general",
+    "email": "receptionist@medivanta.demo",
+    "displayName": "Anika Rao",
+    "role": "receptionist",
+    "staffStatus": "Active",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+  },
+  {
+    "id": "user-laboratory",
+    "organizationId": "org-medivanta-general",
+    "email": "lab@medivanta.demo",
+    "displayName": "Nisha Balan",
+    "role": "laboratory",
+    "departmentId": "dept-laboratory",
+    "staffStatus": "Active",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+  },
+  {
+    "id": "user-pharmacist",
+    "organizationId": "org-medivanta-general",
+    "email": "pharmacist@medivanta.demo",
+    "displayName": "Rahul Sethi",
+    "role": "pharmacist",
+    "staffStatus": "Active",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+  },
+  {
+    "id": "user-admin",
+    "organizationId": "org-medivanta-general",
+    "email": "admin@medivanta.demo",
+    "displayName": "Priya Deshmukh",
+    "role": "administrator",
+    "staffStatus": "Active",
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+  }
+]

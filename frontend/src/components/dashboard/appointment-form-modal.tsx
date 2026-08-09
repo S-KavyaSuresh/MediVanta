@@ -15,25 +15,33 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import {
+  getCurrentLocalDateIso,
   HOSPITAL_TODAY,
+  isPastLocalTimeSlot,
   type AppointmentDraft,
   type AppointmentRecord,
+  type DepartmentRecord,
   type DoctorRecord,
 } from "@/lib/hospital-data";
 import { cn } from "@/lib/utils";
 
 type AppointmentFormModalProps = {
   open: boolean;
+  organizationName: string;
+  departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
   initialAppointment?: AppointmentRecord | null;
+  patientName?: string;
+  patientMode?: boolean;
   onClose: () => void;
   onSubmit: (
     draft: AppointmentDraft,
-  ) => {
+  ) => Promise<{
     isValid: boolean;
     errors: Partial<Record<keyof AppointmentDraft, string>>;
-  };
+    message?: string;
+  }>;
 };
 
 const emptyDraft: AppointmentDraft = {
@@ -233,7 +241,7 @@ type DatePickerFieldProps = {
   onChange: (value: string) => void;
 };
 
-function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
+export function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -244,7 +252,7 @@ function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
   useDismissablePopover(open, () => setOpen(false), [triggerRef, popoverRef]);
 
   const calendarDays = useMemo(() => getCalendarDays(visibleMonth), [visibleMonth]);
-  const todayDate = HOSPITAL_TODAY;
+  const todayDate = getCurrentLocalDateIso();
 
   return (
     <div className="relative">
@@ -259,14 +267,14 @@ function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
         open={open}
         hasError={Boolean(error)}
         onClick={() => {
-          setVisibleMonth(value ? parseIsoDate(value) : parseIsoDate(HOSPITAL_TODAY));
+          setVisibleMonth(value ? parseIsoDate(value) : parseIsoDate(todayDate));
           setOpen((current) => !current);
         }}
       />
       {open ? (
         <div
           ref={popoverRef}
-          className="absolute left-0 right-0 z-20 mt-2 max-w-full rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-4 shadow-2xl sm:right-auto sm:w-[20rem]"
+          className="relative z-20 mt-2 max-w-full rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-4 shadow-2xl sm:absolute sm:left-0 sm:right-auto sm:w-[20rem]"
         >
           <div className="flex items-center justify-between gap-2">
             <button
@@ -313,7 +321,7 @@ function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
               const isoDate = toIsoDate(day);
               const isSelected = isoDate === value;
               const isToday = isoDate === todayDate;
-              const isDisabled = isoDate < HOSPITAL_TODAY;
+              const isDisabled = isoDate < todayDate;
 
               return (
                 <button
@@ -353,13 +361,15 @@ function DatePickerField({ value, error, onChange }: DatePickerFieldProps) {
 type TimePickerFieldProps = {
   value: string;
   error?: string;
+  selectedDate: string;
   unavailableSlots: Set<string>;
   onChange: (value: string) => void;
 };
 
-function TimePickerField({
+export function TimePickerField({
   value,
   error,
+  selectedDate,
   unavailableSlots,
   onChange,
 }: TimePickerFieldProps) {
@@ -386,7 +396,7 @@ function TimePickerField({
       {open ? (
         <div
           ref={popoverRef}
-          className="absolute left-0 right-0 z-20 mt-2 max-w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] shadow-2xl sm:right-auto sm:w-[20rem]"
+          className="relative z-20 mt-2 max-w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] shadow-2xl sm:absolute sm:left-0 sm:right-auto sm:w-[20rem]"
         >
           <div className="border-b border-[color:var(--border)] px-4 py-3">
             <p className="text-sm font-semibold text-[color:var(--foreground)]">Select a time slot</p>
@@ -397,7 +407,11 @@ function TimePickerField({
           <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto p-4">
             {timeSlots.map((slot) => {
               const isSelected = slot === value;
-              const isUnavailable = unavailableSlots.has(slot) && !isSelected;
+              const isUnavailable =
+                (!isSelected && unavailableSlots.has(slot)) ||
+                (!isSelected &&
+                  Boolean(selectedDate) &&
+                  isPastLocalTimeSlot(selectedDate, slot));
 
               return (
                 <button
@@ -423,9 +437,6 @@ function TimePickerField({
           </div>
         </div>
       ) : null}
-      <p className="mt-2 text-xs text-[color:var(--muted-foreground)]">
-        Unavailable slots are disabled when the selected doctor already has an appointment.
-      </p>
       {error ? <p className="mt-2 text-sm text-[color:var(--danger)]">{error}</p> : null}
     </div>
   );
@@ -433,16 +444,38 @@ function TimePickerField({
 
 export function AppointmentFormModal({
   open,
+  organizationName,
+  departments,
   doctors,
   appointments,
   initialAppointment,
+  patientName,
+  patientMode = false,
   onClose,
   onSubmit,
 }: AppointmentFormModalProps) {
   const [draft, setDraft] = useState<AppointmentDraft>(() =>
-    getDraftFromAppointment(initialAppointment),
+    initialAppointment
+      ? getDraftFromAppointment(initialAppointment)
+      : {
+          ...emptyDraft,
+          patientName: patientName ?? "",
+        },
   );
   const [errors, setErrors] = useState<Partial<Record<keyof AppointmentDraft, string>>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(
+    initialAppointment?.departmentId ?? "",
+  );
+
+  const visibleDoctors = useMemo(
+    () =>
+      patientMode && selectedDepartmentId
+        ? doctors.filter((doctor) => doctor.departmentId === selectedDepartmentId)
+        : doctors,
+    [doctors, patientMode, selectedDepartmentId],
+  );
 
   const selectedDoctor = doctors.find((doctor) => doctor.id === draft.doctorId);
   const unavailableTimeSlots = useMemo(() => {
@@ -475,36 +508,78 @@ export function AppointmentFormModal({
       open={open}
       onClose={onClose}
       title={initialAppointment ? "Update appointment" : "Create appointment"}
-      description="Capture patient details, assign the right doctor, and keep the hospital schedule aligned."
+      description={
+        patientMode
+          ? "Choose your hospital, department, doctor, date, and time to confirm a new appointment."
+          : "Capture patient details, assign the right doctor, and keep the hospital schedule aligned."
+      }
     >
       <form
         className="space-y-4"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          const result = onSubmit(draft);
+          setSubmitting(true);
+          const result = await onSubmit(draft);
+          setSubmitting(false);
           setErrors(result.errors);
+          setSubmitError(result.message ?? null);
 
           if (result.isValid) {
+            setSubmitError(null);
             onClose();
           }
         }}
       >
-        <div>
-          <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
-            Patient name
-          </label>
-          <Input
-            aria-label="Patient name"
-            placeholder="Patient name"
-            value={draft.patientName}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, patientName: event.target.value }))
-            }
-          />
-          {errors.patientName ? (
-            <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.patientName}</p>
-          ) : null}
-        </div>
+        {patientMode ? (
+          <>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+                Hospital
+              </label>
+              <Select value={organizationName} disabled aria-label="Hospital">
+                <option value={organizationName}>{organizationName}</option>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+                Department or service
+              </label>
+              <Select
+                aria-label="Department"
+                value={selectedDepartmentId}
+                onChange={(event) => {
+                  const nextDepartmentId = event.target.value;
+                  setSelectedDepartmentId(nextDepartmentId);
+                  setDraft((current) => ({ ...current, doctorId: "" }));
+                }}
+              >
+                <option value="">Select department</option>
+                {departments.map((department) => (
+                  <option key={department.id} value={department.id}>
+                    {department.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </>
+        ) : (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+              Patient name
+            </label>
+            <Input
+              aria-label="Patient name"
+              placeholder="Patient name"
+              value={draft.patientName}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, patientName: event.target.value }))
+              }
+            />
+            {errors.patientName ? (
+              <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.patientName}</p>
+            ) : null}
+          </div>
+        )}
 
         <div>
           <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
@@ -518,7 +593,7 @@ export function AppointmentFormModal({
             }
           >
             <option value="">Select doctor</option>
-            {doctors.map((doctor) => (
+            {visibleDoctors.map((doctor) => (
               <option key={doctor.id} value={doctor.id}>
                 {doctor.name} - {doctor.specialization}
               </option>
@@ -545,6 +620,7 @@ export function AppointmentFormModal({
           <TimePickerField
             value={draft.appointmentTime}
             error={errors.appointmentTime}
+            selectedDate={draft.appointmentDate}
             unavailableSlots={unavailableTimeSlots}
             onChange={(value) =>
               setDraft((current) => ({ ...current, appointmentTime: value }))
@@ -553,8 +629,15 @@ export function AppointmentFormModal({
         </div>
 
         <div className="flex justify-end">
-          <Button type="submit">
-            {initialAppointment ? "Save changes" : "Create appointment"}
+          {submitError ? (
+            <p className="mr-auto max-w-md text-sm text-[color:var(--danger)]">{submitError}</p>
+          ) : null}
+          <Button type="submit" disabled={submitting}>
+            {submitting
+              ? "Saving..."
+              : initialAppointment
+                ? "Save changes"
+                : "Create appointment"}
           </Button>
         </div>
       </form>

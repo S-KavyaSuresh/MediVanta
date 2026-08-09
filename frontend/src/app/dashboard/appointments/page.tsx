@@ -131,14 +131,21 @@ export default function AppointmentsPage() {
                       size="sm"
                       variant={status === "Cancelled" ? "danger" : "secondary"}
                       className="min-w-[5rem] justify-center"
-                      onClick={() => {
-                        const result = setAppointmentStatus(row.id, status);
+                      onClick={async () => {
+                        const result = await setAppointmentStatus(row.id, status);
                         if (result.ok) {
                           pushToast(
                             "Appointment updated",
                             `${row.patientName} is now marked as ${status}.`,
                           );
+                          return;
                         }
+
+                        pushToast(
+                          "Unable to update appointment",
+                          result.message ??
+                            "Please review the appointment details and try again.",
+                        );
                       }}
                     >
                       {actionLabels[status] ?? status}
@@ -160,6 +167,8 @@ export default function AppointmentsPage() {
       <AppointmentFormModal
         key={`${editingId ?? "new"}-${modalOpen ? "open" : "closed"}`}
         open={modalOpen}
+        organizationName={state.organization.name}
+        departments={state.departments}
         doctors={state.doctors.filter((doctor) => doctor.status !== "Off duty")}
         appointments={state.appointments}
         initialAppointment={editingAppointment}

@@ -3,10 +3,16 @@ import type {
   AppointmentStatus,
   DepartmentStatus,
   DoctorStatus,
+  LabRequestStatus,
   QueueStatus,
 } from "@/lib/hospital-data";
 
-type StatusValue = AppointmentStatus | DepartmentStatus | DoctorStatus | QueueStatus;
+type StatusValue =
+  | AppointmentStatus
+  | DepartmentStatus
+  | DoctorStatus
+  | QueueStatus
+  | LabRequestStatus;
 
 export function StatusBadge({ status }: { status: StatusValue }) {
   const variant =
@@ -21,13 +27,16 @@ export function StatusBadge({ status }: { status: StatusValue }) {
             status === "Consulting" ||
             status === "Called" ||
             status === "Emergency duty" ||
-            status === "Emergency priority"
+            status === "Emergency priority" ||
+            status === "Sample Collected" ||
+            status === "Processing"
           ? "info"
           : status === "Busy" ||
               status === "Limited" ||
               status === "Waiting" ||
               status === "Scheduled" ||
-              status === "On break"
+              status === "On break" ||
+              status === "Requested"
             ? "warning"
             : "neutral";
 

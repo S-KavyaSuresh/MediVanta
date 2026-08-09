@@ -1,14 +1,26 @@
 "use client";
 
 import { Building2, MapPin, Users } from "lucide-react";
+import { useState } from "react";
 
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { useAuth } from "@/components/providers/auth-provider";
+import { useToast } from "@/components/providers/toast-provider";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 
 export default function DepartmentsPage() {
-  const { departmentSummaries } = useHospitalData();
+  const { createDepartment, departmentSummaries } = useHospitalData();
+  const { session } = useAuth();
+  const { pushToast } = useToast();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const canManageDepartments = session.user.role === "administrator";
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -16,6 +28,11 @@ export default function DepartmentsPage() {
         eyebrow="Departments"
         title="Clinical departments and current operational load"
         description="Track department locations, current operating status, available clinicians, and active queue totals across the hospital."
+        action={
+          canManageDepartments ? (
+            <Button onClick={() => setModalOpen(true)}>+ Create Department</Button>
+          ) : null
+        }
       />
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -68,6 +85,78 @@ export default function DepartmentsPage() {
           </Card>
         ))}
       </div>
+
+      <Modal
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setFieldErrors({});
+        }}
+        title="Create department"
+        description="Add a department for the current hospital organization."
+      >
+        <form
+          className="space-y-4"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setFieldErrors({});
+            const formData = new FormData(event.currentTarget);
+            const result = await createDepartment({
+              code: String(formData.get("code") ?? ""),
+              name: String(formData.get("name") ?? ""),
+              description: String(formData.get("description") ?? ""),
+              status: String(formData.get("status") ?? "Operational") as
+                | "Operational"
+                | "Busy"
+                | "Limited"
+                | "Emergency priority",
+              location: String(formData.get("location") ?? ""),
+            });
+
+            if (!result.ok) {
+              setFieldErrors(result.fieldErrors ?? {});
+              pushToast("Unable to create department", result.message ?? "Please review the department details.");
+              return;
+            }
+
+            pushToast("Department created", "The new department is now available in the hospital directory.");
+            setModalOpen(false);
+          }}
+        >
+          <div>
+            <label className="mb-2 block text-sm font-medium">Code</label>
+            <Input name="code" />
+            {fieldErrors.code ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.code}</p> : null}
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Name</label>
+            <Input name="name" />
+            {fieldErrors.name ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.name}</p> : null}
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Description</label>
+            <Input name="description" />
+            {fieldErrors.description ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.description}</p> : null}
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Status</label>
+            <Select name="status" defaultValue="Operational">
+              <option value="Operational">Operational</option>
+              <option value="Busy">Busy</option>
+              <option value="Limited">Limited</option>
+              <option value="Emergency priority">Emergency priority</option>
+            </Select>
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Location</label>
+            <Input name="location" />
+            {fieldErrors.location ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.location}</p> : null}
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit">Create Department</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

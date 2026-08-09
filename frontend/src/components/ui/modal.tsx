@@ -24,12 +24,12 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/45 p-3 sm:flex sm:items-center sm:justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dialog-title"
     >
-      <div className="w-full max-w-lg rounded-3xl border border-[color:var(--border)] bg-[color:var(--surface)] p-6 shadow-2xl">
+      <div className="mx-auto my-4 w-full max-w-lg rounded-3xl border border-[color:var(--border)] bg-[color:var(--surface)] p-6 shadow-2xl sm:my-0 sm:max-h-[calc(100vh-2rem)] sm:overflow-y-auto">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 id="dialog-title" className="text-xl font-semibold">

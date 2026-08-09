@@ -1,0 +1,56 @@
+"use client";
+
+import { createContext, useContext, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { normalizeAuthSession, type AuthSession, type Capability } from "@/lib/auth";
+import { apiRequest } from "@/lib/api";
+
+type AuthContextValue = {
+  session: AuthSession;
+  hasCapability: (capability: Capability) => boolean;
+  logout: () => Promise<void>;
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function AuthProvider({
+  children,
+  initialSession,
+}: {
+  children: React.ReactNode;
+  initialSession: AuthSession;
+}) {
+  const [session, setSession] = useState(() => normalizeAuthSession(initialSession));
+  const router = useRouter();
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      session,
+      hasCapability: (capability) => session.permissions.includes(capability),
+      logout: async () => {
+        await apiRequest("/api/auth/logout", { method: "POST" });
+        setSession((current) => ({
+          ...current,
+          permissions: [],
+          landingPath: "/login",
+        }));
+        router.push("/login");
+        router.refresh();
+      },
+    }),
+    [router, session],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
+
+  return context;
+}

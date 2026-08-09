@@ -94,14 +94,21 @@ export default function QueueBoardPage() {
                       key={status}
                       size="sm"
                       variant="secondary"
-                      onClick={() => {
-                        const result = advanceQueue(row.id, status);
+                      onClick={async () => {
+                        const result = await advanceQueue(row.id, status);
                         if (result.ok) {
                           pushToast(
                             "Queue updated",
                             `${row.patientName} moved to ${status}.`,
                           );
+                          return;
                         }
+
+                        pushToast(
+                          "Unable to update queue",
+                          result.message ??
+                            "Please review the queue status and try again.",
+                        );
                       }}
                     >
                       {status}

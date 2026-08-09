@@ -1,5 +1,8 @@
-import { DashboardDemo } from "./dashboard-demo";
+import { redirect } from "next/navigation";
 
-export default function DashboardPage() {
-  return <DashboardDemo />;
+import { requireServerSession } from "@/lib/server-auth";
+
+export default async function DashboardPage() {
+  const session = await requireServerSession();
+  redirect(session.landingPath);
 }

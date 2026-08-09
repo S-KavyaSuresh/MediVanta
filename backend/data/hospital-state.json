@@ -1,0 +1,526 @@
+{
+  "organization": {
+    "id": "org-medivanta-general",
+    "name": "MediVanta General Hospital",
+    "slug": "medivanta-general"
+  },
+  "departments": [
+    {
+      "id": "dept-general-medicine",
+      "organizationId": "org-medivanta-general",
+      "code": "GM",
+      "name": "General Medicine",
+      "description": "Adult consultations, follow-up care, and chronic care planning.",
+      "status": "Operational",
+      "location": "North Wing, Level 2"
+    },
+    {
+      "id": "dept-cardiology",
+      "organizationId": "org-medivanta-general",
+      "code": "CARD",
+      "name": "Cardiology",
+      "description": "Heart health consultations, diagnostics, and recovery planning.",
+      "status": "Busy",
+      "location": "Heart Centre, Level 3"
+    },
+    {
+      "id": "dept-pediatrics",
+      "organizationId": "org-medivanta-general",
+      "code": "PED",
+      "name": "Pediatrics",
+      "description": "Child wellness, family care, and pediatric follow-up visits.",
+      "status": "Operational",
+      "location": "Family Care Block, Level 1"
+    },
+    {
+      "id": "dept-orthopedics",
+      "organizationId": "org-medivanta-general",
+      "code": "ORTHO",
+      "name": "Orthopedics",
+      "description": "Musculoskeletal care, fracture review, and post-procedure follow-up.",
+      "status": "Operational",
+      "location": "Surgical Wing, Level 2"
+    },
+    {
+      "id": "dept-neurology",
+      "organizationId": "org-medivanta-general",
+      "code": "NEURO",
+      "name": "Neurology",
+      "description": "Neurology consultations, symptom review, and specialist assessment.",
+      "status": "Limited",
+      "location": "Specialty Clinic, Level 4"
+    },
+    {
+      "id": "dept-dermatology",
+      "organizationId": "org-medivanta-general",
+      "code": "DERM",
+      "name": "Dermatology",
+      "description": "Skin health consultations and follow-up care.",
+      "status": "Operational",
+      "location": "Outpatient Wing, Level 2"
+    },
+    {
+      "id": "dept-ent",
+      "organizationId": "org-medivanta-general",
+      "code": "ENT",
+      "name": "ENT",
+      "description": "Ear, nose, and throat specialist services.",
+      "status": "Operational",
+      "location": "Specialty Clinic, Level 3"
+    },
+    {
+      "id": "dept-ophthalmology",
+      "organizationId": "org-medivanta-general",
+      "code": "OPH",
+      "name": "Ophthalmology",
+      "description": "Eye examinations, specialist consultations, and follow-up visits.",
+      "status": "Operational",
+      "location": "Vision Centre, Level 2"
+    },
+    {
+      "id": "dept-radiology",
+      "organizationId": "org-medivanta-general",
+      "code": "RAD",
+      "name": "Radiology",
+      "description": "Imaging coordination, scanning workflow, and report preparation.",
+      "status": "Busy",
+      "location": "Diagnostics Block, Ground Floor"
+    },
+    {
+      "id": "dept-laboratory",
+      "organizationId": "org-medivanta-general",
+      "code": "LAB",
+      "name": "Laboratory",
+      "description": "Sample collection, test processing, and results support.",
+      "status": "Operational",
+      "location": "Diagnostics Block, Ground Floor"
+    },
+    {
+      "id": "dept-emergency",
+      "organizationId": "org-medivanta-general",
+      "code": "ER",
+      "name": "Emergency",
+      "description": "Urgent assessment, acute care intake, and emergency support.",
+      "status": "Emergency priority",
+      "location": "Emergency Entrance, Ground Floor"
+    }
+  ],
+  "doctors": [
+    {
+      "id": "doc-anaya-sharma",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Anaya Sharma",
+      "specialization": "Internal Medicine",
+      "departmentId": "dept-general-medicine",
+      "status": "Consulting",
+      "availability": "Consulting today",
+      "shiftLabel": "08:00 - 14:00"
+    },
+    {
+      "id": "doc-rohan-mehta",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Rohan Mehta",
+      "specialization": "Emergency Medicine",
+      "departmentId": "dept-emergency",
+      "status": "Emergency duty",
+      "availability": "On emergency rotation",
+      "shiftLabel": "07:00 - 19:00"
+    },
+    {
+      "id": "doc-meera-iqbal",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Meera Iqbal",
+      "specialization": "Pediatrics",
+      "departmentId": "dept-pediatrics",
+      "status": "Available",
+      "availability": "Follow-up clinic open",
+      "shiftLabel": "10:00 - 18:00"
+    },
+    {
+      "id": "doc-vivek-menon",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Vivek Menon",
+      "specialization": "Cardiology",
+      "departmentId": "dept-cardiology",
+      "status": "Available",
+      "availability": "Next clinic session tomorrow",
+      "shiftLabel": "09:00 - 17:00"
+    },
+    {
+      "id": "doc-neha-sen",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Neha Sen",
+      "specialization": "Radiology",
+      "departmentId": "dept-radiology",
+      "status": "Consulting",
+      "availability": "Imaging sessions in progress",
+      "shiftLabel": "08:00 - 16:00"
+    },
+    {
+      "id": "doc-kiran-iyer",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Kiran Iyer",
+      "specialization": "Orthopedics",
+      "departmentId": "dept-orthopedics",
+      "status": "On break",
+      "availability": "Returns at 13:00",
+      "shiftLabel": "08:00 - 16:00"
+    },
+    {
+      "id": "doc-sana-reddy",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Sana Reddy",
+      "specialization": "Dermatology",
+      "departmentId": "dept-dermatology",
+      "status": "Off duty",
+      "availability": "Next clinic tomorrow",
+      "shiftLabel": "Off duty today"
+    },
+    {
+      "id": "doc-arjun-roy",
+      "organizationId": "org-medivanta-general",
+      "name": "Dr. Arjun Roy",
+      "specialization": "Neurology",
+      "departmentId": "dept-neurology",
+      "status": "Available",
+      "availability": "Review clinic active",
+      "shiftLabel": "11:00 - 19:00"
+    }
+  ],
+  "appointments": [
+    {
+      "id": "APT-2018",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "departmentId": "dept-pediatrics",
+      "appointmentDate": "2026-08-10",
+      "appointmentTime": "08:00",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2017",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "departmentId": "dept-pediatrics",
+      "appointmentDate": "2026-08-12",
+      "appointmentTime": "10:00",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2016",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-10",
+      "appointmentTime": "16:30",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2015",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-20",
+      "appointmentTime": "16:30",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2014",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-18",
+      "appointmentTime": "16:30",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2013",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "23:35",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2012",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-16",
+      "appointmentTime": "16:30",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2011",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "23:34",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2010",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-14",
+      "appointmentTime": "16:30",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2009",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "23:33",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2008",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-14",
+      "appointmentTime": "16:00",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2007",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-12",
+      "appointmentTime": "15:00",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2001",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Aarav Verma",
+      "doctorId": "doc-vivek-menon",
+      "departmentId": "dept-cardiology",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "09:30",
+      "status": "Checked in"
+    },
+    {
+      "id": "APT-2002",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Sana Khan",
+      "doctorId": "doc-neha-sen",
+      "departmentId": "dept-radiology",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "10:00",
+      "status": "In consultation"
+    },
+    {
+      "id": "APT-2003",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Maya Joseph",
+      "doctorId": "doc-anaya-sharma",
+      "departmentId": "dept-general-medicine",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "10:45",
+      "status": "Completed"
+    },
+    {
+      "id": "APT-2004",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "departmentId": "dept-pediatrics",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "11:15",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2005",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ishita Das",
+      "doctorId": "doc-kiran-iyer",
+      "departmentId": "dept-orthopedics",
+      "appointmentDate": "2026-08-09",
+      "appointmentTime": "12:10",
+      "status": "Scheduled"
+    },
+    {
+      "id": "APT-2006",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Kabir Patel",
+      "doctorId": "doc-arjun-roy",
+      "departmentId": "dept-neurology",
+      "appointmentDate": "2026-08-10",
+      "appointmentTime": "14:00",
+      "status": "Scheduled"
+    }
+  ],
+  "queueEntries": [
+    {
+      "id": "Q-3101",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Aarav Verma",
+      "departmentId": "dept-cardiology",
+      "doctorId": "doc-vivek-menon",
+      "appointmentId": "APT-2001",
+      "status": "Waiting",
+      "createdAt": "09:18",
+      "updatedAt": "09:18"
+    },
+    {
+      "id": "Q-3102",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Sana Khan",
+      "departmentId": "dept-radiology",
+      "doctorId": "doc-neha-sen",
+      "appointmentId": "APT-2002",
+      "status": "In consultation",
+      "createdAt": "09:48",
+      "updatedAt": "10:06"
+    },
+    {
+      "id": "Q-3103",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Maya Joseph",
+      "departmentId": "dept-general-medicine",
+      "doctorId": "doc-anaya-sharma",
+      "appointmentId": "APT-2003",
+      "status": "Completed",
+      "createdAt": "10:11",
+      "updatedAt": "10:42"
+    }
+  ],
+  "configuredSupportLines": 9,
+  "labTests": [
+    {
+      "id": "lab-cbc",
+      "organizationId": "org-medivanta-general",
+      "name": "Complete Blood Count (CBC)"
+    },
+    {
+      "id": "lab-glucose",
+      "organizationId": "org-medivanta-general",
+      "name": "Blood Glucose"
+    },
+    {
+      "id": "lab-lipid",
+      "organizationId": "org-medivanta-general",
+      "name": "Lipid Profile"
+    },
+    {
+      "id": "lab-thyroid",
+      "organizationId": "org-medivanta-general",
+      "name": "Thyroid Profile"
+    },
+    {
+      "id": "lab-liver",
+      "organizationId": "org-medivanta-general",
+      "name": "Liver Function Test"
+    },
+    {
+      "id": "lab-kidney",
+      "organizationId": "org-medivanta-general",
+      "name": "Kidney Function Test"
+    }
+  ],
+  "labRequests": [
+    {
+      "id": "LABREQ-5006",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-glucose",
+      "testName": "Blood Glucose",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-11",
+      "requestedTime": "11:00",
+      "status": "Requested",
+      "createdAt": "2026-08-09T18:30:11.998Z"
+    },
+    {
+      "id": "LABREQ-5005",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-liver",
+      "testName": "Liver Function Test",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-19",
+      "requestedTime": "11:30",
+      "status": "Requested",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "createdAt": "2026-08-09T09:00:00.000Z"
+    },
+    {
+      "id": "LABREQ-5004",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-liver",
+      "testName": "Liver Function Test",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-17",
+      "requestedTime": "11:30",
+      "status": "Requested",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "createdAt": "2026-08-09T09:00:00.000Z"
+    },
+    {
+      "id": "LABREQ-5003",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-liver",
+      "testName": "Liver Function Test",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-15",
+      "requestedTime": "11:30",
+      "status": "Requested",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "createdAt": "2026-08-09T09:00:00.000Z"
+    },
+    {
+      "id": "LABREQ-5002",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-glucose",
+      "testName": "Blood Glucose",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-15",
+      "requestedTime": "11:00",
+      "status": "Requested",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "createdAt": "2026-08-09T09:00:00.000Z"
+    },
+    {
+      "id": "LABREQ-5001",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-cbc",
+      "testName": "Complete Blood Count (CBC)",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-11",
+      "requestedTime": "09:00",
+      "status": "Scheduled",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "createdAt": "2026-08-09T09:00:00.000Z"
+    }
+  ]
+}

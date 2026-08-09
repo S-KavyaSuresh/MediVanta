@@ -3,6 +3,33 @@ import { clinicians } from "@/lib/sample-data";
 export const HOSPITAL_STORAGE_KEY = "medivanta-hospital-state";
 export const HOSPITAL_TODAY = "2026-08-09";
 
+export function getCurrentLocalDateIso() {
+  return HOSPITAL_TODAY;
+}
+
+function getCurrentLocalTimeValue(now = new Date()) {
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function getSlotTimeValue(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+export function isPastLocalTimeSlot(date: string, time: string, now = new Date()) {
+  const currentDate = getCurrentLocalDateIso();
+
+  if (date < currentDate) {
+    return true;
+  }
+
+  if (date > currentDate) {
+    return false;
+  }
+
+  return getSlotTimeValue(time) <= getCurrentLocalTimeValue(now);
+}
+
 export type DepartmentStatus =
   | "Operational"
   | "Busy"
@@ -24,6 +51,13 @@ export type AppointmentStatus =
   | "Cancelled";
 
 export type QueueStatus = "Waiting" | "Called" | "In consultation" | "Completed";
+
+export type LabRequestStatus =
+  | "Requested"
+  | "Scheduled"
+  | "Sample Collected"
+  | "Processing"
+  | "Completed";
 
 export type DepartmentRecord = {
   id: string;
@@ -65,11 +99,39 @@ export type QueueEntryRecord = {
   updatedAt: string;
 };
 
+export type LabTestRecord = {
+  id: string;
+  organizationId?: string;
+  name: string;
+};
+
+export type LabRequestRecord = {
+  id: string;
+  patientId?: string;
+  hospitalId?: string;
+  organizationId?: string;
+  patientName: string;
+  testId: string;
+  testName: string;
+  departmentId: string;
+  requestedDate: string;
+  requestedTime: string;
+  status: LabRequestStatus;
+  createdAt?: string;
+};
+
 export type HospitalState = {
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
   queueEntries: QueueEntryRecord[];
+  labTests: LabTestRecord[];
+  labRequests: LabRequestRecord[];
   configuredSupportLines: number;
 };
 
@@ -78,6 +140,12 @@ export type AppointmentDraft = {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
+};
+
+export type LabRequestDraft = {
+  testId: string;
+  requestedDate: string;
+  requestedTime: string;
 };
 
 export type SearchGroup = {
@@ -346,12 +414,41 @@ const queueSeed: QueueEntryRecord[] = [
   },
 ];
 
+const labTestsSeed: LabTestRecord[] = [
+  { id: "lab-cbc", name: "Complete Blood Count (CBC)" },
+  { id: "lab-glucose", name: "Blood Glucose" },
+  { id: "lab-lipid", name: "Lipid Profile" },
+  { id: "lab-thyroid", name: "Thyroid Profile" },
+  { id: "lab-liver", name: "Liver Function Test" },
+  { id: "lab-kidney", name: "Kidney Function Test" },
+];
+
+const labRequestsSeed: LabRequestRecord[] = [
+  {
+    id: "LABREQ-5001",
+    patientName: "Ritesh Nair",
+    testId: "lab-cbc",
+    testName: "Complete Blood Count (CBC)",
+    departmentId: "dept-laboratory",
+    requestedDate: "2026-08-11",
+    requestedTime: "09:00",
+    status: "Scheduled",
+  },
+];
+
 export function createInitialHospitalState(): HospitalState {
   return {
+    organization: {
+      id: "org-medivanta-general",
+      name: "MediVanta General Hospital",
+      slug: "medivanta-general",
+    },
     departments: structuredClone(departmentsSeed),
     doctors: structuredClone(doctorsSeed),
     appointments: structuredClone(appointmentsSeed),
     queueEntries: structuredClone(queueSeed),
+    labTests: structuredClone(labTestsSeed),
+    labRequests: structuredClone(labRequestsSeed),
     configuredSupportLines: 9,
   };
 }
@@ -437,6 +534,7 @@ export function validateAppointmentDraft(
   editingId?: string,
 ) {
   const errors: Partial<Record<keyof AppointmentDraft, string>> = {};
+  const currentLocalDate = getCurrentLocalDateIso();
 
   if (draft.patientName.trim().length < 2) {
     errors.patientName = "Enter a patient name with at least 2 characters.";
@@ -449,7 +547,7 @@ export function validateAppointmentDraft(
 
   if (!draft.appointmentDate) {
     errors.appointmentDate = "Select an appointment date.";
-  } else if (draft.appointmentDate < HOSPITAL_TODAY) {
+  } else if (draft.appointmentDate < currentLocalDate) {
     errors.appointmentDate = "Appointment date cannot be in the past.";
   }
 
@@ -457,6 +555,8 @@ export function validateAppointmentDraft(
     errors.appointmentTime = "Select an appointment time.";
   } else if (!/^\d{2}:\d{2}$/.test(draft.appointmentTime)) {
     errors.appointmentTime = "Select a valid appointment time.";
+  } else if (draft.appointmentDate && isPastLocalTimeSlot(draft.appointmentDate, draft.appointmentTime)) {
+    errors.appointmentTime = "Select a future appointment time.";
   }
 
   const duplicate = state.appointments.find((appointment) => {

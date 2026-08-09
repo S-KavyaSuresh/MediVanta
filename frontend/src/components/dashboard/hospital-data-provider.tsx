@@ -4,71 +4,80 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useReducer,
   useState,
 } from "react";
 
+import { apiRequest } from "@/lib/api";
 import {
-  createAppointmentId,
-  createInitialHospitalState,
-  createQueueEntryFromAppointment,
   getActiveQueueEntries,
   getAllowedAppointmentStatuses,
   getAllowedQueueStatuses,
-  getAppointmentById,
   getDashboardMetrics,
   getDepartmentById,
   getDepartmentSummaries,
   getDoctorById,
   getSearchGroups,
-  HOSPITAL_STORAGE_KEY,
+  type DepartmentStatus,
+  type DoctorStatus,
   type AppointmentDraft,
-  type AppointmentRecord,
+  type LabRequestDraft,
   type AppointmentStatus,
   type HospitalState,
   type QueueStatus,
   validateAppointmentDraft,
 } from "@/lib/hospital-data";
+import type { SafeUser, UserRole } from "@/lib/auth";
 
-type HospitalAction =
-  | { type: "hydrate"; payload: HospitalState }
-  | { type: "createAppointment"; payload: AppointmentDraft }
-  | {
-      type: "updateAppointment";
-      payload: { appointmentId: string; draft: AppointmentDraft };
-    }
-  | {
-      type: "setAppointmentStatus";
-      payload: { appointmentId: string; status: AppointmentStatus };
-    }
-  | {
-      type: "advanceQueue";
-      payload: { queueEntryId: string; status: QueueStatus };
-    };
+type ValidationResult = ReturnType<typeof validateAppointmentDraft> & {
+  message?: string;
+};
 
-type ValidationResult = ReturnType<typeof validateAppointmentDraft>;
+type HospitalMeta = {
+  userCounts?: Record<UserRole, number>;
+  users?: SafeUser[];
+};
 
 type HospitalContextValue = {
   state: HospitalState;
+  meta?: HospitalMeta;
   hydrated: boolean;
   departmentSummaries: ReturnType<typeof getDepartmentSummaries>;
   activeQueueEntries: ReturnType<typeof getActiveQueueEntries>;
   metrics: ReturnType<typeof getDashboardMetrics>;
-  createAppointment: (draft: AppointmentDraft) => ValidationResult;
+  createDepartment: (draft: {
+    code: string;
+    name: string;
+    description: string;
+    status: DepartmentStatus;
+    location: string;
+  }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  createStaffMember: (draft: {
+    displayName: string;
+    email: string;
+    role: "doctor" | "receptionist" | "laboratory" | "pharmacist";
+    departmentId?: string;
+    specialization?: string;
+    status: string;
+  }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  createAppointment: (draft: AppointmentDraft) => Promise<ValidationResult>;
+  createLabRequest: (draft: LabRequestDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Partial<Record<keyof LabRequestDraft, string>>;
+  }>;
   updateAppointment: (
     appointmentId: string,
     draft: AppointmentDraft,
-  ) => ValidationResult;
+  ) => Promise<ValidationResult>;
   setAppointmentStatus: (
     appointmentId: string,
     status: AppointmentStatus,
-  ) => { ok: boolean; message?: string };
+  ) => Promise<{ ok: boolean; message?: string }>;
   advanceQueue: (
     queueEntryId: string,
     status: QueueStatus,
-  ) => { ok: boolean; message?: string };
+  ) => Promise<{ ok: boolean; message?: string }>;
   getDoctorName: (doctorId: string) => string;
   getDepartmentName: (departmentId: string) => string;
   search: (query: string) => ReturnType<typeof getSearchGroups>;
@@ -78,250 +87,219 @@ type HospitalContextValue = {
 
 const HospitalDataContext = createContext<HospitalContextValue | null>(null);
 
-function hospitalReducer(state: HospitalState, action: HospitalAction): HospitalState {
-  switch (action.type) {
-    case "hydrate":
-      return action.payload;
-    case "createAppointment": {
-      const doctor = getDoctorById(state, action.payload.doctorId);
-      if (!doctor) return state;
+type HospitalApiResponse = {
+  state: HospitalState;
+  meta?: HospitalMeta;
+};
 
-      const appointment: AppointmentRecord = {
-        id: createAppointmentId(state),
-        patientName: action.payload.patientName.trim(),
-        doctorId: doctor.id,
-        departmentId: doctor.departmentId,
-        appointmentDate: action.payload.appointmentDate,
-        appointmentTime: action.payload.appointmentTime,
-        status: "Scheduled",
-      };
+export function HospitalDataProvider({
+  children,
+  initialState,
+  initialMeta,
+}: {
+  children: React.ReactNode;
+  initialState: HospitalState;
+  initialMeta?: HospitalMeta;
+}) {
+  const [state, setState] = useState(initialState);
+  const [meta, setMeta] = useState<HospitalMeta | undefined>(initialMeta);
 
-      return {
-        ...state,
-        appointments: [appointment, ...state.appointments],
-      };
-    }
-    case "updateAppointment": {
-      const doctor = getDoctorById(state, action.payload.draft.doctorId);
-      if (!doctor) return state;
-
-      return {
-        ...state,
-        appointments: state.appointments.map((appointment) =>
-          appointment.id === action.payload.appointmentId
-            ? {
-                ...appointment,
-                patientName: action.payload.draft.patientName.trim(),
-                doctorId: doctor.id,
-                departmentId: doctor.departmentId,
-                appointmentDate: action.payload.draft.appointmentDate,
-                appointmentTime: action.payload.draft.appointmentTime,
-              }
-            : appointment,
-        ),
-        queueEntries: state.queueEntries.map((entry) =>
-          entry.appointmentId === action.payload.appointmentId
-            ? {
-                ...entry,
-                patientName: action.payload.draft.patientName.trim(),
-                doctorId: doctor.id,
-                departmentId: doctor.departmentId,
-                createdAt: action.payload.draft.appointmentTime,
-                updatedAt: action.payload.draft.appointmentTime,
-              }
-            : entry,
-        ),
-      };
-    }
-    case "setAppointmentStatus": {
-      const appointment = getAppointmentById(state, action.payload.appointmentId);
-      if (!appointment) return state;
-
-      let nextQueueEntries = state.queueEntries;
-
-      if (action.payload.status === "Checked in") {
-        const existingQueueEntry = state.queueEntries.find(
-          (entry) =>
-            entry.appointmentId === appointment.id && entry.status !== "Completed",
-        );
-
-        if (!existingQueueEntry) {
-          nextQueueEntries = [
-            createQueueEntryFromAppointment(state, appointment),
-            ...state.queueEntries,
-          ];
-        }
-      }
-
-      if (action.payload.status === "Cancelled") {
-        nextQueueEntries = nextQueueEntries.map((entry) =>
-          entry.appointmentId === appointment.id && entry.status !== "Completed"
-            ? { ...entry, status: "Completed", updatedAt: appointment.appointmentTime }
-            : entry,
-        );
-      }
-
-      if (action.payload.status === "In consultation") {
-        nextQueueEntries = nextQueueEntries.map((entry) =>
-          entry.appointmentId === appointment.id && entry.status !== "Completed"
-            ? { ...entry, status: "In consultation", updatedAt: appointment.appointmentTime }
-            : entry,
-        );
-      }
-
-      if (action.payload.status === "Completed") {
-        nextQueueEntries = nextQueueEntries.map((entry) =>
-          entry.appointmentId === appointment.id
-            ? { ...entry, status: "Completed", updatedAt: appointment.appointmentTime }
-            : entry,
-        );
-      }
-
-      return {
-        ...state,
-        appointments: state.appointments.map((current) =>
-          current.id === appointment.id
-            ? { ...current, status: action.payload.status }
-            : current,
-        ),
-        queueEntries: nextQueueEntries,
-      };
-    }
-    case "advanceQueue": {
-      const queueEntry = state.queueEntries.find(
-        (entry) => entry.id === action.payload.queueEntryId,
-      );
-      if (!queueEntry) return state;
-
-      const nextQueueEntries = state.queueEntries.map((entry) =>
-        entry.id === queueEntry.id
-          ? { ...entry, status: action.payload.status, updatedAt: queueEntry.updatedAt }
-          : entry,
-      );
-
-      const linkedAppointmentId = queueEntry.appointmentId;
-      let nextAppointments = state.appointments;
-
-      if (linkedAppointmentId) {
-        const linkedAppointment = getAppointmentById(state, linkedAppointmentId);
-
-        if (linkedAppointment) {
-          const appointmentStatus: AppointmentStatus =
-            action.payload.status === "Waiting" || action.payload.status === "Called"
-              ? "Checked in"
-              : action.payload.status === "In consultation"
-                ? "In consultation"
-                : "Completed";
-
-          nextAppointments = state.appointments.map((appointment) =>
-            appointment.id === linkedAppointment.id
-              ? { ...appointment, status: appointmentStatus }
-              : appointment,
-          );
-        }
-      }
-
-      return {
-        ...state,
-        queueEntries: nextQueueEntries,
-        appointments: nextAppointments,
-      };
-    }
-    default:
-      return state;
-  }
-}
-
-export function HospitalDataProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(hospitalReducer, undefined, createInitialHospitalState);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    try {
-      const persisted = window.localStorage.getItem(HOSPITAL_STORAGE_KEY);
-
-      if (persisted) {
-        dispatch({
-          type: "hydrate",
-          payload: JSON.parse(persisted) as HospitalState,
-        });
-      }
-    } catch {
-      window.localStorage.removeItem(HOSPITAL_STORAGE_KEY);
-    } finally {
-      setHydrated(true);
-    }
+  const updateFromResponse = useCallback((response: HospitalApiResponse) => {
+    setState(response.state);
+    setMeta(response.meta);
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-
-    window.localStorage.setItem(HOSPITAL_STORAGE_KEY, JSON.stringify(state));
-  }, [hydrated, state]);
 
   const departmentSummaries = useMemo(() => getDepartmentSummaries(state), [state]);
   const activeQueueEntries = useMemo(() => getActiveQueueEntries(state), [state]);
   const metrics = useMemo(() => getDashboardMetrics(state), [state]);
 
-  const createAppointment = useCallback(
-    (draft: AppointmentDraft) => {
-      const result = validateAppointmentDraft(state, draft);
-      if (!result.isValid) return result;
-
-      dispatch({ type: "createAppointment", payload: draft });
-      return result;
+  const createDepartment = useCallback(
+    async (draft: {
+      code: string;
+      name: string;
+      description: string;
+      status: DepartmentStatus;
+      location: string;
+    }) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/departments", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
     },
-    [state],
+    [updateFromResponse],
+  );
+
+  const createStaffMember = useCallback(
+    async (draft: {
+      displayName: string;
+      email: string;
+      role: "doctor" | "receptionist" | "laboratory" | "pharmacist";
+      departmentId?: string;
+      specialization?: string;
+      status: string;
+    }) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/staff", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createAppointment = useCallback(
+    async (draft: AppointmentDraft) => {
+      const result = validateAppointmentDraft(state, draft);
+      if (!result.isValid) {
+        return result;
+      }
+
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/appointments", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return result;
+      } catch (error) {
+        const maybeError = error as Error & {
+          fieldErrors?: Partial<Record<keyof AppointmentDraft, string>>;
+        };
+
+        return {
+          isValid: false,
+          errors: maybeError.fieldErrors ?? {},
+          message: maybeError.message,
+        };
+      }
+    },
+    [state, updateFromResponse],
+  );
+
+  const createLabRequest = useCallback(
+    async (draft: LabRequestDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/lab-requests", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & {
+          fieldErrors?: Partial<Record<keyof LabRequestDraft, string>>;
+        };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
   );
 
   const updateAppointment = useCallback(
-    (appointmentId: string, draft: AppointmentDraft) => {
+    async (appointmentId: string, draft: AppointmentDraft) => {
       const result = validateAppointmentDraft(state, draft, appointmentId);
-      if (!result.isValid) return result;
+      if (!result.isValid) {
+        return result;
+      }
 
-      dispatch({ type: "updateAppointment", payload: { appointmentId, draft } });
-      return result;
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/appointments/${appointmentId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return result;
+      } catch (error) {
+        const maybeError = error as Error & {
+          fieldErrors?: Partial<Record<keyof AppointmentDraft, string>>;
+        };
+
+        return {
+          isValid: false,
+          errors: maybeError.fieldErrors ?? {},
+          message: maybeError.message,
+        };
+      }
     },
-    [state],
+    [state, updateFromResponse],
   );
 
   const setAppointmentStatus = useCallback(
-    (appointmentId: string, status: AppointmentStatus) => {
-      const appointment = getAppointmentById(state, appointmentId);
-      if (!appointment) {
-        return { ok: false, message: "Appointment not found." };
-      }
-
-      const allowed = getAllowedAppointmentStatuses(appointment.status);
-      if (!allowed.includes(status)) {
+    async (appointmentId: string, status: AppointmentStatus) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/appointments/${appointmentId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
         return {
           ok: false,
-          message: "That appointment status transition is not allowed.",
+          message:
+            error instanceof Error
+              ? error.message
+              : "The appointment could not be updated.",
         };
       }
-
-      dispatch({ type: "setAppointmentStatus", payload: { appointmentId, status } });
-      return { ok: true };
     },
-    [state],
+    [updateFromResponse],
   );
 
   const advanceQueue = useCallback(
-    (queueEntryId: string, status: QueueStatus) => {
-      const queueEntry = state.queueEntries.find((entry) => entry.id === queueEntryId);
-      if (!queueEntry) {
-        return { ok: false, message: "Queue entry not found." };
+    async (queueEntryId: string, status: QueueStatus) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/queue/${queueEntryId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The queue entry could not be updated.",
+        };
       }
-
-      const allowed = getAllowedQueueStatuses(queueEntry.status);
-      if (!allowed.includes(status)) {
-        return { ok: false, message: "That queue transition is not allowed." };
-      }
-
-      dispatch({ type: "advanceQueue", payload: { queueEntryId, status } });
-      return { ok: true };
     },
-    [state],
+    [updateFromResponse],
   );
 
   const getDoctorName = useCallback(
@@ -340,11 +318,15 @@ export function HospitalDataProvider({ children }: { children: React.ReactNode }
   const value = useMemo<HospitalContextValue>(
     () => ({
       state,
-      hydrated,
+      meta,
+      hydrated: true,
       departmentSummaries,
       activeQueueEntries,
       metrics,
+      createDepartment,
+      createStaffMember,
       createAppointment,
+      createLabRequest,
       updateAppointment,
       setAppointmentStatus,
       advanceQueue,
@@ -357,11 +339,14 @@ export function HospitalDataProvider({ children }: { children: React.ReactNode }
     [
       activeQueueEntries,
       advanceQueue,
+      createDepartment,
+      createStaffMember,
       createAppointment,
+      createLabRequest,
       departmentSummaries,
       getDepartmentName,
       getDoctorName,
-      hydrated,
+      meta,
       metrics,
       search,
       setAppointmentStatus,

@@ -15,11 +15,23 @@ import {
 
 export const publicNavItems = [
   { label: "Home", href: "/" },
+  { label: "Hospitals", href: "/hospitals" },
   { label: "Services", href: "/services" },
-  { label: "Doctors", href: "/doctors" },
   { label: "About", href: "/about" },
   { label: "Contact", href: "/contact" },
   { label: "Emergency", href: "/emergency" },
+];
+
+export const participatingHospitals = [
+  {
+    id: "org-medivanta-general",
+    name: "MediVanta General Hospital",
+    city: "Bengaluru",
+    summary:
+      "Explore core outpatient services, diagnostics access, and emergency support before choosing where to continue care.",
+    services: ["Outpatient care", "Diagnostics", "Emergency support"],
+    emergencyAvailability: "24/7 emergency support",
+  },
 ];
 
 export const homeHighlights = [
