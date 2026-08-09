@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f3f6fa;
+  --foreground: #102033;
+  --surface: #ffffff;
+  --surface-muted: #edf2f8;
+  --surface-strong: #d7e3f0;
+  --inverse-surface: #102033;
+  --inverse-surface-muted: rgba(255, 255, 255, 0.08);
+  --inverse-foreground: #f8fbff;
+  --inverse-muted-foreground: rgba(248, 251, 255, 0.76);
+  --border: rgba(16, 32, 51, 0.1);
+  --accent: #12638f;
+  --accent-strong: #0d4f73;
+  --muted-foreground: #5b6d83;
+  --danger: #dc2626;
+  --success: #17785b;
+  --warning: #a16207;
+  --info: #155eef;
+}
+
+.dark {
+  --background: #09111c;
+  --foreground: #ebf1f8;
+  --surface: #0f1b2b;
+  --surface-muted: #152336;
+  --surface-strong: #1d3046;
+  --inverse-surface: #0c1624;
+  --inverse-surface-muted: rgba(255, 255, 255, 0.07);
+  --inverse-foreground: #eef4fb;
+  --inverse-muted-foreground: rgba(238, 244, 251, 0.8);
+  --border: rgba(235, 241, 248, 0.1);
+  --accent: #5bb8e7;
+  --accent-strong: #86cff2;
+  --muted-foreground: #a4b4c7;
+  --danger: #f87171;
+  --success: #44c59a;
+  --warning: #f5b942;
+  --info: #7ab7ff;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(18, 99, 143, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(33, 115, 165, 0.06), transparent 24%),
+    linear-gradient(to bottom, transparent, rgba(18, 99, 143, 0.03)),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+p,
+span,
+a,
+button,
+li,
+td,
+th {
+  overflow-wrap: anywhere;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 25%, white);
+}
+
+a,
+button {
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
