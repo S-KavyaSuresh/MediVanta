@@ -75,7 +75,23 @@ th {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 25%, white);
+  background: color-mix(in oklab, var(--accent) 48%, transparent);
+  color: var(--foreground);
+}
+
+::-moz-selection {
+  background: color-mix(in oklab, var(--accent) 48%, transparent);
+  color: var(--foreground);
+}
+
+.dark ::selection {
+  background: color-mix(in oklab, var(--accent) 42%, black);
+  color: var(--inverse-foreground);
+}
+
+.dark ::-moz-selection {
+  background: color-mix(in oklab, var(--accent) 42%, black);
+  color: var(--inverse-foreground);
 }
 
 a,

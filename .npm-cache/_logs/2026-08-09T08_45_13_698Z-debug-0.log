@@ -7,13 +7,13 @@
 6 silly config load:file:C:\Users\kavya\AppData\Roaming\npm\etc\npmrc
 7 verbose title npm run lint
 8 verbose argv "run" "lint"
-9 verbose logfile logs-max:10 dir:C:\Users\kavya\Documents\Codex\2026-08-09\files-mentioned-by-the-user-create\MediVanta\.npm-cache\_logs\2026-08-09T07_48_38_575Z-
-10 verbose logfile C:\Users\kavya\Documents\Codex\2026-08-09\files-mentioned-by-the-user-create\MediVanta\.npm-cache\_logs\2026-08-09T07_48_38_575Z-debug-0.log
+9 verbose logfile logs-max:10 dir:C:\Users\kavya\Documents\Codex\2026-08-09\files-mentioned-by-the-user-create\MediVanta\.npm-cache\_logs\2026-08-09T08_45_13_698Z-
+10 verbose logfile C:\Users\kavya\Documents\Codex\2026-08-09\files-mentioned-by-the-user-create\MediVanta\.npm-cache\_logs\2026-08-09T08_45_13_698Z-debug-0.log
 11 silly logfile start cleaning logs, removing 1 files
 12 silly logfile done cleaning log files
 13 verbose cwd C:\Users\kavya\Documents\Codex\2026-08-09\files-mentioned-by-the-user-create\MediVanta
 14 verbose os Windows_NT 10.0.26200
 15 verbose node v24.18.1
 16 verbose npm  v11.16.0
-17 verbose exit 0
-18 info ok
+17 verbose exit 1
+18 verbose code 1

@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 type Column<T> = {
+  id: string;
   key: keyof T;
   header: string;
   render?: (value: T[keyof T], row: T) => ReactNode;
@@ -25,7 +26,7 @@ export function DataTable<T extends { id: string | number }>({
         {rows.map((row) => (
           <div
             key={row.id}
-            className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
+            className="min-w-0 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
           >
             <div className="space-y-3">
               {columns.map((column) => {
@@ -33,13 +34,13 @@ export function DataTable<T extends { id: string | number }>({
 
                 return (
                   <div
-                    key={String(column.key)}
-                    className="grid min-w-0 grid-cols-[5.5rem_1fr] gap-3 text-sm"
+                    key={column.id}
+                    className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-3 text-sm"
                   >
-                    <span className="font-medium text-[color:var(--muted-foreground)]">
+                    <span className="break-words font-medium leading-6 text-[color:var(--muted-foreground)]">
                       {column.header}
                     </span>
-                    <div className="min-w-0 text-[color:var(--foreground)]">
+                    <div className="min-w-0 break-words text-[color:var(--foreground)] [overflow-wrap:anywhere]">
                       {column.render ? column.render(value, row) : String(value)}
                     </div>
                   </div>
@@ -54,7 +55,7 @@ export function DataTable<T extends { id: string | number }>({
           <thead className="bg-[color:var(--surface-muted)] text-[color:var(--muted-foreground)]">
             <tr>
               {columns.map((column) => (
-                <th key={String(column.key)} className="px-5 py-3 font-medium">
+                <th key={column.id} className="px-5 py-3 font-medium">
                   {column.header}
                 </th>
               ))}
@@ -71,7 +72,7 @@ export function DataTable<T extends { id: string | number }>({
 
                   return (
                     <td
-                      key={String(column.key)}
+                      key={column.id}
                       className={cn("px-5 py-4 align-middle", column.className)}
                     >
                       {column.render ? column.render(value, row) : String(value)}

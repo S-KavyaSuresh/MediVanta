@@ -296,8 +296,11 @@ export const dashboardCoordination = [
 ];
 
 export const dashboardNav = [
-  { label: "Overview", href: "/dashboard", active: true },
-  { label: "MediVanta Home", href: "/", active: false },
+  { label: "Overview", href: "/dashboard" },
+  { label: "Departments", href: "/dashboard/departments" },
+  { label: "Doctors", href: "/dashboard/doctors" },
+  { label: "Appointments", href: "/dashboard/appointments" },
+  { label: "Queue Board", href: "/dashboard/queue" },
 ];
 
 export const aboutValues = [
