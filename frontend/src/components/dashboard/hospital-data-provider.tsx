@@ -86,7 +86,7 @@ type HospitalContextValue = {
   }>;
   createPatientProfile: (draft: {
     fullName: string;
-    email?: string;
+    email: string;
     phoneNumber: string;
     gender: string;
     dateOfBirth: string;
@@ -101,6 +101,7 @@ type HospitalContextValue = {
     ok: boolean;
     message?: string;
     fieldErrors?: Record<string, string>;
+    temporaryPassword?: string;
   }>;
   createPrescription: (draft: PrescriptionDraft) => Promise<{
     ok: boolean;
@@ -314,7 +315,7 @@ export function HospitalDataProvider({
   const createPatientProfile = useCallback(
     async (draft: {
       fullName: string;
-      email?: string;
+      email: string;
       phoneNumber: string;
       gender: string;
       dateOfBirth: string;
@@ -327,12 +328,15 @@ export function HospitalDataProvider({
       preferredLanguage?: string;
     }) => {
       try {
-        const response = await apiRequest<HospitalApiResponse>("/api/hospital/patients", {
+        const response = await apiRequest<HospitalApiResponse & { temporaryPassword?: string }>(
+          "/api/hospital/patients",
+          {
           method: "POST",
           body: JSON.stringify(draft),
-        });
+          },
+        );
         updateFromResponse(response);
-        return { ok: true };
+        return { ok: true, temporaryPassword: response.temporaryPassword };
       } catch (error) {
         const maybeError = error as Error & { fieldErrors?: Record<string, string> };
         return {

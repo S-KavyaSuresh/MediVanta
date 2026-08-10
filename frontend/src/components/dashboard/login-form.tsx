@@ -58,8 +58,7 @@ export function LoginForm() {
               body: JSON.stringify({ email, password, remember: true }),
             });
             const session = normalizeAuthSession(response.session);
-            router.push(getSafeLandingPath(session.user.role, session.landingPath));
-            router.refresh();
+            router.replace(getSafeLandingPath(session.user.role, session.landingPath));
           } catch (error) {
             setErrorMessage(
               error instanceof Error

@@ -8,6 +8,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   CLIENT_ORIGIN: z.string().url().default("http://localhost:3000"),
   SESSION_SECRET: z.string().min(16).default("medivanta-local-session-secret"),
+  DATABASE_URL: z.string().min(1).optional(),
 });
 
 export const env = envSchema.parse({
@@ -15,4 +16,5 @@ export const env = envSchema.parse({
   PORT: process.env.PORT,
   CLIENT_ORIGIN: process.env.CLIENT_ORIGIN,
   SESSION_SECRET: process.env.SESSION_SECRET,
+  DATABASE_URL: process.env.DATABASE_URL,
 });

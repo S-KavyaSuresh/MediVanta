@@ -31,8 +31,12 @@ import { hashPassword } from "../auth/password.js";
 import { loadHospitalState, loadUsers, saveHospitalState, saveUsers } from "./seed-service.js";
 import { DEMO_ACCOUNT_PASSWORD } from "./demo-data.js";
 import { getCurrentLocalDateIso } from "../utils/date.js";
-
-const PROFILE_ONLY_EMAIL_DOMAIN = "profiles.medivanta.local";
+import {
+  insertMedicalRecord,
+  insertPrescription,
+  markPrescriptionDispensed,
+  updateMedicalRecordDetails,
+} from "../repositories/postgres-store.js";
 
 function getCurrentLocalTimeValue(now = new Date()) {
   return now.getHours() * 60 + now.getMinutes();
@@ -214,8 +218,9 @@ function createExternalPatientId(patientName: string) {
   return `external:${normalizePersonKey(patientName).replace(/[^a-z0-9]+/g, "-")}`;
 }
 
-function createProfileOnlyEmail(fullName: string) {
-  return `${normalizePersonKey(fullName).replace(/[^a-z0-9]+/g, ".")}.${randomBytes(3).toString("hex")}@${PROFILE_ONLY_EMAIL_DOMAIN}`;
+function createTemporaryPatientPassword() {
+  const token = randomBytes(4).toString("hex");
+  return `Care${token}#`;
 }
 
 function getDoctorScopedAppointments(state: HospitalState, doctorId?: string) {
@@ -484,24 +489,12 @@ function createLabReportId(state: HospitalState) {
   return `LABRPT-${nextNumber}`;
 }
 
-function createMedicalRecordId(state: HospitalState) {
-  const nextNumber =
-    state.medicalRecords.reduce((max, record) => {
-      const parsed = Number(record.id.replace(/\D/g, ""));
-      return Number.isNaN(parsed) ? max : Math.max(max, parsed);
-    }, 1000) + 1;
-
-  return `MR-${nextNumber}`;
+function createMedicalRecordId() {
+  return `MR-${Date.now()}-${randomBytes(3).toString("hex")}`;
 }
 
-function createPrescriptionId(state: HospitalState) {
-  const nextNumber =
-    state.prescriptions.reduce((max, prescription) => {
-      const parsed = Number(prescription.id.replace(/\D/g, ""));
-      return Number.isNaN(parsed) ? max : Math.max(max, parsed);
-    }, 2000) + 1;
-
-  return `RX-${nextNumber}`;
+function createPrescriptionId() {
+  return `RX-${Date.now()}-${randomBytes(3).toString("hex")}`;
 }
 
 function getAllowedLabRequestStatuses(status: LabRequestRecord["status"]): LabRequestRecord["status"][] {
@@ -792,7 +785,7 @@ function canEditMedicalRecord(record: MedicalRecordRecord, user: SafeUser, now =
 
 type PatientProfileDraft = {
   fullName: string;
-  email?: string;
+  email: string;
   phoneNumber: string;
   gender: string;
   dateOfBirth: string;
@@ -846,27 +839,27 @@ function validatePatientProfileDraft(
   draft: PatientProfileDraft,
 ) {
   const errors: Record<string, string> = {};
-  const normalizedEmail = draft.email?.trim().toLowerCase();
+  const normalizedEmail = draft.email.trim().toLowerCase();
   const normalizedPhone = draft.phoneNumber.trim();
 
   if (draft.fullName.trim().length < 2) {
     errors.fullName = "Enter a full name with at least 2 characters.";
   }
 
-  if (normalizedEmail && !normalizedEmail.includes("@")) {
+  if (!normalizedEmail) {
+    errors.email = "Enter a valid email address.";
+  } else if (!normalizedEmail.includes("@")) {
     errors.email = "Enter a valid email address.";
   }
 
   if (
-    normalizedEmail &&
     users.some(
       (user) =>
         user.organizationId === organizationId &&
-        user.role === "patient" &&
         user.email.toLowerCase() === normalizedEmail,
     )
   ) {
-    errors.email = "A patient profile already exists with that email address.";
+    errors.email = "An account with this email already exists.";
   }
 
   if (normalizedPhone.length < 7) {
@@ -1338,7 +1331,7 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
   }
 
   const record: MedicalRecordRecord = {
-    id: createMedicalRecordId(state),
+    id: createMedicalRecordId(),
     patientId: patient.patientId,
     patientName: patient.patientName,
     doctorId: doctor.id,
@@ -1354,10 +1347,7 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
     updatedAt: undefined,
   };
 
-  await saveHospitalState({
-    ...state,
-    medicalRecords: [record, ...state.medicalRecords],
-  });
+  await insertMedicalRecord(record);
 
   return getScopedHospitalStateForUser(user);
 }
@@ -1411,22 +1401,16 @@ export async function updateMedicalRecord(
     });
   }
 
-  const nextState: HospitalState = {
-    ...state,
-    medicalRecords: state.medicalRecords.map((currentRecord) =>
-      currentRecord.id === recordId
-        ? {
-            ...currentRecord,
-            diagnosis: draft.diagnosis.trim(),
-            clinicalNotes: draft.clinicalNotes.trim(),
-            treatmentAdvice: draft.treatmentAdvice.trim(),
-            updatedAt: new Date().toISOString(),
-          }
-        : currentRecord,
-    ),
-  };
+  await updateMedicalRecordDetails({
+    recordId,
+    organizationId: record.organizationId,
+    doctorId: record.doctorId,
+    diagnosis: draft.diagnosis.trim(),
+    clinicalNotes: draft.clinicalNotes.trim(),
+    treatmentAdvice: draft.treatmentAdvice.trim(),
+    updatedAt: new Date().toISOString(),
+  });
 
-  await saveHospitalState(nextState);
   return getScopedHospitalStateForUser(user);
 }
 
@@ -1470,7 +1454,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   }
 
   const prescription: PrescriptionRecord = {
-    id: createPrescriptionId(state),
+    id: createPrescriptionId(),
     patientId: patient.patientId,
     patientName: patient.patientName,
     doctorId: doctor.id,
@@ -1484,10 +1468,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     createdAt: new Date().toISOString(),
   };
 
-  await saveHospitalState({
-    ...state,
-    prescriptions: [prescription, ...state.prescriptions],
-  });
+  await insertPrescription(prescription);
 
   return getScopedHospitalStateForUser(user);
 }
@@ -1520,21 +1501,12 @@ export async function dispensePrescription(
     throw createHttpError(400, "This prescription has already been dispensed.");
   }
 
-  await saveHospitalState({
-    ...state,
-    prescriptions: state.prescriptions.map((item) =>
-      item.id === prescriptionId
-        ? {
-            ...item,
-            status: "Dispensed",
-            dispensedAt: new Date().toISOString(),
-            dispensedBy: {
-              id: user.id,
-              name: user.displayName,
-            },
-          }
-        : item,
-    ),
+  await markPrescriptionDispensed({
+    prescriptionId,
+    organizationId: prescription.organizationId,
+    dispensedAt: new Date().toISOString(),
+    dispensedById: user.id,
+    dispensedByName: user.displayName,
   });
 
   return getScopedHospitalStateForUser(user);
@@ -2130,7 +2102,7 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
 }
 
 export async function createPatientProfile(user: SafeUser, draft: PatientProfileDraft) {
-  if (user.role !== "doctor") {
+  if (user.role !== "receptionist") {
     throw createHttpError(403, "You do not have access to create patient profiles.");
   }
 
@@ -2143,15 +2115,15 @@ export async function createPatientProfile(user: SafeUser, draft: PatientProfile
     });
   }
 
-  const passwordHash = await hashPassword(randomBytes(24).toString("hex"));
+  const temporaryPassword = createTemporaryPatientPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
   const nextUser: UserRecord = {
     id: `user-patient-${randomBytes(6).toString("hex")}`,
     organizationId: user.organizationId,
-    email: draft.email?.trim().toLowerCase() || createProfileOnlyEmail(draft.fullName),
+    email: draft.email.trim().toLowerCase(),
     displayName: draft.fullName.trim(),
     role: "patient",
     passwordHash,
-    assignedDoctorId: user.doctorId,
     patientName: draft.fullName.trim(),
     phoneNumber: draft.phoneNumber.trim(),
     gender: draft.gender.trim(),
@@ -2167,7 +2139,10 @@ export async function createPatientProfile(user: SafeUser, draft: PatientProfile
   };
 
   await saveUsers([...users, nextUser]);
-  return getScopedHospitalStateForUser(user);
+  return {
+    ...(await getScopedHospitalStateForUser(user)),
+    temporaryPassword,
+  };
 }
 
 export async function updatePatientProfile(user: SafeUser, draft: UserProfileDraft) {

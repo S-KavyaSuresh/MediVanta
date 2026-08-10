@@ -55,6 +55,7 @@ export function DoctorRecordsView() {
   const [selectedReport, setSelectedReport] = useState<LabReportRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState({
     diagnosis: "",
@@ -63,6 +64,7 @@ export function DoctorRecordsView() {
   });
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
   const [editMessage, setEditMessage] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const patientOptions = useMemo(() => {
     const grouped = new Map<string, { patientId: string; patientName: string; appointments: AppointmentRecord[] }>();
@@ -128,6 +130,11 @@ export function DoctorRecordsView() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
     setMessage(null);
 
     const result = await createMedicalRecord({
@@ -135,6 +142,7 @@ export function DoctorRecordsView() {
       patientId: activePatientId,
       appointmentId: activeAppointmentId || undefined,
     });
+    setSubmitting(false);
 
     if (!result.ok) {
       setFieldErrors(result.fieldErrors ?? {});
@@ -292,8 +300,8 @@ export function DoctorRecordsView() {
               <p className="text-sm text-[color:var(--muted-foreground)]">{message}</p>
             ) : null}
 
-            <Button type="submit" disabled={!patientOptions.length}>
-              Save Record
+            <Button type="submit" disabled={!patientOptions.length || submitting}>
+              {submitting ? "Saving..." : "Save Record"}
             </Button>
           </form>
         </Card>
@@ -429,8 +437,15 @@ export function DoctorRecordsView() {
                             </Button>
                             <Button
                               type="button"
+                              disabled={editSubmitting}
                               onClick={async () => {
+                                if (editSubmitting) {
+                                  return;
+                                }
+
+                                setEditSubmitting(true);
                                 const result = await updateMedicalRecord(record.id, editDraft);
+                                setEditSubmitting(false);
 
                                 if (!result.ok) {
                                   setEditErrors(result.fieldErrors ?? {});
@@ -445,7 +460,7 @@ export function DoctorRecordsView() {
                                 setEditingRecordId(null);
                               }}
                             >
-                              Save Changes
+                              {editSubmitting ? "Saving..." : "Save Changes"}
                             </Button>
                           </div>
                         </div>

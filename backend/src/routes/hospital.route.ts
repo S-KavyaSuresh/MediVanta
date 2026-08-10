@@ -115,7 +115,7 @@ const prescriptionStatusSchema = z.object({
 
 const patientProfileDraftSchema = z.object({
   fullName: z.string(),
-  email: z.string().email().optional().or(z.literal("")),
+  email: z.string().email(),
   phoneNumber: z.string(),
   gender: z.string(),
   dateOfBirth: z.string(),

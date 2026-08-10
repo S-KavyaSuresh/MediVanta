@@ -6,7 +6,7 @@ MediVanta is a healthcare SaaS platform for hospitals and clinics. It combines a
 
 - Public pages for Home, Services, Doctors, About, Contact, and Emergency
 - Authenticated dashboard access for patients, doctors, reception, laboratory staff, pharmacists, and administrators
-- Shared operational data for one seeded fictional organization
+- PostgreSQL-backed operational data for one seeded fictional organization
 - Appointment scheduling, editing, cancellation, check-in, and queue synchronization
 - Patient self-registration
 - Local password reset flow for development and evaluation
@@ -26,16 +26,22 @@ This organization relationship is attached to seeded users, departments, doctors
 ```text
 MediVanta/
   frontend/  # Next.js application
-  backend/   # Express API and local data store
+  backend/   # Express API and PostgreSQL persistence layer
 ```
 
 ## Environment setup
 
-Copy the example environment files if you want to customize local defaults:
+Copy the example environment files and set the PostgreSQL connection string for the backend:
 
 ```powershell
 Copy-Item frontend/.env.example frontend/.env.local
 Copy-Item backend/.env.example backend/.env
+```
+
+Update `backend/.env`:
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require
 ```
 
 Default local endpoints:
@@ -49,12 +55,30 @@ Default local endpoints:
 npm.cmd install
 ```
 
-## Seed local demo data
+## PostgreSQL setup
 
-MediVanta includes reproducible local evaluation accounts and sample hospital data.
+Install dependencies so the backend can use the PostgreSQL client:
+
+```powershell
+npm.cmd install
+```
+
+Run the backend migration:
+
+```powershell
+npm.cmd run db:migrate --workspace backend
+```
+
+Seed the database with the MediVanta demo organization, users, and hospital data:
 
 ```powershell
 npm.cmd run seed --workspace backend
+```
+
+If you want to load the existing legacy JSON data into PostgreSQL instead of the demo seed, run:
+
+```powershell
+npm.cmd run db:import-legacy --workspace backend
 ```
 
 ## Start MediVanta
@@ -97,10 +121,10 @@ These credentials are seeded demonstration accounts intended only for local eval
 The local development password reset flow is zero-cost and does not send real email.
 
 - Request a reset from `/forgot-password`
-- Development reset token and OTP are returned only for local evaluation
+- Development reset token and OTP are returned only for local setup
 - Reset details are short-lived and invalidated after password change
 
-This structure is intended to be replaceable later with a real delivery provider without changing reset logic.
+This structure can later be connected to a production delivery provider without changing reset logic.
 
 ## Role destinations
 

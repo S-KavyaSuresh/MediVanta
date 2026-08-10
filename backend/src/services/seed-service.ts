@@ -8,7 +8,17 @@ import {
   DEMO_ORGANIZATION,
   DEMO_REFERENCE_DATE,
 } from "./demo-data.js";
-import { readJsonFile, writeJsonFile } from "./file-store.js";
+import { readJsonFile } from "./file-store.js";
+import {
+  loadHospitalStateSnapshot,
+  loadSessionsSnapshot,
+  loadUsersSnapshot,
+  saveHospitalStateSnapshot,
+  saveSeedSnapshot,
+  saveSessionsSnapshot,
+  saveUsersSnapshot,
+} from "../repositories/postgres-store.js";
+import { assertDatabaseConfigured, query } from "../db/client.js";
 
 const USERS_FILE = "users.json";
 const SESSIONS_FILE = "sessions.json";
@@ -190,64 +200,69 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
 }
 
 export async function initializeDataStore() {
-  const existingUsers = await readJsonFile<UserRecord[]>(USERS_FILE, []);
-  const existingHospitalState = await readJsonFile<HospitalState | null>(HOSPITAL_FILE, null);
-  const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
-  const normalizedUsers = await mergeDemoUsers(existingUsers, passwordHash);
+  assertDatabaseConfigured();
 
-  await writeJsonFile(USERS_FILE, normalizedUsers);
-  await writeJsonFile(
-    HOSPITAL_FILE,
-    hydrateHospitalState(existingHospitalState ?? createDemoHospitalState(), normalizedUsers),
-  );
-
-  const existingSessions = await readJsonFile<SessionRecord[]>(SESSIONS_FILE, []);
-  await writeJsonFile(SESSIONS_FILE, existingSessions);
+  try {
+    await query("select 1 from organizations limit 1");
+  } catch (error) {
+    throw new Error(
+      "PostgreSQL schema is not ready. Run the backend migration commands after setting DATABASE_URL.",
+      { cause: error },
+    );
+  }
 }
 
 export async function reseedDemoData() {
   const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
-  await writeJsonFile(USERS_FILE, createDemoUsers(passwordHash));
-  await writeJsonFile(HOSPITAL_FILE, createDemoHospitalState());
-  await writeJsonFile(SESSIONS_FILE, []);
+  await saveSeedSnapshot({
+    state: createDemoHospitalState(),
+    users: createDemoUsers(passwordHash),
+    sessions: [],
+  });
+}
+
+export async function importLegacyJsonData() {
+  const existingUsers = await readJsonFile<UserRecord[]>(USERS_FILE, []);
+  const existingHospitalState = await readJsonFile<HospitalState | null>(HOSPITAL_FILE, null);
+  const existingSessions = await readJsonFile<SessionRecord[]>(SESSIONS_FILE, []);
+  const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
+  const normalizedUsers = await mergeDemoUsers(existingUsers, passwordHash);
+  const normalizedState = hydrateHospitalState(
+    existingHospitalState ?? createDemoHospitalState(),
+    normalizedUsers,
+  );
+
+  await saveSeedSnapshot({
+    state: normalizedState,
+    users: normalizedUsers,
+    sessions: existingSessions,
+  });
 }
 
 export async function loadUsers() {
-  const users = await readJsonFile<UserRecord[]>(USERS_FILE, []);
+  const users = await loadUsersSnapshot();
   const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
-  const normalizedUsers = await mergeDemoUsers(users, passwordHash);
-
-  if (JSON.stringify(users) !== JSON.stringify(normalizedUsers)) {
-    await writeJsonFile(USERS_FILE, normalizedUsers);
-  }
-
-  return normalizedUsers;
+  return mergeDemoUsers(users, passwordHash);
 }
 
 export async function saveUsers(users: UserRecord[]) {
-  await writeJsonFile(USERS_FILE, users);
+  await saveUsersSnapshot(users);
 }
 
 export async function loadHospitalState() {
-  const state = await readJsonFile<HospitalState>(HOSPITAL_FILE, createDemoHospitalState());
+  const state = (await loadHospitalStateSnapshot()) ?? createDemoHospitalState();
   const users = await loadUsers();
-  const hydratedState = hydrateHospitalState(state, users);
-
-  if (JSON.stringify(state) !== JSON.stringify(hydratedState)) {
-    await writeJsonFile(HOSPITAL_FILE, hydratedState);
-  }
-
-  return hydratedState;
+  return hydrateHospitalState(state, users);
 }
 
 export async function saveHospitalState(state: HospitalState) {
-  await writeJsonFile(HOSPITAL_FILE, state);
+  await saveHospitalStateSnapshot(state);
 }
 
 export async function loadSessions() {
-  return readJsonFile<SessionRecord[]>(SESSIONS_FILE, []);
+  return loadSessionsSnapshot();
 }
 
 export async function saveSessions(sessions: SessionRecord[]) {
-  await writeJsonFile(SESSIONS_FILE, sessions);
+  await saveSessionsSnapshot(sessions);
 }

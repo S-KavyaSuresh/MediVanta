@@ -10,7 +10,14 @@ import type {
 import { getCapabilitiesForRole, landingPathByRole } from "../auth/permissions.js";
 import { verifyPassword } from "../auth/password.js";
 import { DEMO_ORGANIZATION } from "./demo-data.js";
-import { loadHospitalState, loadSessions, loadUsers, saveSessions } from "./seed-service.js";
+import {
+  deleteExpiredSessions,
+  deleteSessionById,
+  loadOrganizationById,
+  loadUserByEmail,
+  loadUserBySessionId,
+  replaceSessionForUser,
+} from "../repositories/postgres-store.js";
 
 const SHORT_SESSION_SECONDS = 60 * 60 * 12;
 const LONG_SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -54,10 +61,10 @@ function toSafeUser(user: UserRecord): SafeUser {
 }
 
 async function getOrganizationForUser(user: UserRecord): Promise<OrganizationRecord> {
-  const state = await loadHospitalState();
+  const organization = await loadOrganizationById(user.organizationId);
 
-  if (state.organization.id === user.organizationId) {
-    return state.organization;
+  if (organization) {
+    return organization;
   }
 
   return {
@@ -67,10 +74,7 @@ async function getOrganizationForUser(user: UserRecord): Promise<OrganizationRec
 }
 
 export async function authenticateUser(email: string, password: string) {
-  const users = await loadUsers();
-  const user = users.find(
-    (currentUser) => currentUser.email.toLowerCase() === email.trim().toLowerCase(),
-  );
+  const user = await loadUserByEmail(email.trim().toLowerCase());
 
   if (!user) {
     return null;
@@ -85,7 +89,6 @@ export async function authenticateUser(email: string, password: string) {
 }
 
 export async function createSession(userId: string, remember: boolean) {
-  const sessions = await loadSessions();
   const sessionId = randomBytes(32).toString("hex");
   const expiresAt = new Date(
     Date.now() + (remember ? LONG_SESSION_SECONDS : SHORT_SESSION_SECONDS) * 1000,
@@ -98,10 +101,7 @@ export async function createSession(userId: string, remember: boolean) {
     remember,
   };
 
-  await saveSessions([
-    ...sessions.filter((session) => session.userId !== userId),
-    nextSession,
-  ]);
+  await replaceSessionForUser(nextSession);
 
   return {
     sessionId,
@@ -110,8 +110,7 @@ export async function createSession(userId: string, remember: boolean) {
 }
 
 export async function destroySession(sessionId: string) {
-  const sessions = await loadSessions();
-  await saveSessions(sessions.filter((session) => session.id !== sessionId));
+  await deleteSessionById(sessionId);
 }
 
 export async function getUserFromSession(sessionId?: string | null) {
@@ -119,23 +118,17 @@ export async function getUserFromSession(sessionId?: string | null) {
     return null;
   }
 
-  const [sessions, users] = await Promise.all([loadSessions(), loadUsers()]);
-  const now = Date.now();
-  const activeSessions = sessions.filter(
-    (session) => new Date(session.expiresAt).getTime() > now,
-  );
-
-  if (activeSessions.length !== sessions.length) {
-    await saveSessions(activeSessions);
-  }
-
-  const session = activeSessions.find((currentSession) => currentSession.id === sessionId);
+  const session = await loadUserBySessionId(sessionId);
   if (!session) {
     return null;
   }
 
-  const user = users.find((currentUser) => currentUser.id === session.userId);
-  return user ?? null;
+  if (new Date(session.expiresAt).getTime() <= Date.now()) {
+    await Promise.all([deleteSessionById(sessionId), deleteExpiredSessions()]);
+    return null;
+  }
+
+  return session.user;
 }
 
 export async function buildSessionPayload(user: UserRecord): Promise<AuthSessionPayload> {

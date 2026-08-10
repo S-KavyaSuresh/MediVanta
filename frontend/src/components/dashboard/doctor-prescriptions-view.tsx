@@ -91,6 +91,7 @@ export function DoctorPrescriptionsView() {
   const { createPrescription, meta, state } = useHospitalData();
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
   const patientOptions = useMemo(() => {
     const grouped = new Map<string, { patientId: string; patientName: string; appointments: AppointmentRecord[] }>();
 
@@ -159,12 +160,18 @@ export function DoctorPrescriptionsView() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
     setMessage(null);
 
     const validation = validatePrescriptionDraft(draft, activePatientId);
     if (!validation.isValid) {
       setFieldErrors(validation.errors);
       setMessage("Please review the prescription details provided.");
+      setSubmitting(false);
       return;
     }
 
@@ -188,6 +195,7 @@ export function DoctorPrescriptionsView() {
       medicines: normalizedMedicines,
       instructions: draft.instructions.trim(),
     });
+    setSubmitting(false);
 
     if (!result.ok) {
       setFieldErrors(result.fieldErrors ?? {});
@@ -407,8 +415,8 @@ export function DoctorPrescriptionsView() {
               <p className="text-sm text-[color:var(--muted-foreground)]">{message}</p>
             ) : null}
 
-            <Button type="submit" disabled={!patientOptions.length}>
-              Issue Prescription
+            <Button type="submit" disabled={!patientOptions.length || submitting}>
+              {submitting ? "Issuing..." : "Issue Prescription"}
             </Button>
           </form>
         </Card>

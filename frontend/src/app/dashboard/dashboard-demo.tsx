@@ -22,10 +22,12 @@ export function DashboardDemo({
   eyebrow = "Hospital Workspace",
   title = "A shared operations view for appointments, queues, notices, and daily activity",
   description = "MediVanta brings essential hospital information into one clear workspace so front-desk teams, clinicians, and support staff can stay aligned during the day.",
+  action,
 }: {
   eyebrow?: string;
   title?: string;
   description?: string;
+  action?: React.ReactNode;
 }) {
   const {
     activeQueueEntries,
@@ -68,7 +70,7 @@ export function DashboardDemo({
 
   return (
     <div className="min-w-0 max-w-full space-y-6 md:space-y-8">
-      <PageHeader eyebrow={eyebrow} title={title} description={description} />
+      <PageHeader eyebrow={eyebrow} title={title} description={description} action={action} />
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         {statCards.map((stat) => (
