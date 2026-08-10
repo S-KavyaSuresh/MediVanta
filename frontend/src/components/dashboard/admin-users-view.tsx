@@ -11,43 +11,77 @@ import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/providers/toast-provider";
+import { roleLabels } from "@/lib/auth";
 
 const supportedRoles = ["doctor", "receptionist", "laboratory", "pharmacist"] as const;
+
+function getDepartmentUnitLabel(user: {
+  role: string;
+  departmentId?: string;
+  deskLabel?: string;
+}, getDepartmentName: (departmentId: string) => string) {
+  if (user.role === "doctor") {
+    return user.departmentId ? getDepartmentName(user.departmentId) : "Not assigned";
+  }
+
+  if (user.role === "receptionist") {
+    if (user.departmentId) {
+      return getDepartmentName(user.departmentId);
+    }
+
+    return user.deskLabel?.trim() || "Reception";
+  }
+
+  if (user.role === "laboratory") {
+    return user.departmentId ? getDepartmentName(user.departmentId) : "Laboratory";
+  }
+
+  if (user.role === "pharmacist") {
+    return user.departmentId ? getDepartmentName(user.departmentId) : "Pharmacy";
+  }
+
+  if (user.role === "administrator") {
+    return "Administration";
+  }
+
+  return "Not assigned";
+}
 
 export function AdminUsersView() {
   const { createStaffMember, getDepartmentName, meta, state } = useHospitalData();
   const { pushToast } = useToast();
   const [modalOpen, setModalOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const users = (meta?.users ?? []).filter((user) => user.role !== "patient" && user.role !== "administrator");
+  const users = (meta?.users ?? []).filter((user) => user.role !== "patient");
 
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         eyebrow="Administration"
         title="Staff Management"
-        description="Review hospital staff records and add doctors or operational staff for the current organization."
+        description="Review hospital staff records and add doctors or operational team members."
         action={<Button onClick={() => setModalOpen(true)}>+ Add Staff</Button>}
       />
       {users.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2">
           {users.map((user) => (
-            <Card key={user.id} className="space-y-2">
+            <Card key={user.id} className="space-y-4">
               <p className="text-lg font-semibold">{user.displayName}</p>
               <p className="text-sm text-[color:var(--muted-foreground)]">{user.email}</p>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--accent)]">
-                {user.role}
-              </p>
-              {user.departmentId ? (
-                <p className="text-sm text-[color:var(--muted-foreground)]">
-                  {getDepartmentName(user.departmentId)}
+              <div className="space-y-2 text-sm text-[color:var(--muted-foreground)]">
+                <p>
+                  <span className="font-medium text-[color:var(--foreground)]">Role:</span>{" "}
+                  {roleLabels[user.role]}
                 </p>
-              ) : null}
-              {user.staffStatus ? (
-                <p className="text-sm text-[color:var(--muted-foreground)]">
-                  Status: {user.staffStatus}
+                <p>
+                  <span className="font-medium text-[color:var(--foreground)]">Department / Unit:</span>{" "}
+                  {getDepartmentUnitLabel(user, getDepartmentName)}
                 </p>
-              ) : null}
+                <p>
+                  <span className="font-medium text-[color:var(--foreground)]">Status:</span>{" "}
+                  {user.staffStatus?.trim() || "Not assigned"}
+                </p>
+              </div>
             </Card>
           ))}
         </div>
@@ -65,7 +99,7 @@ export function AdminUsersView() {
           setFieldErrors({});
         }}
         title="Add staff"
-        description="Create a hospital staff account for the current organization."
+        description="Create a hospital staff account with the appropriate role and department."
       >
         <form
           className="space-y-4"

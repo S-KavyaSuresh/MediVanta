@@ -124,7 +124,7 @@ authRouter.post("/login", async (request, response, next) => {
 
     response.json({
       success: true,
-      session: buildSessionPayload(user),
+      session: await buildSessionPayload(user),
     });
   } catch (error) {
     next(error);
@@ -176,7 +176,7 @@ authRouter.post("/register/patient", async (request, response, next) => {
 
     response.status(201).json({
       success: true,
-      session: buildSessionPayload(nextUser),
+      session: await buildSessionPayload(nextUser),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -390,7 +390,7 @@ authRouter.get("/me", requireAuthenticatedUser, async (request, response, next) 
 
     response.json({
       success: true,
-      session: buildSessionPayload(fullUser),
+      session: await buildSessionPayload(fullUser),
     });
   } catch (error) {
     next(error);

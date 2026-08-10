@@ -1,10 +1,15 @@
 import { clinicians } from "@/lib/sample-data";
 
 export const HOSPITAL_STORAGE_KEY = "medivanta-hospital-state";
-export const HOSPITAL_TODAY = "2026-08-09";
+export const DEMO_REFERENCE_DATE = "2026-08-09";
 
 export function getCurrentLocalDateIso() {
-  return HOSPITAL_TODAY;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function getCurrentLocalTimeValue(now = new Date()) {
@@ -14,6 +19,208 @@ function getCurrentLocalTimeValue(now = new Date()) {
 function getSlotTimeValue(value: string) {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+function isCapacityConsumingAppointment(status: AppointmentStatus) {
+  return status !== "Cancelled";
+}
+
+function isCapacityConsumingLabRequest(status: LabRequestStatus) {
+  return status !== "Completed";
+}
+
+export function getSessionForTime(state: HospitalState, time: string) {
+  return (
+    state.bookingCapacity.sessions.find(
+      (session) =>
+        getSlotTimeValue(time) >= getSlotTimeValue(session.startTime) &&
+        getSlotTimeValue(time) <= getSlotTimeValue(session.endTime),
+    ) ?? null
+  );
+}
+
+export function getDoctorSlotBookingCount(
+  state: HospitalState,
+  doctorId: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  excludeAppointmentId?: string,
+) {
+  return state.appointments.filter((appointment) => {
+    if (excludeAppointmentId && appointment.id === excludeAppointmentId) {
+      return false;
+    }
+
+    return (
+      appointment.doctorId === doctorId &&
+      appointment.appointmentDate === appointmentDate &&
+      appointment.appointmentTime === appointmentTime &&
+      isCapacityConsumingAppointment(appointment.status)
+    );
+  }).length;
+}
+
+export function getDoctorSessionBookingCount(
+  state: HospitalState,
+  doctorId: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  excludeAppointmentId?: string,
+) {
+  const session = getSessionForTime(state, appointmentTime);
+
+  if (!session) {
+    return 0;
+  }
+
+  return state.appointments.filter((appointment) => {
+    if (excludeAppointmentId && appointment.id === excludeAppointmentId) {
+      return false;
+    }
+
+    return (
+      appointment.doctorId === doctorId &&
+      appointment.appointmentDate === appointmentDate &&
+      isCapacityConsumingAppointment(appointment.status) &&
+      appointment.appointmentTime >= session.startTime &&
+      appointment.appointmentTime <= session.endTime
+    );
+  }).length;
+}
+
+export function isDoctorSlotFullyBooked(
+  state: HospitalState,
+  doctorId: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  excludeAppointmentId?: string,
+) {
+  return (
+    getDoctorSlotBookingCount(
+      state,
+      doctorId,
+      appointmentDate,
+      appointmentTime,
+      excludeAppointmentId,
+    ) >= state.bookingCapacity.doctorSlotCapacity
+  );
+}
+
+export function isDoctorSessionFullyBooked(
+  state: HospitalState,
+  doctorId: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  excludeAppointmentId?: string,
+) {
+  const session = getSessionForTime(state, appointmentTime);
+
+  if (!session) {
+    return false;
+  }
+
+  return (
+    getDoctorSessionBookingCount(
+      state,
+      doctorId,
+      appointmentDate,
+      appointmentTime,
+      excludeAppointmentId,
+    ) >= session.maxAppointments
+  );
+}
+
+export function getDoctorCapacityStatus(
+  state: HospitalState,
+  doctorId: string,
+  appointmentDate: string,
+  appointmentTime: string,
+  excludeAppointmentId?: string,
+) {
+  const session = getSessionForTime(state, appointmentTime);
+  const slotBookings = getDoctorSlotBookingCount(
+    state,
+    doctorId,
+    appointmentDate,
+    appointmentTime,
+    excludeAppointmentId,
+  );
+  const sessionBookings = getDoctorSessionBookingCount(
+    state,
+    doctorId,
+    appointmentDate,
+    appointmentTime,
+    excludeAppointmentId,
+  );
+
+  if (
+    slotBookings >= state.bookingCapacity.doctorSlotCapacity ||
+    (session && sessionBookings >= session.maxAppointments)
+  ) {
+    return {
+      label: "Full",
+      detail: session
+        ? `${session.label} ${sessionBookings}/${session.maxAppointments}`
+        : `${slotBookings}/${state.bookingCapacity.doctorSlotCapacity}`,
+    };
+  }
+
+  if (session && sessionBookings >= Math.max(1, session.maxAppointments - 1)) {
+    return {
+      label: "Filling",
+      detail: `${session.label} ${sessionBookings}/${session.maxAppointments}`,
+    };
+  }
+
+  return {
+    label: "Available",
+    detail: session
+      ? `${session.label} ${sessionBookings}/${session.maxAppointments}`
+      : `${slotBookings}/${state.bookingCapacity.doctorSlotCapacity}`,
+    };
+}
+
+export function getLabSlotBookingCount(
+  state: HospitalState,
+  requestedDate: string,
+  requestedTime: string,
+) {
+  return state.labRequests.filter(
+    (request) =>
+      request.requestedDate === requestedDate &&
+      request.requestedTime === requestedTime &&
+      isCapacityConsumingLabRequest(request.status),
+  ).length;
+}
+
+export function isLabSlotFullyBooked(
+  state: HospitalState,
+  requestedDate: string,
+  requestedTime: string,
+) {
+  return (
+    getLabSlotBookingCount(state, requestedDate, requestedTime) >=
+    state.bookingCapacity.labSlotCapacity
+  );
+}
+
+export function getLabSlotCapacityStatus(
+  state: HospitalState,
+  requestedDate: string,
+  requestedTime: string,
+) {
+  const bookings = getLabSlotBookingCount(state, requestedDate, requestedTime);
+  const capacity = state.bookingCapacity.labSlotCapacity;
+
+  if (bookings >= capacity) {
+    return { label: "Full", detail: `${bookings} / ${capacity}` };
+  }
+
+  if (bookings >= Math.max(1, capacity - 1)) {
+    return { label: "Filling", detail: `${bookings} / ${capacity}` };
+  }
+
+  return { label: "Available", detail: `${bookings} / ${capacity}` };
 }
 
 export function isPastLocalTimeSlot(date: string, time: string, now = new Date()) {
@@ -59,6 +266,8 @@ export type LabRequestStatus =
   | "Processing"
   | "Completed";
 
+export type PrescriptionStatus = "Issued" | "Dispensed";
+
 export type DepartmentRecord = {
   id: string;
   code: string;
@@ -80,6 +289,7 @@ export type DoctorRecord = {
 
 export type AppointmentRecord = {
   id: string;
+  patientId?: string;
   patientName: string;
   doctorId: string;
   departmentId: string;
@@ -120,18 +330,129 @@ export type LabRequestRecord = {
   createdAt?: string;
 };
 
+export type LabReportAttachmentRecord = {
+  fileName: string;
+  contentType: "application/pdf";
+  fileSize: number;
+  contentBase64: string;
+};
+
+export type LabReportRecord = {
+  id: string;
+  labRequestId: string;
+  patientId: string;
+  hospitalId: string;
+  organizationId: string;
+  testName: string;
+  reportTitle: string;
+  resultSummary: string;
+  uploadedAt: string;
+  uploadedBy: {
+    id: string;
+    name: string;
+  };
+  attachment?: LabReportAttachmentRecord;
+};
+
+export type MedicalRecordRecord = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  appointmentId?: string;
+  hospitalId: string;
+  organizationId: string;
+  visitDate: string;
+  diagnosis: string;
+  clinicalNotes: string;
+  treatmentAdvice: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type PrescriptionMedicineRecord = {
+  medicineName: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+};
+
+export type PrescriptionRecord = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  hospitalId: string;
+  organizationId: string;
+  appointmentId?: string;
+  medicines: PrescriptionMedicineRecord[];
+  instructions: string;
+  status: PrescriptionStatus;
+  createdAt: string;
+  dispensedAt?: string;
+  dispensedBy?: {
+    id: string;
+    name: string;
+  };
+};
+
+export type BookingSessionCapacityRecord = {
+  id: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+  maxAppointments: number;
+};
+
+export type BookingCapacityRecord = {
+  doctorSlotCapacity: number;
+  defaultMaxAppointmentsPerSession: number;
+  labSlotCapacity: number;
+  sessions: BookingSessionCapacityRecord[];
+};
+
+export type AppointmentSlotLoadRecord = {
+  doctorId: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  bookings: number;
+};
+
+export type LabSlotLoadRecord = {
+  requestedDate: string;
+  requestedTime: string;
+  bookings: number;
+};
+
 export type HospitalState = {
   organization: {
     id: string;
     name: string;
     slug: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    emergencyContact?: string;
+    operatingHours?: string;
+    timezone?: string;
+    defaultLanguage?: string;
+    emergencyServicesEnabled?: boolean;
+    defaultConsultationSlotDurationMinutes?: number;
   };
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
   queueEntries: QueueEntryRecord[];
+  medicalRecords: MedicalRecordRecord[];
+  prescriptions: PrescriptionRecord[];
   labTests: LabTestRecord[];
   labRequests: LabRequestRecord[];
+  labReports: LabReportRecord[];
+  bookingCapacity: BookingCapacityRecord;
   configuredSupportLines: number;
 };
 
@@ -146,6 +467,55 @@ export type LabRequestDraft = {
   testId: string;
   requestedDate: string;
   requestedTime: string;
+};
+
+export type LabReportDraft = {
+  reportTitle: string;
+  resultSummary: string;
+  attachment?: LabReportAttachmentRecord;
+};
+
+export type MedicalRecordDraft = {
+  patientId: string;
+  appointmentId?: string;
+  visitDate: string;
+  diagnosis: string;
+  clinicalNotes: string;
+  treatmentAdvice: string;
+};
+
+export type PrescriptionMedicineDraft = {
+  medicineName: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+};
+
+export type PrescriptionDraft = {
+  patientId: string;
+  appointmentId?: string;
+  medicines: PrescriptionMedicineDraft[];
+  instructions: string;
+};
+
+export type HospitalSettingsDraft = {
+  hospitalName: string;
+  address: string;
+  city: string;
+  state: string;
+  contactPhone: string;
+  contactEmail: string;
+  emergencyContact: string;
+  operatingHours: string;
+  timezone: string;
+  defaultLanguage: string;
+  emergencyServicesEnabled: boolean;
+  defaultConsultationSlotDurationMinutes: number;
+  defaultDoctorSlotCapacity: number;
+  morningSessionCapacity: number;
+  afternoonSessionCapacity: number;
+  eveningSessionCapacity: number;
+  defaultLabSlotCapacity: number;
 };
 
 export type SearchGroup = {
@@ -330,7 +700,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     patientName: "Aarav Verma",
     doctorId: "doc-vivek-menon",
     departmentId: "dept-cardiology",
-    appointmentDate: HOSPITAL_TODAY,
+    appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "09:30",
     status: "Checked in",
   },
@@ -339,7 +709,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     patientName: "Sana Khan",
     doctorId: "doc-neha-sen",
     departmentId: "dept-radiology",
-    appointmentDate: HOSPITAL_TODAY,
+    appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:00",
     status: "In consultation",
   },
@@ -348,16 +718,17 @@ const appointmentsSeed: AppointmentRecord[] = [
     patientName: "Maya Joseph",
     doctorId: "doc-anaya-sharma",
     departmentId: "dept-general-medicine",
-    appointmentDate: HOSPITAL_TODAY,
+    appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:45",
     status: "Completed",
   },
   {
     id: "APT-2004",
+    patientId: "user-patient",
     patientName: "Ritesh Nair",
     doctorId: "doc-meera-iqbal",
     departmentId: "dept-pediatrics",
-    appointmentDate: HOSPITAL_TODAY,
+    appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "11:15",
     status: "Scheduled",
   },
@@ -366,7 +737,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     patientName: "Ishita Das",
     doctorId: "doc-kiran-iyer",
     departmentId: "dept-orthopedics",
-    appointmentDate: HOSPITAL_TODAY,
+    appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "12:10",
     status: "Scheduled",
   },
@@ -414,6 +785,97 @@ const queueSeed: QueueEntryRecord[] = [
   },
 ];
 
+const medicalRecordsSeed: MedicalRecordRecord[] = [
+  {
+    id: "MR-1001",
+    patientId: "user-patient",
+    patientName: "Ritesh Nair",
+    doctorId: "doc-meera-iqbal",
+    doctorName: "Dr. Meera Iqbal",
+    hospitalId: "org-medivanta-general",
+    organizationId: "org-medivanta-general",
+    visitDate: "2026-08-05",
+    diagnosis: "Seasonal viral fever",
+    clinicalNotes:
+      "Low-grade fever with fatigue for three days. No respiratory distress observed during review.",
+    treatmentAdvice:
+      "Continue hydration, paracetamol as advised, and review again if fever persists beyond 48 hours.",
+    createdAt: "2026-08-05T11:40:00.000Z",
+  },
+  {
+    id: "MR-1002",
+    patientId: "external:aarav-verma",
+    patientName: "Aarav Verma",
+    doctorId: "doc-vivek-menon",
+    doctorName: "Dr. Vivek Menon",
+    appointmentId: "APT-2001",
+    hospitalId: "org-medivanta-general",
+    organizationId: "org-medivanta-general",
+    visitDate: DEMO_REFERENCE_DATE,
+    diagnosis: "Stable hypertension follow-up",
+    clinicalNotes:
+      "Blood pressure remains controlled with current regimen. Continue low-sodium diet and exercise plan.",
+    treatmentAdvice:
+      "Maintain medication adherence and return for cardiology review in six weeks.",
+    createdAt: `${DEMO_REFERENCE_DATE}T10:15:00.000Z`,
+  },
+];
+
+const prescriptionsSeed: PrescriptionRecord[] = [
+  {
+    id: "RX-2001",
+    patientId: "user-patient",
+    patientName: "Ritesh Nair",
+    doctorId: "doc-meera-iqbal",
+    doctorName: "Dr. Meera Iqbal",
+    hospitalId: "org-medivanta-general",
+    organizationId: "org-medivanta-general",
+    medicines: [
+      {
+        medicineName: "Paracetamol 500 mg",
+        dosage: "1 tablet",
+        frequency: "Three times daily",
+        duration: "3 days",
+      },
+      {
+        medicineName: "Oral rehydration salts",
+        dosage: "1 sachet",
+        frequency: "As needed",
+        duration: "3 days",
+      },
+    ],
+    instructions: "Take after meals and return if fever persists or new symptoms appear.",
+    status: "Issued",
+    createdAt: "2026-08-05T11:45:00.000Z",
+  },
+  {
+    id: "RX-2002",
+    patientId: "external:maya-joseph",
+    patientName: "Maya Joseph",
+    doctorId: "doc-anaya-sharma",
+    doctorName: "Dr. Anaya Sharma",
+    appointmentId: "APT-2003",
+    hospitalId: "org-medivanta-general",
+    organizationId: "org-medivanta-general",
+    medicines: [
+      {
+        medicineName: "Vitamin D3 60,000 IU",
+        dosage: "1 capsule",
+        frequency: "Weekly",
+        duration: "6 weeks",
+      },
+    ],
+    instructions: "Take with food once every week for six weeks.",
+    status: "Dispensed",
+    createdAt: `${DEMO_REFERENCE_DATE}T10:50:00.000Z`,
+    dispensedAt: `${DEMO_REFERENCE_DATE}T12:20:00.000Z`,
+    dispensedBy: {
+      id: "user-pharmacist",
+      name: "Rahul Sethi",
+    },
+  },
+];
+
 const labTestsSeed: LabTestRecord[] = [
   { id: "lab-cbc", name: "Complete Blood Count (CBC)" },
   { id: "lab-glucose", name: "Blood Glucose" },
@@ -436,6 +898,45 @@ const labRequestsSeed: LabRequestRecord[] = [
   },
 ];
 
+const labReportsSeed: LabReportRecord[] = [];
+export const defaultBookingCapacity: BookingCapacityRecord = {
+  doctorSlotCapacity: 1,
+  defaultMaxAppointmentsPerSession: 6,
+  labSlotCapacity: 5,
+  sessions: [
+    {
+      id: "morning",
+      label: "Morning",
+      startTime: "08:00",
+      endTime: "11:59",
+      maxAppointments: 6,
+    },
+    {
+      id: "afternoon",
+      label: "Afternoon",
+      startTime: "12:00",
+      endTime: "15:59",
+      maxAppointments: 6,
+    },
+    {
+      id: "evening",
+      label: "Evening",
+      startTime: "16:00",
+      endTime: "18:30",
+      maxAppointments: 4,
+    },
+  ],
+};
+
+export function normalizeHospitalState(state: HospitalState): HospitalState {
+  return {
+    ...state,
+    medicalRecords: state.medicalRecords ?? medicalRecordsSeed,
+    prescriptions: state.prescriptions ?? prescriptionsSeed,
+    bookingCapacity: state.bookingCapacity ?? defaultBookingCapacity,
+  };
+}
+
 export function createInitialHospitalState(): HospitalState {
   return {
     organization: {
@@ -447,8 +948,12 @@ export function createInitialHospitalState(): HospitalState {
     doctors: structuredClone(doctorsSeed),
     appointments: structuredClone(appointmentsSeed),
     queueEntries: structuredClone(queueSeed),
+    medicalRecords: structuredClone(medicalRecordsSeed),
+    prescriptions: structuredClone(prescriptionsSeed),
     labTests: structuredClone(labTestsSeed),
     labRequests: structuredClone(labRequestsSeed),
+    labReports: structuredClone(labReportsSeed),
+    bookingCapacity: structuredClone(defaultBookingCapacity),
     configuredSupportLines: 9,
   };
 }
@@ -487,7 +992,9 @@ export function getActiveQueueEntries(state: HospitalState) {
 
 export function getDashboardMetrics(state: HospitalState) {
   const todaysAppointments = state.appointments.filter(
-    (appointment) => appointment.appointmentDate === HOSPITAL_TODAY,
+    (appointment) =>
+      appointment.appointmentDate === getCurrentLocalDateIso() &&
+      appointment.status !== "Cancelled",
   ).length;
   const activeQueueCount = getActiveQueueEntries(state).length;
   const doctorsOnDuty = state.doctors.filter((doctor) => doctor.status !== "Off duty").length;
@@ -559,21 +1066,69 @@ export function validateAppointmentDraft(
     errors.appointmentTime = "Select a future appointment time.";
   }
 
-  const duplicate = state.appointments.find((appointment) => {
-    if (editingId && appointment.id === editingId) {
-      return false;
-    }
+  if (
+    draft.doctorId &&
+    draft.appointmentDate &&
+    draft.appointmentTime &&
+    isDoctorSlotFullyBooked(
+      state,
+      draft.doctorId,
+      draft.appointmentDate,
+      draft.appointmentTime,
+      editingId,
+    )
+  ) {
+    errors.appointmentTime = "This time slot is fully booked. Please choose another time.";
+  } else if (
+    draft.doctorId &&
+    draft.appointmentDate &&
+    draft.appointmentTime &&
+    isDoctorSessionFullyBooked(
+      state,
+      draft.doctorId,
+      draft.appointmentDate,
+      draft.appointmentTime,
+      editingId,
+    )
+  ) {
+    errors.appointmentTime =
+      "This doctor is fully booked for that session. Please choose another time.";
+  }
 
-    return (
-      appointment.doctorId === draft.doctorId &&
-      appointment.appointmentDate === draft.appointmentDate &&
-      appointment.appointmentTime === draft.appointmentTime &&
-      appointment.status !== "Cancelled"
-    );
-  });
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
 
-  if (duplicate) {
-    errors.appointmentTime = "The selected doctor already has an appointment at that time.";
+export function validateLabRequestDraft(
+  state: HospitalState,
+  draft: LabRequestDraft,
+) {
+  const errors: Partial<Record<keyof LabRequestDraft, string>> = {};
+  const currentLocalDate = getCurrentLocalDateIso();
+
+  if (!state.labTests.some((test) => test.id === draft.testId)) {
+    errors.testId = "Select a valid lab test.";
+  }
+
+  if (!draft.requestedDate) {
+    errors.requestedDate = "Select a preferred lab date.";
+  } else if (draft.requestedDate < currentLocalDate) {
+    errors.requestedDate = "Lab test date cannot be in the past.";
+  }
+
+  if (!draft.requestedTime) {
+    errors.requestedTime = "Select a preferred lab time.";
+  } else if (!/^\d{2}:\d{2}$/.test(draft.requestedTime)) {
+    errors.requestedTime = "Select a valid lab time.";
+  } else if (draft.requestedDate && isPastLocalTimeSlot(draft.requestedDate, draft.requestedTime)) {
+    errors.requestedTime = "Select a future lab time.";
+  } else if (
+    draft.requestedDate &&
+    isLabSlotFullyBooked(state, draft.requestedDate, draft.requestedTime)
+  ) {
+    errors.requestedTime = "This lab slot is fully booked. Please choose another time.";
   }
 
   return {

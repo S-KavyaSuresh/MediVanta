@@ -17,6 +17,7 @@ export function PatientAppointmentsView() {
     createAppointment,
     getDepartmentName,
     getDoctorName,
+    meta,
     setAppointmentStatus,
     state,
   } = useHospitalData();
@@ -78,6 +79,8 @@ export function PatientAppointmentsView() {
         key={`patient-booking-${open ? "open" : "closed"}`}
         open={open}
         organizationName={state.organization.name}
+        bookingCapacity={state.bookingCapacity}
+        appointmentSlotLoads={meta?.appointmentSlotLoads ?? []}
         departments={state.departments.filter((department) => department.id !== "dept-laboratory")}
         doctors={state.doctors.filter((doctor) => doctor.departmentId !== "dept-laboratory")}
         appointments={state.appointments}

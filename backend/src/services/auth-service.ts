@@ -10,7 +10,7 @@ import type {
 import { getCapabilitiesForRole, landingPathByRole } from "../auth/permissions.js";
 import { verifyPassword } from "../auth/password.js";
 import { DEMO_ORGANIZATION } from "./demo-data.js";
-import { loadSessions, loadUsers, saveSessions } from "./seed-service.js";
+import { loadHospitalState, loadSessions, loadUsers, saveSessions } from "./seed-service.js";
 
 const SHORT_SESSION_SECONDS = 60 * 60 * 12;
 const LONG_SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -23,6 +23,7 @@ function toSafeUser(user: UserRecord): SafeUser {
     displayName: user.displayName,
     role: user.role,
     doctorId: user.doctorId,
+    assignedDoctorId: user.assignedDoctorId,
     patientName: user.patientName,
     departmentId: user.departmentId,
     staffStatus: user.staffStatus,
@@ -32,13 +33,37 @@ function toSafeUser(user: UserRecord): SafeUser {
     bloodGroup: user.bloodGroup,
     address: user.address,
     emergencyContact: user.emergencyContact,
+    emergencyContactName: user.emergencyContactName,
+    emergencyContactPhone: user.emergencyContactPhone,
     allergies: user.allergies,
     medicalConditions: user.medicalConditions,
+    preferredLanguage: user.preferredLanguage,
+    qualifications: user.qualifications,
+    experience: user.experience,
+    languages: user.languages,
+    consultationFee: user.consultationFee,
+    availableTimings: user.availableTimings,
+    deskLabel: user.deskLabel,
+    designation: user.designation,
+    shift: user.shift,
+    professionalRegistrationNumber: user.professionalRegistrationNumber,
+    consultationMode: user.consultationMode,
+    profileVerificationStatus: user.profileVerificationStatus,
+    administrativeUnit: user.administrativeUnit,
   };
 }
 
-function getOrganizationForUser(_user: UserRecord): OrganizationRecord {
-  return DEMO_ORGANIZATION;
+async function getOrganizationForUser(user: UserRecord): Promise<OrganizationRecord> {
+  const state = await loadHospitalState();
+
+  if (state.organization.id === user.organizationId) {
+    return state.organization;
+  }
+
+  return {
+    ...DEMO_ORGANIZATION,
+    id: user.organizationId ?? DEMO_ORGANIZATION.id,
+  };
 }
 
 export async function authenticateUser(email: string, password: string) {
@@ -113,7 +138,7 @@ export async function getUserFromSession(sessionId?: string | null) {
   return user ?? null;
 }
 
-export function buildSessionPayload(user: UserRecord): AuthSessionPayload {
+export async function buildSessionPayload(user: UserRecord): Promise<AuthSessionPayload> {
   const normalizedUser = {
     ...user,
     organizationId: user.organizationId ?? DEMO_ORGANIZATION.id,
@@ -122,7 +147,7 @@ export function buildSessionPayload(user: UserRecord): AuthSessionPayload {
 
   return {
     user: toSafeUser(normalizedUser),
-    organization: getOrganizationForUser(normalizedUser),
+    organization: await getOrganizationForUser(normalizedUser),
     permissions: getCapabilitiesForRole(role) ?? [],
     landingPath: landingPathByRole[role] ?? "/dashboard",
   };

@@ -5,7 +5,7 @@ export default function PatientNotificationsPage() {
     <RolePlaceholderPage
       eyebrow="Patient Dashboard"
       title="Notifications"
-      description="Hospital notifications and reminders will be expanded in a later milestone."
+      description="Hospital notifications and reminders will appear here."
       emptyTitle="Notifications coming soon"
       emptyDescription="Only appointment-linked updates are currently reflected in your overview."
     />

@@ -15,9 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import {
+  type AppointmentSlotLoadRecord,
+  type BookingCapacityRecord,
   getCurrentLocalDateIso,
-  HOSPITAL_TODAY,
   isPastLocalTimeSlot,
+  getSessionForTime,
   type AppointmentDraft,
   type AppointmentRecord,
   type DepartmentRecord,
@@ -28,6 +30,8 @@ import { cn } from "@/lib/utils";
 type AppointmentFormModalProps = {
   open: boolean;
   organizationName: string;
+  bookingCapacity: BookingCapacityRecord;
+  appointmentSlotLoads: AppointmentSlotLoadRecord[];
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
@@ -246,7 +250,7 @@ export function DatePickerField({ value, error, onChange }: DatePickerFieldProps
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [visibleMonth, setVisibleMonth] = useState<Date>(() =>
-    value ? parseIsoDate(value) : parseIsoDate(HOSPITAL_TODAY),
+    value ? parseIsoDate(value) : parseIsoDate(getCurrentLocalDateIso()),
   );
 
   useDismissablePopover(open, () => setOpen(false), [triggerRef, popoverRef]);
@@ -445,6 +449,8 @@ export function TimePickerField({
 export function AppointmentFormModal({
   open,
   organizationName,
+  bookingCapacity,
+  appointmentSlotLoads,
   departments,
   doctors,
   appointments,
@@ -483,25 +489,89 @@ export function AppointmentFormModal({
       return new Set<string>();
     }
 
+    const sessionBookingCount = (slot: string) => {
+      const session = getSessionForTime(
+        {
+          organization: {
+            id: "org-medivanta-general",
+            name: organizationName,
+            slug: "medivanta-general",
+          },
+          departments: [],
+          doctors: [],
+          appointments: [],
+          queueEntries: [],
+          medicalRecords: [],
+          prescriptions: [],
+          labTests: [],
+          labRequests: [],
+          labReports: [],
+          bookingCapacity,
+          configuredSupportLines: 0,
+        },
+        slot,
+      );
+
+      if (!session) {
+        return 0;
+      }
+
+      return appointmentSlotLoads
+        .filter(
+          (load) =>
+            load.doctorId === draft.doctorId &&
+            load.appointmentDate === draft.appointmentDate &&
+            load.appointmentTime >= session.startTime &&
+            load.appointmentTime <= session.endTime &&
+            (!initialAppointment || load.appointmentTime !== initialAppointment.appointmentTime),
+        )
+        .reduce((total, load) => total + load.bookings, 0);
+    };
+
     return new Set(
-      appointments
-        .filter((appointment) => {
-          if (appointment.status === "Cancelled") {
-            return false;
-          }
+      timeSlots.filter((slot) => {
+        const slotBookings = appointmentSlotLoads.find(
+          (load) =>
+            load.doctorId === draft.doctorId &&
+            load.appointmentDate === draft.appointmentDate &&
+            load.appointmentTime === slot,
+        )?.bookings ?? 0;
+        const session = getSessionForTime(
+          {
+            organization: {
+              id: "org-medivanta-general",
+              name: organizationName,
+              slug: "medivanta-general",
+            },
+            departments: [],
+            doctors: [],
+            appointments: [],
+            queueEntries: [],
+            medicalRecords: [],
+            prescriptions: [],
+            labTests: [],
+            labRequests: [],
+            labReports: [],
+            bookingCapacity,
+            configuredSupportLines: 0,
+          },
+          slot,
+        );
 
-          if (initialAppointment && appointment.id === initialAppointment.id) {
-            return false;
-          }
-
-          return (
-            appointment.doctorId === draft.doctorId &&
-            appointment.appointmentDate === draft.appointmentDate
-          );
-        })
-        .map((appointment) => appointment.appointmentTime),
+        return (
+          slotBookings >= bookingCapacity.doctorSlotCapacity ||
+          Boolean(session && sessionBookingCount(slot) >= session.maxAppointments)
+        );
+      }),
     );
-  }, [appointments, draft.appointmentDate, draft.doctorId, initialAppointment]);
+  }, [
+    appointmentSlotLoads,
+    bookingCapacity,
+    draft.appointmentDate,
+    draft.doctorId,
+    initialAppointment,
+    organizationName,
+  ]);
 
   return (
     <Modal

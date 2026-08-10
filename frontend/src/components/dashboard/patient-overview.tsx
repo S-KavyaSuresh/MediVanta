@@ -22,6 +22,9 @@ export function PatientOverview() {
   const activeQueueEntry = upcomingAppointment
     ? state.queueEntries.find((entry) => entry.appointmentId === upcomingAppointment.id)
     : undefined;
+  const issuedPrescriptionCount = state.prescriptions.filter(
+    (prescription) => prescription.status === "Issued",
+  ).length;
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -47,8 +50,12 @@ export function PatientOverview() {
         />
         <StatCard
           label="Health records"
-          value="Coming soon"
-          delta="Your record hub will appear here"
+          value={String(state.medicalRecords.length)}
+          delta={
+            issuedPrescriptionCount > 0
+              ? `${issuedPrescriptionCount} issued prescription${issuedPrescriptionCount === 1 ? "" : "s"}`
+              : "No active prescriptions"
+          }
           icon={FileHeart}
         />
         <StatCard

@@ -11,7 +11,10 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { DataTable } from "@/components/ui/table";
 import { useToast } from "@/components/providers/toast-provider";
-import type { AppointmentStatus } from "@/lib/hospital-data";
+import {
+  getDoctorCapacityStatus,
+  type AppointmentStatus,
+} from "@/lib/hospital-data";
 
 const actionLabels: Partial<Record<AppointmentStatus, string>> = {
   Cancelled: "Cancel",
@@ -23,6 +26,7 @@ export default function AppointmentsPage() {
     getAllowedAppointmentStatuses,
     getDepartmentName,
     getDoctorName,
+    meta,
     setAppointmentStatus,
     state,
     updateAppointment,
@@ -98,7 +102,24 @@ export default function AppointmentsPage() {
               id: "schedule",
               key: "appointmentDate",
               header: "Schedule",
-              render: (value, row) => `${String(value)} at ${row.appointmentTime}`,
+              render: (value, row) => {
+                const capacity = getDoctorCapacityStatus(
+                  state,
+                  row.doctorId,
+                  String(value),
+                  row.appointmentTime,
+                  row.id,
+                );
+
+                return (
+                  <div className="space-y-1">
+                    <p>{String(value)} at {row.appointmentTime}</p>
+                    <p className="text-xs text-[color:var(--muted-foreground)]">
+                      {capacity.label} · {capacity.detail}
+                    </p>
+                  </div>
+                );
+              },
             },
             {
               id: "appointment-status",
@@ -168,6 +189,8 @@ export default function AppointmentsPage() {
         key={`${editingId ?? "new"}-${modalOpen ? "open" : "closed"}`}
         open={modalOpen}
         organizationName={state.organization.name}
+        bookingCapacity={state.bookingCapacity}
+        appointmentSlotLoads={meta?.appointmentSlotLoads ?? []}
         departments={state.departments}
         doctors={state.doctors.filter((doctor) => doctor.status !== "Off duty")}
         appointments={state.appointments}

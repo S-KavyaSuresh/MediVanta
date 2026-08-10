@@ -1,5 +1,5 @@
-import { PatientLabTestsView } from "@/components/dashboard/patient-lab-tests-view";
+import { PatientLabReportsView } from "@/components/dashboard/patient-lab-reports-view";
 
 export default function PatientLabReportsPage() {
-  return <PatientLabTestsView />;
+  return <PatientLabReportsView />;
 }

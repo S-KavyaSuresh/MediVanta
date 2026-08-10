@@ -9,13 +9,14 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
+import { getCurrentLocalDateIso } from "@/lib/hospital-data";
 
 export function DoctorOverview() {
   const { session } = useAuth();
   const { activeQueueEntries, state } = useHospitalData();
   const doctor = state.doctors.find((item) => item.id === session.user.doctorId);
   const todaysAppointments = state.appointments.filter(
-    (appointment) => appointment.appointmentDate === "2026-08-09",
+    (appointment) => appointment.appointmentDate === getCurrentLocalDateIso(),
   );
   const nextPatient = [...todaysAppointments].sort((left, right) =>
     left.appointmentTime.localeCompare(right.appointmentTime),

@@ -24,7 +24,12 @@ export type Capability =
   | "profile:view"
   | "notifications:view"
   | "health-records:view"
+  | "health-records:create"
+  | "patient:create"
   | "prescriptions:view"
+  | "prescription:create"
+  | "prescription:dispense"
+  | "profile:update"
   | "lab-reports:view"
   | "billing:view"
   | "schedule:view"
@@ -32,12 +37,25 @@ export type Capability =
   | "operations:view"
   | "laboratory:view"
   | "pharmacy:view"
-  | "lab-request:create";
+  | "lab-request:create"
+  | "lab-request:update"
+  | "lab-report:create";
 
 export type OrganizationRecord = {
   id: string;
   name: string;
   slug: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  emergencyContact?: string;
+  operatingHours?: string;
+  timezone?: string;
+  defaultLanguage?: string;
+  emergencyServicesEnabled?: boolean;
+  defaultConsultationSlotDurationMinutes?: number;
 };
 
 export type DepartmentStatus =
@@ -69,6 +87,8 @@ export type LabRequestStatus =
   | "Processing"
   | "Completed";
 
+export type PrescriptionStatus = "Issued" | "Dispensed";
+
 export type DepartmentRecord = {
   id: string;
   organizationId: string;
@@ -93,6 +113,7 @@ export type DoctorRecord = {
 export type AppointmentRecord = {
   id: string;
   organizationId: string;
+  patientId?: string;
   patientName: string;
   doctorId: string;
   departmentId: string;
@@ -134,14 +155,114 @@ export type LabRequestRecord = {
   createdAt: string;
 };
 
+export type LabReportAttachmentRecord = {
+  fileName: string;
+  contentType: "application/pdf";
+  fileSize: number;
+  contentBase64: string;
+};
+
+export type LabReportRecord = {
+  id: string;
+  labRequestId: string;
+  patientId: string;
+  hospitalId: string;
+  organizationId: string;
+  testName: string;
+  reportTitle: string;
+  resultSummary: string;
+  uploadedAt: string;
+  uploadedBy: {
+    id: string;
+    name: string;
+  };
+  attachment?: LabReportAttachmentRecord;
+};
+
+export type MedicalRecordRecord = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  appointmentId?: string;
+  hospitalId: string;
+  organizationId: string;
+  visitDate: string;
+  diagnosis: string;
+  clinicalNotes: string;
+  treatmentAdvice: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type PrescriptionMedicineRecord = {
+  medicineName: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+};
+
+export type PrescriptionRecord = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  hospitalId: string;
+  organizationId: string;
+  appointmentId?: string;
+  medicines: PrescriptionMedicineRecord[];
+  instructions: string;
+  status: PrescriptionStatus;
+  createdAt: string;
+  dispensedAt?: string;
+  dispensedBy?: {
+    id: string;
+    name: string;
+  };
+};
+
+export type BookingSessionCapacityRecord = {
+  id: string;
+  label: string;
+  startTime: string;
+  endTime: string;
+  maxAppointments: number;
+};
+
+export type BookingCapacityRecord = {
+  doctorSlotCapacity: number;
+  defaultMaxAppointmentsPerSession: number;
+  labSlotCapacity: number;
+  sessions: BookingSessionCapacityRecord[];
+};
+
+export type AppointmentSlotLoadRecord = {
+  doctorId: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  bookings: number;
+};
+
+export type LabSlotLoadRecord = {
+  requestedDate: string;
+  requestedTime: string;
+  bookings: number;
+};
+
 export type HospitalState = {
   organization: OrganizationRecord;
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
   queueEntries: QueueEntryRecord[];
+  medicalRecords: MedicalRecordRecord[];
+  prescriptions: PrescriptionRecord[];
   labTests: LabTestRecord[];
   labRequests: LabRequestRecord[];
+  labReports: LabReportRecord[];
+  bookingCapacity: BookingCapacityRecord;
   configuredSupportLines: number;
 };
 
@@ -153,6 +274,7 @@ export type UserRecord = {
   role: UserRole;
   passwordHash: string;
   doctorId?: string;
+  assignedDoctorId?: string;
   patientName?: string;
   departmentId?: string;
   staffStatus?: string;
@@ -162,8 +284,23 @@ export type UserRecord = {
   bloodGroup?: string;
   address?: string;
   emergencyContact?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
   allergies?: string;
   medicalConditions?: string;
+  preferredLanguage?: string;
+  qualifications?: string;
+  experience?: string;
+  languages?: string;
+  consultationFee?: string;
+  availableTimings?: string;
+  deskLabel?: string;
+  designation?: string;
+  shift?: string;
+  professionalRegistrationNumber?: string;
+  consultationMode?: string;
+  profileVerificationStatus?: string;
+  administrativeUnit?: string;
   resetTokenHash?: string;
   resetOtpHash?: string;
   resetExpiresAt?: string;
@@ -193,6 +330,9 @@ export type HospitalStateResponse = {
   meta?: {
     userCounts?: Record<UserRole, number>;
     users?: SafeUser[];
+    patientProfiles?: SafeUser[];
+    appointmentSlotLoads?: AppointmentSlotLoadRecord[];
+    labSlotLoads?: LabSlotLoadRecord[];
   };
 };
 
@@ -207,4 +347,33 @@ export type LabRequestDraft = {
   testId: string;
   requestedDate: string;
   requestedTime: string;
+};
+
+export type LabReportDraft = {
+  reportTitle: string;
+  resultSummary: string;
+  attachment?: LabReportAttachmentRecord;
+};
+
+export type MedicalRecordDraft = {
+  patientId: string;
+  appointmentId?: string;
+  visitDate: string;
+  diagnosis: string;
+  clinicalNotes: string;
+  treatmentAdvice: string;
+};
+
+export type PrescriptionMedicineDraft = {
+  medicineName: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+};
+
+export type PrescriptionDraft = {
+  patientId: string;
+  appointmentId?: string;
+  medicines: PrescriptionMedicineDraft[];
+  instructions: string;
 };

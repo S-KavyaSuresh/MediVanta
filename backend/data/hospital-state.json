@@ -189,6 +189,17 @@
   ],
   "appointments": [
     {
+      "id": "APT-2019",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-anaya-sharma",
+      "departmentId": "dept-general-medicine",
+      "appointmentDate": "2026-08-10",
+      "appointmentTime": "13:00",
+      "status": "Scheduled",
+      "patientId": "user-patient"
+    },
+    {
       "id": "APT-2018",
       "organizationId": "org-medivanta-general",
       "patientName": "Ritesh Nair",
@@ -196,7 +207,8 @@
       "departmentId": "dept-pediatrics",
       "appointmentDate": "2026-08-10",
       "appointmentTime": "08:00",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2017",
@@ -206,7 +218,8 @@
       "departmentId": "dept-pediatrics",
       "appointmentDate": "2026-08-12",
       "appointmentTime": "10:00",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2016",
@@ -216,7 +229,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-10",
       "appointmentTime": "16:30",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2015",
@@ -226,7 +240,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-20",
       "appointmentTime": "16:30",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2014",
@@ -236,7 +251,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-18",
       "appointmentTime": "16:30",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2013",
@@ -246,7 +262,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "23:35",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2012",
@@ -256,7 +273,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-16",
       "appointmentTime": "16:30",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2011",
@@ -266,7 +284,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "23:34",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2010",
@@ -276,7 +295,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-14",
       "appointmentTime": "16:30",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2009",
@@ -286,7 +306,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "23:33",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2008",
@@ -296,7 +317,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-14",
       "appointmentTime": "16:00",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2007",
@@ -306,7 +328,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-12",
       "appointmentTime": "15:00",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2001",
@@ -316,7 +339,8 @@
       "departmentId": "dept-cardiology",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "09:30",
-      "status": "Checked in"
+      "status": "Checked in",
+      "patientId": "external:aarav-verma"
     },
     {
       "id": "APT-2002",
@@ -326,7 +350,8 @@
       "departmentId": "dept-radiology",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "10:00",
-      "status": "In consultation"
+      "status": "In consultation",
+      "patientId": "external:sana-khan"
     },
     {
       "id": "APT-2003",
@@ -336,7 +361,8 @@
       "departmentId": "dept-general-medicine",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "10:45",
-      "status": "Completed"
+      "status": "Completed",
+      "patientId": "external:maya-joseph"
     },
     {
       "id": "APT-2004",
@@ -346,7 +372,8 @@
       "departmentId": "dept-pediatrics",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "11:15",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "user-patient"
     },
     {
       "id": "APT-2005",
@@ -356,7 +383,8 @@
       "departmentId": "dept-orthopedics",
       "appointmentDate": "2026-08-09",
       "appointmentTime": "12:10",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "external:ishita-das"
     },
     {
       "id": "APT-2006",
@@ -366,7 +394,8 @@
       "departmentId": "dept-neurology",
       "appointmentDate": "2026-08-10",
       "appointmentTime": "14:00",
-      "status": "Scheduled"
+      "status": "Scheduled",
+      "patientId": "external:kabir-patel"
     }
   ],
   "queueEntries": [
@@ -438,6 +467,34 @@
     }
   ],
   "labRequests": [
+    {
+      "id": "LABREQ-5008",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-glucose",
+      "testName": "Blood Glucose",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-10",
+      "requestedTime": "15:00",
+      "status": "Completed",
+      "createdAt": "2026-08-10T04:25:56.711Z"
+    },
+    {
+      "id": "LABREQ-5007",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "patientName": "Ritesh Nair",
+      "testId": "lab-glucose",
+      "testName": "Blood Glucose",
+      "departmentId": "dept-laboratory",
+      "requestedDate": "2026-08-10",
+      "requestedTime": "09:30",
+      "status": "Completed",
+      "createdAt": "2026-08-10T03:42:59.008Z"
+    },
     {
       "id": "LABREQ-5006",
       "patientId": "user-patient",
@@ -521,6 +578,280 @@
       "patientId": "user-patient",
       "hospitalId": "org-medivanta-general",
       "createdAt": "2026-08-09T09:00:00.000Z"
+    }
+  ],
+  "labReports": [
+    {
+      "id": "LABRPT-7002",
+      "labRequestId": "LABREQ-5008",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "testName": "Blood Glucose",
+      "reportTitle": "CBC",
+      "resultSummary": "Everything normal",
+      "uploadedAt": "2026-08-10T04:27:11.176Z",
+      "uploadedBy": {
+        "id": "user-laboratory",
+        "name": "Nisha Balan"
+      },
+      "attachment": {
+        "fileName": "Bharat_Suraksha_AI_OnePager (1).pdf",
+        "contentType": "application/pdf",
+        "fileSize": 5931,
+        "contentBase64": "JVBERi0xLjQKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUiAvRjMgNCAwIFIgL0Y0IDUgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0Jhc2VGb250IC9IZWx2ZXRpY2EtQm9sZCAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjIgL1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago0IDAgb2JqCjw8Ci9CYXNlRm9udCAvWmFwZkRpbmdiYXRzIC9OYW1lIC9GMyAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0Jhc2VGb250IC9TeW1ib2wgL05hbWUgL0Y0IC9TdWJ0eXBlIC9UeXBlMSAvVHlwZSAvRm9udAo+PgplbmRvYmoKNiAwIG9iago8PAovQ29udGVudHMgMTAgMCBSIC9NZWRpYUJveCBbIDAgMCA1OTUuMjc1NiA4NDEuODg5OCBdIC9QYXJlbnQgOSAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNyAwIG9iago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDkgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iago4IDAgb2JqCjw8Ci9BdXRob3IgKFwoYW5vbnltb3VzXCkpIC9DcmVhdGlvbkRhdGUgKEQ6MjAyNjA4MDkxNDMxNDYrMDAnMDAnKSAvQ3JlYXRvciAoXCh1bnNwZWNpZmllZFwpKSAvS2V5d29yZHMgKCkgL01vZERhdGUgKEQ6MjAyNjA4MDkxNDMxNDYrMDAnMDAnKSAvUHJvZHVjZXIgKFJlcG9ydExhYiBQREYgTGlicmFyeSAtIFwob3BlbnNvdXJjZVwpKSAKICAvU3ViamVjdCAoXCh1bnNwZWNpZmllZFwpKSAvVGl0bGUgKEJoYXJhdCBTdXJha3NoYSBBSSAtIE9uZSBQYWdlcikgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago5IDAgb2JqCjw8Ci9Db3VudCAxIC9LaWRzIFsgNiAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjEwIDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDQyNzcKPj4Kc3RyZWFtCkdiISNfRDArRSUnKW5KMDBwVD86T3U4Q1tVXEVUVVghLyZJRVxZIT04RzlMNz9jSE9UYEx1MDhKYEhfJWYwK0ghI2IqZVkncFopMFIqZVVCNTJBQk5UdTtKMjw7ZDpCS1I9VyFkclMsMCxHUFI9UT5WaTQtMF5ISHI6XlpGQjNKITxXVUtXI0ZhYClTOUc/OThAR1MuXUM6WmcyUT5RQzxkQCJlJlNrJWYpUmdAa1wqak1dPDFYZmMjSzgzUWphWS5RQFszZVFyW1BjUkNDaGxyZEArZF5YVENRJnM4TmFZakovJm9wWSQvWl4najtdLm1nTTYlMUFqOHVIbEUiQCtlQEo6MUFYVTReWW4rJF5xWFVkZHJLUEZdL0hxZmdXITRJZlA2bjxpIV0rNExPWTRxQ10tSmhsci1MJVUmLktEZXRrbEQsPFwhP0I5TzpqNyItUScoTjlDTmNfUXAhOjBPM1tGc0Eocy9CNmBUSVlDJytYcCNdR1FIVChLM0xmT20rcDNzXG8yJWkrKz8rQTU6MVYhW247SHE1RVFCQlFORF4/QWoiTSc6UytNTDdERi9kcihOTStlQkhhKmwrKmkuP0A9bC4uVmooOVMiTnM3YFJMUDNSaDlRcWdtPlAlN0ksLihoR0taUGFXJDhCNTJFbCFfZixsV1dJNTJkYjdick9mQzopSGE5IztSL2w9TWhcW1tGL3JGQl4wMDc6TGcnanI3XFY+RyJHaDAmJVojNlwnSlIjUkAsJGAjc0YmLC1BSiYobF8qOmFaKXVSZU03U0ZQZzpkO0M/X1A/VVhiIyZrcGRIZzZLVSQ4QTw/I24yTjFHIyVDY3NCPUYySyshZz5uJmtwLC5hWyxRL1pyKFtCQiJuU2VmMUo1WTInZ1cxTSxHWSdFK1g+N1klR1MtTWZfOGcsOUtpSi1mY2xBK0BsW2ohXDBzcEhcUDEoXU1tJyREUi0nUGRJZnJZcC5XNC4tPkswcFIlUVg/K2BtXmBpPmI2LFIiXyg2VFFqPEBvMWk4RklWTSktTlxfcCQtNjpQQjVAaTNWODNFZ01JKEpEOj9XQ0JmQWppY15kZlNSSl5iMGlYYkhtXFZOU0o/TWg4M1xrPkoxIlJyTzltclwkIUAiP01udUcxNjdzUyouTGMqQixWcD1uLFBhWl0vXkokO2AoOkFIZEtHV1spJHNANj5sc0lXS15dT0Uhb0pUQysqXGJTaWJyJEolLyl1bztGXUEiIylYWTJQXTshZmI+aGA0NGJ1NyhMQEVfS28yXjwhKEU1Y08qWCM4TywwISYnPVMsNEtgRzIhIT4pSFJmX14pbjwnSEJTTTFkIVFLKSM/NkFycmFRcy43YjZbZSUwRExZUkU+YS1iNEZPKnJacVsiSFkqcStkSSdYLnRtXSwta1YiXUYyMTxSKUknXFErY089c0lAQ1gsMm1AQkhQO0tiZzk/ZllZOkVNa2AzWjYkUmpJMkpbPiY4ZFslXCs5RCw2QWIpYFQrL1YvcUllaEB0JERqW1BuXF4lUCcsJ0c+TiouQjA5TD5AITxORSE9MChHIkJkQmxTc0YmRSJxLyFWcHBbc0IwWHNqYSRsY0dXXl40VVQiPkhlaixQSGs9NV4lW2hfWjpxOCFKRURgX3NVI01dWT07K2w8UmNhajszN3IoTnFlVXItXFIhbi5fQktrNGN1VjZXaTZzRXBgcTxmZmotWCxXQVBXPiswLzkwRzlba10+X2crJVReL1gpZ0A/Ulo6WVpOM2thI0Esc2VBLzUqPWVrUm5XLVMlbUQ5JG81S1I+Y245T2A0VjM1az90WVleUDM+SUYqb0RraVM3RU9YRSMrLkEwSlFKOFYxREU5VmhpWDIlXTYsbClpakxUUl45aSY5NDFTSERyKE5vWGQxOSREJj5YXTpoSDlmTSNeJE4/aylQP2NnQ29LS0tGJlE3TGBVN0AxKUxZMzZNV2YiWCM4aEVJXEhLajtARCZpMFQqXmlybXBPLFBcMzo1UU80dUBHaiFEbldecTQqYCkrK089NSpyWT8uRV9aLTpAXkh1MmNQKm0+R0UtPT9QdHJKUjFpNC86LFNtTFtnOW8/VUtOa1JqQi9oV1YwKyNXQCgrLnNHVjZsJ04kbzlZIztsb21kVUo+UFRYWGU6dTM7Qmk3UT9pKHJJMmsqJjU7PE50QCMuLVQ+VCZUX3ROYDhtVj4+WzYrOl1nPkQ+XEVFcWohRmoyPFBWTXNiRDNxaUQpNHBRX0xnWUoiS2hLb0tmRz1gTSYwYU0sMHBAXSZQX1JZdGtwX3NmSyhCZSg5WEEraShQazN1YVZPTGc3J24kZExGZElkTTBcZU9OJ3I7W0Q8JDpXNEtTXkQ7XiJJQmBHM0tFLTNacStHaDJwPjBrOCldLFAsdEk8PWhhIS5nWSNmSVhGVHNOZyJiTFlwYz8+azplZlM7QjVya05zKCsmYlhKJEslMnBvV0MpQnNMYUhRXy9NPiNFIio7Jzs+R0s3JDhYQmlmRDQ9MCcnTyhTVDUrbm5KUG46STZhI2VYKF9uP28hM09AUW5lXzVrQW5aIkFdVjgvO1MrMz5fTl9NUClAP05MWV83TnJvTS5hTl4mLCQmZExeXDo3ITNiZ1AwISQsKiJwK0A+TnVqaFs6aDRENTwiIW03QkRcWSpmbnFiTydEK2xzJSo9RDFmKj9tYFE8MSRmYmFTJlpmMm1EU2tPWkEkNGZTJkFeVUByVWl1UVlNV0wsU2ppJFhxaU1RK3QhcCphL109dTZBVm0vOFJyQk0iTjIoSjonJHA5RzhYZldQVXBsbGg3JmVyaS5BZFs4czFnPT9iMW04N0lUTW4+XXAoWmtbJVAlRl5ISlNITiJMOihOWjQzRlYkWTA7b1xRcVxVNU1bX0xeXGJYPDdvL2VdQ0VJX15dOVpIYVtnW202I2cvKHM9V0dfb09AYz9VQjlIbz9zR0twXGhgS0phcmRsPWFVbiE4dCJxRUJTJCFkTWhLLCthNSJTJlNFITBMLnE8VDBRUTtaOy4vYHAoaV9yaTEyNDBNJiwtLXVPJERARCoyJyJxPGo8Uj9iQFUpUHNhcz9SWT4oWk0jNWZqT00zS2BuVFlTJTYlV09APk82N2hpNyYnSHUtZFwzdC5KdWpVV2E5T2lKJjRvMW1YI1gvNjQlZmckPVNdREo9MzgzNCxeOFZ0YExhUD1oPTdwJS9NUV1IRzsubWVnPVciWEQvXS9GM2pYbUc5Vz03X09FSHFyT1hJSXNhbEBBPk0pKis9bjtXWDspJi5VZ2UkVXVWSj1tVTNocUFPbT1wcUQvMz5iU14lJ0ZyVEdbLjlxSGpzYlpqQTZLWFRgTiVsVTpSMkw1WEVzZTFpT2JpRSEjLi8zZHRtQTY0ZGVbcFpcdXBDPEhzdUZyXl5MUGMoUGI5Nj4vXD8qMlRlITBza3BXOVNkVjpHV2IqN2o2KC80cWk2WjxiT0YnS3RYT2ZsUyJmK21uNEhoa2A8RktvQnI4dTI8ciI6Tz0sMyllSjZqLkFOJCZnM3E0WmRhNF4oPkI8UDgmbE5oOVppZWZVVE1uOVAoTFVOOFgkVT9sLjRIMlAoaD1OZmVePEQyVWQ7Li5EXVojOyVyNzNUbm85QTdEcCxxYHFuJ1lWWmNJNlc9V3RNUXJtciMvXWo/ZkVxYTlZVCZuYi5mU3A+dE9LSS9CTTppTWo/VnFSSlgycnMuRG5UJSZlPTI3dUI2XTlZT1UxU0BWYENzUzw8XXAqTThoIVQiQ0tALG5MOjU7MT4pZk1iWi0nI0lKLC9rTC9dVFRzbSFRKyk/KCt0ZmsyRUJyP3BKS19bMDltXC4nOzpIXWU+NmIvRHIwTzhVMmw/Ki83Uz85LUpEKjsrJSQ7b1dCLWMsMSk2ZmZGVXUtXVNkbk80NDo6LFwpMzdANE8xMjZkVDFHYzBBNiEzTG8lWUxBSDgzRypDJSlJZGlET0tJXD1GV2NRPVc7PDYiNjg1QDY3I01WTU5rJmNWPS5NZUdWcGFyTDsqYyNlOWldXGJzLDsuJj1LYjJFZUQnMSN1UVFfMi5NQCMxcz8zXSQuVlxVMSktW0wqOUMiQEc9MlZeOlJncCtqPkdAMSRSZkYuJDE/QkdzREd0MUY9XXNwZjpeLURAVU08OWF0SS0qaTArOUtCXWdXKSRNJVByTjtsKUBxYVZKLkZWIkhaLD1yKV5wUF5vZF9WbDZXZmlbbWlHQ3JUXGMhUyYoMkUtO24hQ0NoPmRCX2tjSDlzL2dSUFApYF11XUNBWDwiPTszQVcuTUImb0I9NV8rZnBmZTo2OUs5Mj1eS190T1A8ODRoTGZTWiRAOj5xMGFpJ3EjUE5ASTAmYCM0ZkBLS08/aTgxR0o8aFljdUpKLVJVb0JFW1wvUDJ1Y1VMQy03MF5EL09CT11OPDNIXUlWcT1HRGwlUmVdVVByRCQ/SG5sYC0rMC1Oc0M7aCs3TEJyZ1BiInMzMT1kSnJaJW08RnFUbU5bJF5JQ3BbPG5AYVVZMG1YYltiWUU/PGQmRz4qKzBEYGQ2Z3M/IV0lLCs6PSw+NG4vNTkqVU9zZik3THUnWyhvayk2MitELEk5Y0ksR1IpUGViKTYnc00nZGY3PSpLXyFqbExcam03PFInPFNYblEjKnJKLFpePzwuYClwRjc0WkFSOG0pUUprLk9FKmdYVVJTP1gvKm0wWiRpWC9XZUhlOj4nQjBrdEMoKHVraiV1TSVUbXN1Kz0lSylbUywhVShdYVQxLjcxQ1BxTWAyM1YrLFwuTFcrJHU2YyxpY2spIm0/V05OXD1WPz5XMScxNFkrZSFJMmBrVypzOVpOOjMjQmphNTNqMSo9P2tudEAkXU5QKmRbTFdiSG5mRSlSXk1UIktFK1dvUi8mIjAkWkhwMihFOyNXRTo2XT5TSmljZlFgJTdSb0Y4YCchRGZdWUJAOS1YUCNvVj0wVmxuYCQ9NUFNQlZtcTwjWjJvZkFPVS10TWA/ISUsZ2BUXWU1MGUoTz4+WHMxWmBZLWZmPFU4SjldKEo/XmRUQnJsPG5aQWMqTGUiXVtBaylQcC9EIm47bnBJOlRMVkJpZ0hNTiNtUT1IVHFtT2k+ImVdTzAybnNkcDhWaGRoRz5MZjA1I14pS0h0IXV1b2dWTTpgVm1yZmtaMEFKbl0hWlZMdF84Rmg0cio9WyoyRilibkQ1Nj41TC5OMl5RRE03KEM8dD44UG9Ga1pbOnIjK3JLPV07KlFOUU1MNEFCSUo6VkZDRyojbTlyK1FCTUIiXFdEWnBtcHRcTVknQChIIW5tNylzMmAmKltUalc4JkFoTjAzcWg+M2RSckMiL1g6VlpwK0E4LE5XUy5nUXJzYylHL0k5aExpa2hMNyJdSzJAZ2FRKGJIRmNtSCRpZVxxRyQsJjclK1hyQTRyTyY6NlVuOzQ7JEhYYz5OXi1PQltqJTdYJURdYSlFPW4zMUoyQ0BEbC02T08jYyhVJ2toKDsiTF8mRHE8RUU1RW4qP1w/JiM9YmkpOz84Kzk5YW9LQjJbO0lzMT8kKTBTJm5aWjtNTShSKyFGSk5Rbl9ORGdXYW8iWUoybD8ubG1SITclSVBxcW82ME4kL0NLcmBxT2soJEkkNVtCWm5OZiROTDZaJURdRmdJN0YkOWxFcjM/YTs2ak5bXSkkSVMmX34+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgMTEKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDIyOSAwMDAwMCBuIAowMDAwMDAwMzQxIDAwMDAwIG4gCjAwMDAwMDA0MjQgMDAwMDAgbiAKMDAwMDAwMDUwMSAwMDAwMCBuIAowMDAwMDAwNzA1IDAwMDAwIG4gCjAwMDAwMDA3NzMgMDAwMDAgbiAKMDAwMDAwMTA3MCAwMDAwMCBuIAowMDAwMDAxMTI5IDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPGM1ZmI0ZTUxZmUyZmYzY2JiNDE1MDc2NzkwZGIzNDNhPjxjNWZiNGU1MWZlMmZmM2NiYjQxNTA3Njc5MGRiMzQzYT5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gOCAwIFIKL1Jvb3QgNyAwIFIKL1NpemUgMTEKPj4Kc3RhcnR4cmVmCjU0OTgKJSVFT0YK"
+      }
+    },
+    {
+      "id": "LABRPT-7001",
+      "labRequestId": "LABREQ-5007",
+      "patientId": "user-patient",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "testName": "Blood Glucose",
+      "reportTitle": "Blood Glucose",
+      "resultSummary": "Everything normal",
+      "uploadedAt": "2026-08-10T03:45:05.459Z",
+      "uploadedBy": {
+        "id": "user-laboratory",
+        "name": "Nisha Balan"
+      },
+      "attachment": {
+        "fileName": "Bharat_Suraksha_AI_OnePager.pdf",
+        "contentType": "application/pdf",
+        "fileSize": 5931,
+        "contentBase64": "JVBERi0xLjQKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUiAvRjMgNCAwIFIgL0Y0IDUgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0Jhc2VGb250IC9IZWx2ZXRpY2EtQm9sZCAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjIgL1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago0IDAgb2JqCjw8Ci9CYXNlRm9udCAvWmFwZkRpbmdiYXRzIC9OYW1lIC9GMyAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0Jhc2VGb250IC9TeW1ib2wgL05hbWUgL0Y0IC9TdWJ0eXBlIC9UeXBlMSAvVHlwZSAvRm9udAo+PgplbmRvYmoKNiAwIG9iago8PAovQ29udGVudHMgMTAgMCBSIC9NZWRpYUJveCBbIDAgMCA1OTUuMjc1NiA4NDEuODg5OCBdIC9QYXJlbnQgOSAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNyAwIG9iago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDkgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iago4IDAgb2JqCjw8Ci9BdXRob3IgKFwoYW5vbnltb3VzXCkpIC9DcmVhdGlvbkRhdGUgKEQ6MjAyNjA4MDkxNDMxNDYrMDAnMDAnKSAvQ3JlYXRvciAoXCh1bnNwZWNpZmllZFwpKSAvS2V5d29yZHMgKCkgL01vZERhdGUgKEQ6MjAyNjA4MDkxNDMxNDYrMDAnMDAnKSAvUHJvZHVjZXIgKFJlcG9ydExhYiBQREYgTGlicmFyeSAtIFwob3BlbnNvdXJjZVwpKSAKICAvU3ViamVjdCAoXCh1bnNwZWNpZmllZFwpKSAvVGl0bGUgKEJoYXJhdCBTdXJha3NoYSBBSSAtIE9uZSBQYWdlcikgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago5IDAgb2JqCjw8Ci9Db3VudCAxIC9LaWRzIFsgNiAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjEwIDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDQyNzcKPj4Kc3RyZWFtCkdiISNfRDArRSUnKW5KMDBwVD86T3U4Q1tVXEVUVVghLyZJRVxZIT04RzlMNz9jSE9UYEx1MDhKYEhfJWYwK0ghI2IqZVkncFopMFIqZVVCNTJBQk5UdTtKMjw7ZDpCS1I9VyFkclMsMCxHUFI9UT5WaTQtMF5ISHI6XlpGQjNKITxXVUtXI0ZhYClTOUc/OThAR1MuXUM6WmcyUT5RQzxkQCJlJlNrJWYpUmdAa1wqak1dPDFYZmMjSzgzUWphWS5RQFszZVFyW1BjUkNDaGxyZEArZF5YVENRJnM4TmFZakovJm9wWSQvWl4najtdLm1nTTYlMUFqOHVIbEUiQCtlQEo6MUFYVTReWW4rJF5xWFVkZHJLUEZdL0hxZmdXITRJZlA2bjxpIV0rNExPWTRxQ10tSmhsci1MJVUmLktEZXRrbEQsPFwhP0I5TzpqNyItUScoTjlDTmNfUXAhOjBPM1tGc0Eocy9CNmBUSVlDJytYcCNdR1FIVChLM0xmT20rcDNzXG8yJWkrKz8rQTU6MVYhW247SHE1RVFCQlFORF4/QWoiTSc6UytNTDdERi9kcihOTStlQkhhKmwrKmkuP0A9bC4uVmooOVMiTnM3YFJMUDNSaDlRcWdtPlAlN0ksLihoR0taUGFXJDhCNTJFbCFfZixsV1dJNTJkYjdick9mQzopSGE5IztSL2w9TWhcW1tGL3JGQl4wMDc6TGcnanI3XFY+RyJHaDAmJVojNlwnSlIjUkAsJGAjc0YmLC1BSiYobF8qOmFaKXVSZU03U0ZQZzpkO0M/X1A/VVhiIyZrcGRIZzZLVSQ4QTw/I24yTjFHIyVDY3NCPUYySyshZz5uJmtwLC5hWyxRL1pyKFtCQiJuU2VmMUo1WTInZ1cxTSxHWSdFK1g+N1klR1MtTWZfOGcsOUtpSi1mY2xBK0BsW2ohXDBzcEhcUDEoXU1tJyREUi0nUGRJZnJZcC5XNC4tPkswcFIlUVg/K2BtXmBpPmI2LFIiXyg2VFFqPEBvMWk4RklWTSktTlxfcCQtNjpQQjVAaTNWODNFZ01JKEpEOj9XQ0JmQWppY15kZlNSSl5iMGlYYkhtXFZOU0o/TWg4M1xrPkoxIlJyTzltclwkIUAiP01udUcxNjdzUyouTGMqQixWcD1uLFBhWl0vXkokO2AoOkFIZEtHV1spJHNANj5sc0lXS15dT0Uhb0pUQysqXGJTaWJyJEolLyl1bztGXUEiIylYWTJQXTshZmI+aGA0NGJ1NyhMQEVfS28yXjwhKEU1Y08qWCM4TywwISYnPVMsNEtgRzIhIT4pSFJmX14pbjwnSEJTTTFkIVFLKSM/NkFycmFRcy43YjZbZSUwRExZUkU+YS1iNEZPKnJacVsiSFkqcStkSSdYLnRtXSwta1YiXUYyMTxSKUknXFErY089c0lAQ1gsMm1AQkhQO0tiZzk/ZllZOkVNa2AzWjYkUmpJMkpbPiY4ZFslXCs5RCw2QWIpYFQrL1YvcUllaEB0JERqW1BuXF4lUCcsJ0c+TiouQjA5TD5AITxORSE9MChHIkJkQmxTc0YmRSJxLyFWcHBbc0IwWHNqYSRsY0dXXl40VVQiPkhlaixQSGs9NV4lW2hfWjpxOCFKRURgX3NVI01dWT07K2w8UmNhajszN3IoTnFlVXItXFIhbi5fQktrNGN1VjZXaTZzRXBgcTxmZmotWCxXQVBXPiswLzkwRzlba10+X2crJVReL1gpZ0A/Ulo6WVpOM2thI0Esc2VBLzUqPWVrUm5XLVMlbUQ5JG81S1I+Y245T2A0VjM1az90WVleUDM+SUYqb0RraVM3RU9YRSMrLkEwSlFKOFYxREU5VmhpWDIlXTYsbClpakxUUl45aSY5NDFTSERyKE5vWGQxOSREJj5YXTpoSDlmTSNeJE4/aylQP2NnQ29LS0tGJlE3TGBVN0AxKUxZMzZNV2YiWCM4aEVJXEhLajtARCZpMFQqXmlybXBPLFBcMzo1UU80dUBHaiFEbldecTQqYCkrK089NSpyWT8uRV9aLTpAXkh1MmNQKm0+R0UtPT9QdHJKUjFpNC86LFNtTFtnOW8/VUtOa1JqQi9oV1YwKyNXQCgrLnNHVjZsJ04kbzlZIztsb21kVUo+UFRYWGU6dTM7Qmk3UT9pKHJJMmsqJjU7PE50QCMuLVQ+VCZUX3ROYDhtVj4+WzYrOl1nPkQ+XEVFcWohRmoyPFBWTXNiRDNxaUQpNHBRX0xnWUoiS2hLb0tmRz1gTSYwYU0sMHBAXSZQX1JZdGtwX3NmSyhCZSg5WEEraShQazN1YVZPTGc3J24kZExGZElkTTBcZU9OJ3I7W0Q8JDpXNEtTXkQ7XiJJQmBHM0tFLTNacStHaDJwPjBrOCldLFAsdEk8PWhhIS5nWSNmSVhGVHNOZyJiTFlwYz8+azplZlM7QjVya05zKCsmYlhKJEslMnBvV0MpQnNMYUhRXy9NPiNFIio7Jzs+R0s3JDhYQmlmRDQ9MCcnTyhTVDUrbm5KUG46STZhI2VYKF9uP28hM09AUW5lXzVrQW5aIkFdVjgvO1MrMz5fTl9NUClAP05MWV83TnJvTS5hTl4mLCQmZExeXDo3ITNiZ1AwISQsKiJwK0A+TnVqaFs6aDRENTwiIW03QkRcWSpmbnFiTydEK2xzJSo9RDFmKj9tYFE8MSRmYmFTJlpmMm1EU2tPWkEkNGZTJkFeVUByVWl1UVlNV0wsU2ppJFhxaU1RK3QhcCphL109dTZBVm0vOFJyQk0iTjIoSjonJHA5RzhYZldQVXBsbGg3JmVyaS5BZFs4czFnPT9iMW04N0lUTW4+XXAoWmtbJVAlRl5ISlNITiJMOihOWjQzRlYkWTA7b1xRcVxVNU1bX0xeXGJYPDdvL2VdQ0VJX15dOVpIYVtnW202I2cvKHM9V0dfb09AYz9VQjlIbz9zR0twXGhgS0phcmRsPWFVbiE4dCJxRUJTJCFkTWhLLCthNSJTJlNFITBMLnE8VDBRUTtaOy4vYHAoaV9yaTEyNDBNJiwtLXVPJERARCoyJyJxPGo8Uj9iQFUpUHNhcz9SWT4oWk0jNWZqT00zS2BuVFlTJTYlV09APk82N2hpNyYnSHUtZFwzdC5KdWpVV2E5T2lKJjRvMW1YI1gvNjQlZmckPVNdREo9MzgzNCxeOFZ0YExhUD1oPTdwJS9NUV1IRzsubWVnPVciWEQvXS9GM2pYbUc5Vz03X09FSHFyT1hJSXNhbEBBPk0pKis9bjtXWDspJi5VZ2UkVXVWSj1tVTNocUFPbT1wcUQvMz5iU14lJ0ZyVEdbLjlxSGpzYlpqQTZLWFRgTiVsVTpSMkw1WEVzZTFpT2JpRSEjLi8zZHRtQTY0ZGVbcFpcdXBDPEhzdUZyXl5MUGMoUGI5Nj4vXD8qMlRlITBza3BXOVNkVjpHV2IqN2o2KC80cWk2WjxiT0YnS3RYT2ZsUyJmK21uNEhoa2A8RktvQnI4dTI8ciI6Tz0sMyllSjZqLkFOJCZnM3E0WmRhNF4oPkI8UDgmbE5oOVppZWZVVE1uOVAoTFVOOFgkVT9sLjRIMlAoaD1OZmVePEQyVWQ7Li5EXVojOyVyNzNUbm85QTdEcCxxYHFuJ1lWWmNJNlc9V3RNUXJtciMvXWo/ZkVxYTlZVCZuYi5mU3A+dE9LSS9CTTppTWo/VnFSSlgycnMuRG5UJSZlPTI3dUI2XTlZT1UxU0BWYENzUzw8XXAqTThoIVQiQ0tALG5MOjU7MT4pZk1iWi0nI0lKLC9rTC9dVFRzbSFRKyk/KCt0ZmsyRUJyP3BKS19bMDltXC4nOzpIXWU+NmIvRHIwTzhVMmw/Ki83Uz85LUpEKjsrJSQ7b1dCLWMsMSk2ZmZGVXUtXVNkbk80NDo6LFwpMzdANE8xMjZkVDFHYzBBNiEzTG8lWUxBSDgzRypDJSlJZGlET0tJXD1GV2NRPVc7PDYiNjg1QDY3I01WTU5rJmNWPS5NZUdWcGFyTDsqYyNlOWldXGJzLDsuJj1LYjJFZUQnMSN1UVFfMi5NQCMxcz8zXSQuVlxVMSktW0wqOUMiQEc9MlZeOlJncCtqPkdAMSRSZkYuJDE/QkdzREd0MUY9XXNwZjpeLURAVU08OWF0SS0qaTArOUtCXWdXKSRNJVByTjtsKUBxYVZKLkZWIkhaLD1yKV5wUF5vZF9WbDZXZmlbbWlHQ3JUXGMhUyYoMkUtO24hQ0NoPmRCX2tjSDlzL2dSUFApYF11XUNBWDwiPTszQVcuTUImb0I9NV8rZnBmZTo2OUs5Mj1eS190T1A8ODRoTGZTWiRAOj5xMGFpJ3EjUE5ASTAmYCM0ZkBLS08/aTgxR0o8aFljdUpKLVJVb0JFW1wvUDJ1Y1VMQy03MF5EL09CT11OPDNIXUlWcT1HRGwlUmVdVVByRCQ/SG5sYC0rMC1Oc0M7aCs3TEJyZ1BiInMzMT1kSnJaJW08RnFUbU5bJF5JQ3BbPG5AYVVZMG1YYltiWUU/PGQmRz4qKzBEYGQ2Z3M/IV0lLCs6PSw+NG4vNTkqVU9zZik3THUnWyhvayk2MitELEk5Y0ksR1IpUGViKTYnc00nZGY3PSpLXyFqbExcam03PFInPFNYblEjKnJKLFpePzwuYClwRjc0WkFSOG0pUUprLk9FKmdYVVJTP1gvKm0wWiRpWC9XZUhlOj4nQjBrdEMoKHVraiV1TSVUbXN1Kz0lSylbUywhVShdYVQxLjcxQ1BxTWAyM1YrLFwuTFcrJHU2YyxpY2spIm0/V05OXD1WPz5XMScxNFkrZSFJMmBrVypzOVpOOjMjQmphNTNqMSo9P2tudEAkXU5QKmRbTFdiSG5mRSlSXk1UIktFK1dvUi8mIjAkWkhwMihFOyNXRTo2XT5TSmljZlFgJTdSb0Y4YCchRGZdWUJAOS1YUCNvVj0wVmxuYCQ9NUFNQlZtcTwjWjJvZkFPVS10TWA/ISUsZ2BUXWU1MGUoTz4+WHMxWmBZLWZmPFU4SjldKEo/XmRUQnJsPG5aQWMqTGUiXVtBaylQcC9EIm47bnBJOlRMVkJpZ0hNTiNtUT1IVHFtT2k+ImVdTzAybnNkcDhWaGRoRz5MZjA1I14pS0h0IXV1b2dWTTpgVm1yZmtaMEFKbl0hWlZMdF84Rmg0cio9WyoyRilibkQ1Nj41TC5OMl5RRE03KEM8dD44UG9Ga1pbOnIjK3JLPV07KlFOUU1MNEFCSUo6VkZDRyojbTlyK1FCTUIiXFdEWnBtcHRcTVknQChIIW5tNylzMmAmKltUalc4JkFoTjAzcWg+M2RSckMiL1g6VlpwK0E4LE5XUy5nUXJzYylHL0k5aExpa2hMNyJdSzJAZ2FRKGJIRmNtSCRpZVxxRyQsJjclK1hyQTRyTyY6NlVuOzQ7JEhYYz5OXi1PQltqJTdYJURdYSlFPW4zMUoyQ0BEbC02T08jYyhVJ2toKDsiTF8mRHE8RUU1RW4qP1w/JiM9YmkpOz84Kzk5YW9LQjJbO0lzMT8kKTBTJm5aWjtNTShSKyFGSk5Rbl9ORGdXYW8iWUoybD8ubG1SITclSVBxcW82ME4kL0NLcmBxT2soJEkkNVtCWm5OZiROTDZaJURdRmdJN0YkOWxFcjM/YTs2ak5bXSkkSVMmX34+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgMTEKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDIyOSAwMDAwMCBuIAowMDAwMDAwMzQxIDAwMDAwIG4gCjAwMDAwMDA0MjQgMDAwMDAgbiAKMDAwMDAwMDUwMSAwMDAwMCBuIAowMDAwMDAwNzA1IDAwMDAwIG4gCjAwMDAwMDA3NzMgMDAwMDAgbiAKMDAwMDAwMTA3MCAwMDAwMCBuIAowMDAwMDAxMTI5IDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPGM1ZmI0ZTUxZmUyZmYzY2JiNDE1MDc2NzkwZGIzNDNhPjxjNWZiNGU1MWZlMmZmM2NiYjQxNTA3Njc5MGRiMzQzYT5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gOCAwIFIKL1Jvb3QgNyAwIFIKL1NpemUgMTEKPj4Kc3RhcnR4cmVmCjU0OTgKJSVFT0YK"
+      }
+    }
+  ],
+  "bookingCapacity": {
+    "doctorSlotCapacity": 1,
+    "defaultMaxAppointmentsPerSession": 6,
+    "labSlotCapacity": 5,
+    "sessions": [
+      {
+        "id": "morning",
+        "label": "Morning",
+        "startTime": "08:00",
+        "endTime": "11:59",
+        "maxAppointments": 6
+      },
+      {
+        "id": "afternoon",
+        "label": "Afternoon",
+        "startTime": "12:00",
+        "endTime": "15:59",
+        "maxAppointments": 6
+      },
+      {
+        "id": "evening",
+        "label": "Evening",
+        "startTime": "16:00",
+        "endTime": "18:30",
+        "maxAppointments": 4
+      }
+    ]
+  },
+  "medicalRecords": [
+    {
+      "id": "MR-1005",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "appointmentId": "APT-2018",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "visitDate": "2026-08-11",
+      "diagnosis": "mild fever",
+      "clinicalNotes": "Low-grade fever with fatigue for three days. No respiratory distress observed during review.",
+      "treatmentAdvice": "Bed Rest, and drink water often",
+      "createdAt": "2026-08-10T10:11:09.759Z"
+    },
+    {
+      "id": "MR-1004",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "appointmentId": "APT-2018",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "visitDate": "2026-08-10",
+      "diagnosis": "Seasonal viral fever",
+      "clinicalNotes": "Low-grade fever with fatigue for three days. No respiratory distress observed during review.",
+      "treatmentAdvice": "Continue hydration, paracetamol as advised, and review again if fever persists beyond 48 hours.",
+      "createdAt": "2026-08-10T07:05:24.551Z"
+    },
+    {
+      "id": "MR-1003",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "appointmentId": "APT-2018",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "visitDate": "2026-08-10",
+      "diagnosis": "mild fever",
+      "clinicalNotes": "Paracetomal, aspirin",
+      "treatmentAdvice": "Bed Rest, and drink water often",
+      "createdAt": "2026-08-10T06:25:43.894Z"
+    },
+    {
+      "id": "MR-1001",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "visitDate": "2026-08-05",
+      "diagnosis": "Seasonal viral fever",
+      "clinicalNotes": "Low-grade fever with fatigue for three days. No respiratory distress observed during review.",
+      "treatmentAdvice": "Continue hydration, paracetamol as advised, and review again if fever persists beyond 48 hours.",
+      "createdAt": "2026-08-05T11:40:00.000Z"
+    },
+    {
+      "id": "MR-1002",
+      "patientId": "external:aarav-verma",
+      "patientName": "Aarav Verma",
+      "doctorId": "doc-vivek-menon",
+      "doctorName": "Dr. Vivek Menon",
+      "appointmentId": "APT-2001",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "visitDate": "2026-08-09",
+      "diagnosis": "Stable hypertension follow-up",
+      "clinicalNotes": "Blood pressure remains controlled with current regimen. Continue low-sodium diet and exercise plan.",
+      "treatmentAdvice": "Maintain medication adherence and return for cardiology review in six weeks.",
+      "createdAt": "2026-08-09T10:15:00.000Z"
+    }
+  ],
+  "prescriptions": [
+    {
+      "id": "RX-2005",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "appointmentId": "APT-2018",
+      "medicines": [
+        {
+          "medicineName": "Aspirin",
+          "dosage": "1 tab",
+          "frequency": "2x",
+          "duration": "3 days"
+        }
+      ],
+      "instructions": "take after meals",
+      "status": "Issued",
+      "createdAt": "2026-08-10T10:24:39.095Z"
+    },
+    {
+      "id": "RX-2004",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "medicines": [
+        {
+          "medicineName": "Amoxicillin",
+          "dosage": "1 tablet",
+          "frequency": "Twice daily",
+          "duration": "5 days"
+        }
+      ],
+      "instructions": "Take after meals for five days.",
+      "status": "Dispensed",
+      "createdAt": "2026-08-10T07:15:02.570Z",
+      "dispensedAt": "2026-08-10T10:29:20.248Z",
+      "dispensedBy": {
+        "id": "user-pharmacist",
+        "name": "Rahul Sethi"
+      }
+    },
+    {
+      "id": "RX-2003",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "appointmentId": "APT-2004",
+      "medicines": [
+        {
+          "medicineName": "Amoxicillin",
+          "dosage": "1 tablet",
+          "frequency": "Twice daily",
+          "duration": "5 days"
+        }
+      ],
+      "instructions": "Take after meals for five days.",
+      "status": "Issued",
+      "createdAt": "2026-08-10T07:15:02.233Z"
+    },
+    {
+      "id": "RX-2001",
+      "patientId": "user-patient",
+      "patientName": "Ritesh Nair",
+      "doctorId": "doc-meera-iqbal",
+      "doctorName": "Dr. Meera Iqbal",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "medicines": [
+        {
+          "medicineName": "Paracetamol 500 mg",
+          "dosage": "1 tablet",
+          "frequency": "Three times daily",
+          "duration": "3 days"
+        },
+        {
+          "medicineName": "Oral rehydration salts",
+          "dosage": "1 sachet",
+          "frequency": "As needed",
+          "duration": "3 days"
+        }
+      ],
+      "instructions": "Take after meals and return if fever persists or new symptoms appear.",
+      "status": "Dispensed",
+      "createdAt": "2026-08-05T11:45:00.000Z",
+      "dispensedAt": "2026-08-10T06:36:14.352Z",
+      "dispensedBy": {
+        "id": "user-pharmacist",
+        "name": "Rahul Sethi"
+      }
+    },
+    {
+      "id": "RX-2002",
+      "patientId": "external:maya-joseph",
+      "patientName": "Maya Joseph",
+      "doctorId": "doc-anaya-sharma",
+      "doctorName": "Dr. Anaya Sharma",
+      "appointmentId": "APT-2003",
+      "hospitalId": "org-medivanta-general",
+      "organizationId": "org-medivanta-general",
+      "medicines": [
+        {
+          "medicineName": "Vitamin D3 60,000 IU",
+          "dosage": "1 capsule",
+          "frequency": "Weekly",
+          "duration": "6 weeks"
+        }
+      ],
+      "instructions": "Take with food once every week for six weeks.",
+      "status": "Dispensed",
+      "createdAt": "2026-08-09T10:50:00.000Z",
+      "dispensedAt": "2026-08-09T12:20:00.000Z",
+      "dispensedBy": {
+        "id": "user-pharmacist",
+        "name": "Rahul Sethi"
+      }
     }
   ]
 }

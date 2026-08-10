@@ -10,6 +10,11 @@ import {
 
 import { apiRequest } from "@/lib/api";
 import {
+  type AppointmentSlotLoadRecord,
+  type LabSlotLoadRecord,
+  type MedicalRecordDraft,
+  type PrescriptionDraft,
+  type HospitalSettingsDraft,
   getActiveQueueEntries,
   getAllowedAppointmentStatuses,
   getAllowedQueueStatuses,
@@ -18,9 +23,11 @@ import {
   getDepartmentSummaries,
   getDoctorById,
   getSearchGroups,
+  normalizeHospitalState,
   type DepartmentStatus,
   type DoctorStatus,
   type AppointmentDraft,
+  type LabReportDraft,
   type LabRequestDraft,
   type AppointmentStatus,
   type HospitalState,
@@ -36,6 +43,9 @@ type ValidationResult = ReturnType<typeof validateAppointmentDraft> & {
 type HospitalMeta = {
   userCounts?: Record<UserRole, number>;
   users?: SafeUser[];
+  patientProfiles?: SafeUser[];
+  appointmentSlotLoads?: AppointmentSlotLoadRecord[];
+  labSlotLoads?: LabSlotLoadRecord[];
 };
 
 type HospitalContextValue = {
@@ -61,10 +71,66 @@ type HospitalContextValue = {
     status: string;
   }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
   createAppointment: (draft: AppointmentDraft) => Promise<ValidationResult>;
+  createMedicalRecord: (draft: MedicalRecordDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  updateMedicalRecord: (
+    recordId: string,
+    draft: Pick<MedicalRecordDraft, "diagnosis" | "clinicalNotes" | "treatmentAdvice">,
+  ) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  createPatientProfile: (draft: {
+    fullName: string;
+    email?: string;
+    phoneNumber: string;
+    gender: string;
+    dateOfBirth: string;
+    bloodGroup: string;
+    address: string;
+    emergencyContactName: string;
+    emergencyContactPhone: string;
+    allergies: string;
+    medicalConditions: string;
+    preferredLanguage?: string;
+  }) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  createPrescription: (draft: PrescriptionDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  updateHospitalSettings: (draft: HospitalSettingsDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  dispensePrescription: (
+    prescriptionId: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
   createLabRequest: (draft: LabRequestDraft) => Promise<{
     ok: boolean;
     message?: string;
     fieldErrors?: Partial<Record<keyof LabRequestDraft, string>>;
+  }>;
+  updateLabRequestStatus: (
+    labRequestId: string,
+    status: HospitalState["labRequests"][number]["status"],
+  ) => Promise<{ ok: boolean; message?: string }>;
+  createLabReport: (
+    labRequestId: string,
+    draft: LabReportDraft,
+  ) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Partial<Record<keyof LabReportDraft, string>>;
   }>;
   updateAppointment: (
     appointmentId: string,
@@ -101,11 +167,11 @@ export function HospitalDataProvider({
   initialState: HospitalState;
   initialMeta?: HospitalMeta;
 }) {
-  const [state, setState] = useState(initialState);
+  const [state, setState] = useState(() => normalizeHospitalState(initialState));
   const [meta, setMeta] = useState<HospitalMeta | undefined>(initialMeta);
 
   const updateFromResponse = useCallback((response: HospitalApiResponse) => {
-    setState(response.state);
+    setState(normalizeHospitalState(response.state));
     setMeta(response.meta);
   }, []);
 
@@ -197,6 +263,155 @@ export function HospitalDataProvider({
     [state, updateFromResponse],
   );
 
+  const createMedicalRecord = useCallback(
+    async (draft: MedicalRecordDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/medical-records", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateMedicalRecord = useCallback(
+    async (
+      recordId: string,
+      draft: Pick<MedicalRecordDraft, "diagnosis" | "clinicalNotes" | "treatmentAdvice">,
+    ) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/medical-records/${recordId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createPatientProfile = useCallback(
+    async (draft: {
+      fullName: string;
+      email?: string;
+      phoneNumber: string;
+      gender: string;
+      dateOfBirth: string;
+      bloodGroup: string;
+      address: string;
+      emergencyContactName: string;
+      emergencyContactPhone: string;
+      allergies: string;
+      medicalConditions: string;
+      preferredLanguage?: string;
+    }) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/patients", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createPrescription = useCallback(
+    async (draft: PrescriptionDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/prescriptions", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateHospitalSettings = useCallback(
+    async (draft: HospitalSettingsDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/settings", {
+          method: "PATCH",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const dispensePrescription = useCallback(
+    async (prescriptionId: string) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/prescriptions/${prescriptionId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status: "Dispensed" }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The prescription could not be dispensed.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
   const createLabRequest = useCallback(
     async (draft: LabRequestDraft) => {
       try {
@@ -210,6 +425,58 @@ export function HospitalDataProvider({
         const maybeError = error as Error & {
           fieldErrors?: Partial<Record<keyof LabRequestDraft, string>>;
         };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateLabRequestStatus = useCallback(
+    async (labRequestId: string, status: HospitalState["labRequests"][number]["status"]) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/lab-requests/${labRequestId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The laboratory request could not be updated.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createLabReport = useCallback(
+    async (labRequestId: string, draft: LabReportDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/lab-requests/${labRequestId}/report`,
+          {
+            method: "POST",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & {
+          fieldErrors?: Partial<Record<keyof LabReportDraft, string>>;
+        };
+
         return {
           ok: false,
           message: maybeError.message,
@@ -326,7 +593,15 @@ export function HospitalDataProvider({
       createDepartment,
       createStaffMember,
       createAppointment,
+      createMedicalRecord,
+      updateMedicalRecord,
+      createPatientProfile,
+      createPrescription,
+      updateHospitalSettings,
+      dispensePrescription,
       createLabRequest,
+      updateLabRequestStatus,
+      createLabReport,
       updateAppointment,
       setAppointmentStatus,
       advanceQueue,
@@ -342,7 +617,14 @@ export function HospitalDataProvider({
       createDepartment,
       createStaffMember,
       createAppointment,
+      createMedicalRecord,
+      updateMedicalRecord,
+      createPatientProfile,
+      createPrescription,
+      updateHospitalSettings,
+      dispensePrescription,
       createLabRequest,
+      createLabReport,
       departmentSummaries,
       getDepartmentName,
       getDoctorName,
@@ -351,6 +633,7 @@ export function HospitalDataProvider({
       search,
       setAppointmentStatus,
       state,
+      updateLabRequestStatus,
       updateAppointment,
     ],
   );

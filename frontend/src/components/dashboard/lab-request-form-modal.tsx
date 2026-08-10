@@ -7,14 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import type {
+  BookingCapacityRecord,
+  HospitalState,
+  LabSlotLoadRecord,
   LabRequestDraft,
   LabRequestRecord,
   LabTestRecord,
 } from "@/lib/hospital-data";
+import { isLabSlotFullyBooked, validateLabRequestDraft } from "@/lib/hospital-data";
 
 type LabRequestFormModalProps = {
   open: boolean;
   organizationName: string;
+  bookingCapacity: BookingCapacityRecord;
+  labSlotLoads: LabSlotLoadRecord[];
   labTests: LabTestRecord[];
   existingRequests: LabRequestRecord[];
   onClose: () => void;
@@ -36,6 +42,8 @@ const emptyDraft: LabRequestDraft = {
 export function LabRequestFormModal({
   open,
   organizationName,
+  bookingCapacity,
+  labSlotLoads,
   labTests,
   existingRequests,
   onClose,
@@ -46,19 +54,45 @@ export function LabRequestFormModal({
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const labCapacityState = useMemo(
+    () =>
+      ({
+        organization: {
+          id: "org-medivanta-general",
+          name: organizationName,
+          slug: "medivanta-general",
+        },
+        departments: [],
+        doctors: [],
+        appointments: [],
+        queueEntries: [],
+        medicalRecords: [],
+        prescriptions: [],
+        labTests,
+        labRequests: existingRequests,
+        labReports: [],
+        bookingCapacity,
+        configuredSupportLines: 0,
+      }) satisfies HospitalState,
+    [bookingCapacity, existingRequests, labTests, organizationName],
+  );
+
   const busySlots = useMemo(
     () =>
       new Set(
-        existingRequests
-          .filter(
-            (request) =>
-              request.testId === draft.testId &&
-              request.requestedDate === draft.requestedDate &&
-              request.status !== "Completed",
-          )
-          .map((request) => request.requestedTime),
+        draft.requestedDate
+          ? ["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00"].filter(
+              (slot) =>
+                (labSlotLoads.find(
+                  (load) =>
+                    load.requestedDate === draft.requestedDate &&
+                    load.requestedTime === slot,
+                )?.bookings ?? 0) >= bookingCapacity.labSlotCapacity ||
+                isLabSlotFullyBooked(labCapacityState, draft.requestedDate, slot),
+            )
+          : [],
       ),
-    [draft.requestedDate, draft.testId, existingRequests],
+    [bookingCapacity.labSlotCapacity, draft.requestedDate, labCapacityState, labSlotLoads],
   );
 
   return (
@@ -79,6 +113,12 @@ export function LabRequestFormModal({
           event.preventDefault();
           setSubmitting(true);
           setMessage("");
+          const validation = validateLabRequestDraft(labCapacityState, draft);
+          if (!validation.isValid) {
+            setSubmitting(false);
+            setErrors(validation.errors);
+            return;
+          }
           const result = await onSubmit(draft);
           setSubmitting(false);
           setErrors(result.fieldErrors ?? {});

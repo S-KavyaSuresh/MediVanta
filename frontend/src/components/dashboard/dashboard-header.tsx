@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { Bell, HelpCircle, LogOut, Menu, Search } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -13,10 +12,8 @@ import { roleTitles } from "@/lib/auth";
 
 export function DashboardHeader({
   onOpenSidebar,
-  onHeightChange,
 }: {
   onOpenSidebar: () => void;
-  onHeightChange?: (height: number) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -24,38 +21,9 @@ export function DashboardHeader({
   const activeQuery = searchParams.get("q") ?? "";
   const { hasCapability, logout, session } = useAuth();
   const canSearch = hasCapability("search:view");
-  const headerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const headerElement = headerRef.current;
-
-    if (!headerElement || !onHeightChange) {
-      return;
-    }
-
-    const updateHeight = () => {
-      onHeightChange(headerElement.offsetHeight);
-    };
-
-    updateHeight();
-
-    const observer = new ResizeObserver(() => {
-      updateHeight();
-    });
-
-    observer.observe(headerElement);
-    window.addEventListener("resize", updateHeight);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateHeight);
-    };
-  }, [onHeightChange]);
-
   return (
     <div
-      ref={headerRef}
-      className="fixed left-0 right-0 top-0 z-30 border-b border-[color:var(--border)] bg-[color:var(--surface)]/95 px-4 py-4 backdrop-blur md:px-8 lg:sticky lg:left-auto lg:right-auto"
+      className="sticky top-0 z-30 border-b border-[color:var(--border)] bg-[color:var(--surface)]/95 px-4 py-4 backdrop-blur md:px-8"
     >
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 items-start gap-3 md:flex-1">

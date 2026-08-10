@@ -1,12 +1,52 @@
 import type { HospitalState, OrganizationRecord, UserRecord } from "../domain/types.js";
 
 export const DEMO_ACCOUNT_PASSWORD = "Medi2026!Care";
-export const HOSPITAL_TODAY = "2026-08-09";
+export const DEMO_REFERENCE_DATE = "2026-08-09";
 export const DEMO_ORGANIZATION: OrganizationRecord = {
   id: "org-medivanta-general",
   name: "MediVanta General Hospital",
   slug: "medivanta-general",
+  address: "221 Care Avenue",
+  city: "Chennai",
+  state: "Tamil Nadu",
+  contactPhone: "+91 44 4000 2200",
+  contactEmail: "hello@medivanta.demo",
+  emergencyContact: "+91 44 4000 2299",
+  operatingHours: "24/7 emergency · Outpatient 08:00 - 20:00",
+  timezone: "Asia/Calcutta",
+  defaultLanguage: "English",
+  emergencyServicesEnabled: true,
+  defaultConsultationSlotDurationMinutes: 30,
 };
+
+const demoBookingCapacity = {
+  doctorSlotCapacity: 1,
+  defaultMaxAppointmentsPerSession: 6,
+  labSlotCapacity: 5,
+  sessions: [
+    {
+      id: "morning",
+      label: "Morning",
+      startTime: "08:00",
+      endTime: "11:59",
+      maxAppointments: 6,
+    },
+    {
+      id: "afternoon",
+      label: "Afternoon",
+      startTime: "12:00",
+      endTime: "15:59",
+      maxAppointments: 6,
+    },
+    {
+      id: "evening",
+      label: "Evening",
+      startTime: "16:00",
+      endTime: "18:30",
+      maxAppointments: 4,
+    },
+  ],
+} as const;
 
 const demoLabTests = [
   {
@@ -234,7 +274,7 @@ export function createDemoHospitalState(): HospitalState {
         patientName: "Aarav Verma",
         doctorId: "doc-vivek-menon",
         departmentId: "dept-cardiology",
-        appointmentDate: HOSPITAL_TODAY,
+        appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "09:30",
         status: "Checked in",
       },
@@ -244,7 +284,7 @@ export function createDemoHospitalState(): HospitalState {
         patientName: "Sana Khan",
         doctorId: "doc-neha-sen",
         departmentId: "dept-radiology",
-        appointmentDate: HOSPITAL_TODAY,
+        appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:00",
         status: "In consultation",
       },
@@ -254,17 +294,18 @@ export function createDemoHospitalState(): HospitalState {
         patientName: "Maya Joseph",
         doctorId: "doc-anaya-sharma",
         departmentId: "dept-general-medicine",
-        appointmentDate: HOSPITAL_TODAY,
+        appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:45",
         status: "Completed",
       },
       {
         id: "APT-2004",
         organizationId: DEMO_ORGANIZATION.id,
+        patientId: "user-patient",
         patientName: "Ritesh Nair",
         doctorId: "doc-meera-iqbal",
         departmentId: "dept-pediatrics",
-        appointmentDate: HOSPITAL_TODAY,
+        appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "11:15",
         status: "Scheduled",
       },
@@ -274,7 +315,7 @@ export function createDemoHospitalState(): HospitalState {
         patientName: "Ishita Das",
         doctorId: "doc-kiran-iyer",
         departmentId: "dept-orthopedics",
-        appointmentDate: HOSPITAL_TODAY,
+        appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "12:10",
         status: "Scheduled",
       },
@@ -324,6 +365,95 @@ export function createDemoHospitalState(): HospitalState {
         updatedAt: "10:42",
       },
     ],
+    medicalRecords: [
+      {
+        id: "MR-1001",
+        patientId: "user-patient",
+        patientName: "Ritesh Nair",
+        doctorId: "doc-meera-iqbal",
+        doctorName: "Dr. Meera Iqbal",
+        hospitalId: DEMO_ORGANIZATION.id,
+        organizationId: DEMO_ORGANIZATION.id,
+        visitDate: "2026-08-05",
+        diagnosis: "Seasonal viral fever",
+        clinicalNotes:
+          "Low-grade fever with fatigue for three days. No respiratory distress observed during review.",
+        treatmentAdvice:
+          "Continue hydration, paracetamol as advised, and review again if fever persists beyond 48 hours.",
+        createdAt: "2026-08-05T11:40:00.000Z",
+      },
+      {
+        id: "MR-1002",
+        patientId: "external:aarav-verma",
+        patientName: "Aarav Verma",
+        doctorId: "doc-vivek-menon",
+        doctorName: "Dr. Vivek Menon",
+        appointmentId: "APT-2001",
+        hospitalId: DEMO_ORGANIZATION.id,
+        organizationId: DEMO_ORGANIZATION.id,
+        visitDate: DEMO_REFERENCE_DATE,
+        diagnosis: "Stable hypertension follow-up",
+        clinicalNotes:
+          "Blood pressure remains controlled with current regimen. Continue low-sodium diet and exercise plan.",
+        treatmentAdvice:
+          "Maintain medication adherence and return for cardiology review in six weeks.",
+        createdAt: `${DEMO_REFERENCE_DATE}T10:15:00.000Z`,
+      },
+    ],
+    prescriptions: [
+      {
+        id: "RX-2001",
+        patientId: "user-patient",
+        patientName: "Ritesh Nair",
+        doctorId: "doc-meera-iqbal",
+        doctorName: "Dr. Meera Iqbal",
+        hospitalId: DEMO_ORGANIZATION.id,
+        organizationId: DEMO_ORGANIZATION.id,
+        medicines: [
+          {
+            medicineName: "Paracetamol 500 mg",
+            dosage: "1 tablet",
+            frequency: "Three times daily",
+            duration: "3 days",
+          },
+          {
+            medicineName: "Oral rehydration salts",
+            dosage: "1 sachet",
+            frequency: "As needed",
+            duration: "3 days",
+          },
+        ],
+        instructions: "Take after meals and return if fever persists or new symptoms appear.",
+        status: "Issued",
+        createdAt: "2026-08-05T11:45:00.000Z",
+      },
+      {
+        id: "RX-2002",
+        patientId: "external:maya-joseph",
+        patientName: "Maya Joseph",
+        doctorId: "doc-anaya-sharma",
+        doctorName: "Dr. Anaya Sharma",
+        appointmentId: "APT-2003",
+        hospitalId: DEMO_ORGANIZATION.id,
+        organizationId: DEMO_ORGANIZATION.id,
+        medicines: [
+          {
+            medicineName: "Vitamin D3 60,000 IU",
+            dosage: "1 capsule",
+            frequency: "Weekly",
+            duration: "6 weeks",
+          },
+        ],
+        instructions: "Take with food once every week for six weeks.",
+        status: "Dispensed",
+        createdAt: `${DEMO_REFERENCE_DATE}T10:50:00.000Z`,
+        dispensedAt: `${DEMO_REFERENCE_DATE}T12:20:00.000Z`,
+        dispensedBy: {
+          id: "user-pharmacist",
+          name: "Rahul Sethi",
+        },
+      },
+    ],
     labTests: [...demoLabTests],
     labRequests: [
       {
@@ -341,6 +471,8 @@ export function createDemoHospitalState(): HospitalState {
         createdAt: "2026-08-09T09:00:00.000Z",
       },
     ],
+    labReports: [],
+    bookingCapacity: { ...demoBookingCapacity, sessions: [...demoBookingCapacity.sessions] },
     configuredSupportLines: 9,
   };
 }
@@ -355,15 +487,30 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       role: "patient",
       passwordHash,
       patientName: "Ritesh Nair",
+      phoneNumber: "9876543210",
+      gender: "Male",
+      dateOfBirth: "1994-03-18",
+      bloodGroup: "B+",
+      address: "22 Lake View Road, Chennai",
+      emergencyContact: "Anita Nair · 9876501234",
+      allergies: "None reported",
+      medicalConditions: "None reported",
     },
     {
       id: "user-doctor",
       organizationId: DEMO_ORGANIZATION.id,
       email: "doctor@medivanta.demo",
-      displayName: "Dr. Vivek Menon",
+      displayName: "Dr. Meera Iqbal",
       role: "doctor",
       passwordHash,
-      doctorId: "doc-vivek-menon",
+      doctorId: "doc-meera-iqbal",
+      phoneNumber: "9876500001",
+      gender: "Female",
+      qualifications: "MBBS, MD Pediatrics",
+      experience: "9 years pediatric practice",
+      languages: "English, Hindi, Tamil",
+      consultationFee: "INR 900",
+      availableTimings: "10:00 - 18:00",
     },
     {
       id: "user-receptionist",
@@ -373,6 +520,9 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       role: "receptionist",
       staffStatus: "Active",
       passwordHash,
+      phoneNumber: "9876500002",
+      gender: "Female",
+      deskLabel: "Front Desk A",
     },
     {
       id: "user-laboratory",
@@ -383,6 +533,8 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       departmentId: "dept-laboratory",
       staffStatus: "Active",
       passwordHash,
+      phoneNumber: "9876500003",
+      gender: "Female",
     },
     {
       id: "user-pharmacist",
@@ -392,6 +544,8 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       role: "pharmacist",
       staffStatus: "Active",
       passwordHash,
+      phoneNumber: "9876500004",
+      gender: "Male",
     },
     {
       id: "user-admin",
@@ -401,6 +555,8 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       role: "administrator",
       staffStatus: "Active",
       passwordHash,
+      phoneNumber: "9876500005",
+      gender: "Female",
     },
   ];
 }

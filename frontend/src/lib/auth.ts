@@ -24,7 +24,12 @@ export type Capability =
   | "profile:view"
   | "notifications:view"
   | "health-records:view"
+  | "health-records:create"
+  | "patient:create"
   | "prescriptions:view"
+  | "prescription:create"
+  | "prescription:dispense"
+  | "profile:update"
   | "lab-reports:view"
   | "billing:view"
   | "schedule:view"
@@ -32,18 +37,42 @@ export type Capability =
   | "operations:view"
   | "laboratory:view"
   | "pharmacy:view"
-  | "lab-request:create";
+  | "lab-request:create"
+  | "lab-request:update"
+  | "lab-report:create";
 
 export type Organization = {
   id: string;
   name: string;
   slug: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  emergencyContact?: string;
+  operatingHours?: string;
+  timezone?: string;
+  defaultLanguage?: string;
+  emergencyServicesEnabled?: boolean;
+  defaultConsultationSlotDurationMinutes?: number;
 };
 
 export const defaultOrganization: Organization = {
   id: "org-medivanta-general",
   name: "MediVanta General Hospital",
   slug: "medivanta-general",
+  address: "221 Care Avenue",
+  city: "Chennai",
+  state: "Tamil Nadu",
+  contactPhone: "+91 44 4000 2200",
+  contactEmail: "hello@medivanta.demo",
+  emergencyContact: "+91 44 4000 2299",
+  operatingHours: "24/7 emergency · Outpatient 08:00 - 20:00",
+  timezone: "Asia/Calcutta",
+  defaultLanguage: "English",
+  emergencyServicesEnabled: true,
+  defaultConsultationSlotDurationMinutes: 30,
 };
 
 export type SafeUser = {
@@ -53,6 +82,7 @@ export type SafeUser = {
   displayName: string;
   role: UserRole;
   doctorId?: string;
+  assignedDoctorId?: string;
   patientName?: string;
   departmentId?: string;
   staffStatus?: string;
@@ -62,8 +92,23 @@ export type SafeUser = {
   bloodGroup?: string;
   address?: string;
   emergencyContact?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
   allergies?: string;
   medicalConditions?: string;
+  preferredLanguage?: string;
+  qualifications?: string;
+  experience?: string;
+  languages?: string;
+  consultationFee?: string;
+  availableTimings?: string;
+  deskLabel?: string;
+  designation?: string;
+  shift?: string;
+  professionalRegistrationNumber?: string;
+  consultationMode?: string;
+  profileVerificationStatus?: string;
+  administrativeUnit?: string;
 };
 
 export type AuthSession = {
@@ -95,6 +140,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "billing:view",
     "notifications:view",
     "profile:view",
+    "profile:update",
   ],
   doctor: [
     "appointment:view",
@@ -103,11 +149,15 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "department:view",
     "schedule:view",
     "patients:view",
+    "patient:create",
     "prescriptions:view",
+    "prescription:create",
     "health-records:view",
+    "health-records:create",
     "lab-reports:view",
     "notifications:view",
     "profile:view",
+    "profile:update",
   ],
   receptionist: [
     "appointment:create",
@@ -121,17 +171,23 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "department:view",
     "search:view",
     "profile:view",
+    "profile:update",
     "operations:view",
   ],
   laboratory: [
     "laboratory:view",
+    "lab-request:update",
+    "lab-report:create",
     "lab-reports:view",
     "profile:view",
+    "profile:update",
   ],
   pharmacist: [
     "pharmacy:view",
     "prescriptions:view",
+    "prescription:dispense",
     "profile:view",
+    "profile:update",
   ],
   administrator: [
     "appointment:create",
@@ -149,6 +205,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "reports:view",
     "settings:view",
     "profile:view",
+    "profile:update",
     "operations:view",
   ],
 };
@@ -195,6 +252,15 @@ export const roleTitles: Record<UserRole, string> = {
   laboratory: "Laboratory Workspace",
   pharmacist: "Pharmacy Workspace",
   administrator: "Administration",
+};
+
+export const roleLabels: Record<UserRole, string> = {
+  patient: "Patient",
+  doctor: "Doctor",
+  receptionist: "Receptionist",
+  laboratory: "Laboratory Staff",
+  pharmacist: "Pharmacist",
+  administrator: "Administrator",
 };
 
 export const landingPathByRole: Record<UserRole, string> = {
@@ -262,11 +328,6 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       href: "/dashboard/doctor/records",
     },
     {
-      id: "doctor-lab-reports",
-      label: "Lab Reports",
-      href: "/dashboard/doctor/lab-reports",
-    },
-    {
       id: "doctor-notifications",
       label: "Notifications",
       href: "/dashboard/doctor/notifications",
@@ -312,7 +373,7 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
     },
     {
       id: "pharmacy-dispensing",
-      label: "Dispensing Queue",
+      label: "Dispensing History",
       href: "/dashboard/pharmacy/dispensing",
     },
     { id: "pharmacy-profile", label: "Profile", href: "/dashboard/pharmacy/profile" },
@@ -386,6 +447,11 @@ export const tourStepsByRole: Record<UserRole, TourStep[]> = {
       description: "Track the active patient queue linked to your consultations.",
     },
     {
+      targetId: "nav-doctor-records",
+      title: "Medical Records",
+      description: "Capture visit notes, review prior records, and reference linked lab reports.",
+    },
+    {
       targetId: "dashboard-profile-control",
       title: "Profile",
       description: "Access your account identity and workspace controls here.",
@@ -422,7 +488,7 @@ export const tourStepsByRole: Record<UserRole, TourStep[]> = {
     {
       targetId: "nav-laboratory-requests",
       title: "Laboratory Requests",
-      description: "This workspace foundation is reserved for incoming laboratory requests.",
+      description: "Review incoming laboratory requests from this area.",
     },
     {
       targetId: "dashboard-profile-control",
@@ -439,7 +505,7 @@ export const tourStepsByRole: Record<UserRole, TourStep[]> = {
     {
       targetId: "nav-pharmacy-prescriptions",
       title: "Prescriptions",
-      description: "This workspace foundation is reserved for prescription fulfillment tools.",
+      description: "Review and manage prescription fulfillment from this area.",
     },
     {
       targetId: "dashboard-profile-control",

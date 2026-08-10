@@ -5,7 +5,7 @@ export default function DoctorNotificationsPage() {
     <RolePlaceholderPage
       eyebrow="Doctor Workspace"
       title="Notifications"
-      description="Clinical notifications will expand in a later milestone."
+      description="Clinical notifications and alerts will appear here."
       emptyTitle="Notifications coming soon"
       emptyDescription="Operational appointment and queue updates are currently reflected in your overview."
     />

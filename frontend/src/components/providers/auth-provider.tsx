@@ -9,6 +9,7 @@ import { apiRequest } from "@/lib/api";
 type AuthContextValue = {
   session: AuthSession;
   hasCapability: (capability: Capability) => boolean;
+  updateSession: (nextSession: AuthSession) => void;
   logout: () => Promise<void>;
 };
 
@@ -28,6 +29,9 @@ export function AuthProvider({
     () => ({
       session,
       hasCapability: (capability) => session.permissions.includes(capability),
+      updateSession: (nextSession) => {
+        setSession(normalizeAuthSession(nextSession));
+      },
       logout: async () => {
         await apiRequest("/api/auth/logout", { method: "POST" });
         setSession((current) => ({

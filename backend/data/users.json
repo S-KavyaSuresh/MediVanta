@@ -6,16 +6,31 @@
     "displayName": "Ritesh Nair",
     "role": "patient",
     "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
-    "patientName": "Ritesh Nair"
+    "patientName": "Ritesh Nair",
+    "phoneNumber": "9876543210",
+    "gender": "Male",
+    "dateOfBirth": "1994-03-18",
+    "bloodGroup": "B+",
+    "address": "22 Lake View Road, Chennai",
+    "emergencyContact": "Anita Nair · 9876501234",
+    "allergies": "None reported",
+    "medicalConditions": "None reported"
   },
   {
     "id": "user-doctor",
     "organizationId": "org-medivanta-general",
     "email": "doctor@medivanta.demo",
-    "displayName": "Dr. Vivek Menon",
+    "displayName": "Dr. Meera Iqbal",
     "role": "doctor",
     "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
-    "doctorId": "doc-vivek-menon"
+    "doctorId": "doc-meera-iqbal",
+    "phoneNumber": "9876500001",
+    "gender": "Female",
+    "qualifications": "MBBS, MD Pediatrics",
+    "experience": "9 years pediatric practice",
+    "languages": "English, Hindi, Tamil",
+    "consultationFee": "INR 900",
+    "availableTimings": "10:00 - 18:00"
   },
   {
     "id": "user-receptionist",
@@ -24,7 +39,10 @@
     "displayName": "Anika Rao",
     "role": "receptionist",
     "staffStatus": "Active",
-    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "phoneNumber": "9876500002",
+    "gender": "Female",
+    "deskLabel": "Front Desk A"
   },
   {
     "id": "user-laboratory",
@@ -34,7 +52,9 @@
     "role": "laboratory",
     "departmentId": "dept-laboratory",
     "staffStatus": "Active",
-    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "phoneNumber": "9876500003",
+    "gender": "Female"
   },
   {
     "id": "user-pharmacist",
@@ -43,7 +63,9 @@
     "displayName": "Rahul Sethi",
     "role": "pharmacist",
     "staffStatus": "Active",
-    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "phoneNumber": "9876500004",
+    "gender": "Male"
   },
   {
     "id": "user-admin",
@@ -52,6 +74,8 @@
     "displayName": "Priya Deshmukh",
     "role": "administrator",
     "staffStatus": "Active",
-    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b"
+    "passwordHash": "scrypt$6521bd45e2ab00d42a659be45acaf3b6$72772ccb660858a3beb41ca67e95e80316e7d2cbd8916396e03ac8a699c6e534e3682f813b73416e81bd4822ba0f530212d83c92abacf731f6afa62ec7a9c48b",
+    "phoneNumber": "9876500005",
+    "gender": "Female"
   }
 ]
