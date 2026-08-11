@@ -12,16 +12,24 @@ import {
   createPrescription,
   createStaffMember,
   dispensePrescription,
+  getLabReportForUser,
   getLabRequestsForUser,
   getScopedHospitalStateForUser,
   setAppointmentStatus,
+  updateUserAccountStatus,
   updateHospitalSettings,
   updateMedicalRecord,
   updatePatientProfile,
   updateLabRequestStatus,
   updateAppointment,
 } from "../services/hospital-service.js";
-import { requireAuthenticatedUser, requireCapabilities } from "../middleware/auth.js";
+import { getAuditLogs } from "../services/audit-service.js";
+import { getCapabilitiesForRole, landingPathByRole } from "../auth/permissions.js";
+import {
+  requireAuthenticatedUser,
+  requireCapabilities,
+  requireVerifiedEmail,
+} from "../middleware/auth.js";
 
 const hospitalRouter = Router();
 
@@ -30,6 +38,7 @@ const appointmentDraftSchema = z.object({
   doctorId: z.string(),
   appointmentDate: z.string(),
   appointmentTime: z.string(),
+  reasonForAppointment: z.string(),
 });
 
 const appointmentStatusSchema = z.object({
@@ -120,12 +129,18 @@ const patientProfileDraftSchema = z.object({
   gender: z.string(),
   dateOfBirth: z.string(),
   bloodGroup: z.string(),
-  address: z.string(),
+  preferredLanguage: z.string().optional(),
+  addressLine1: z.string(),
+  addressLine2: z.string().optional(),
+  city: z.string(),
+  state: z.string(),
+  postalCode: z.string(),
   emergencyContactName: z.string(),
   emergencyContactPhone: z.string(),
   allergies: z.string(),
   medicalConditions: z.string(),
-  preferredLanguage: z.string().optional(),
+  password: z.string(),
+  confirmPassword: z.string(),
 });
 
 const profileUpdateSchema = z.object({
@@ -135,6 +150,11 @@ const profileUpdateSchema = z.object({
   dateOfBirth: z.string().optional(),
   bloodGroup: z.string().optional(),
   address: z.string().optional(),
+  addressLine1: z.string().optional(),
+  addressLine2: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  postalCode: z.string().optional(),
   emergencyContact: z.string().optional(),
   emergencyContactName: z.string().optional(),
   emergencyContactPhone: z.string().optional(),
@@ -170,6 +190,10 @@ const hospitalSettingsSchema = z.object({
   defaultLabSlotCapacity: z.number().int(),
 });
 
+const accountStatusSchema = z.object({
+  status: z.enum(["Active", "Deactivated"]),
+});
+
 function getRouteParam(param: string | string[]) {
   return Array.isArray(param) ? param[0] : param;
 }
@@ -178,9 +202,16 @@ hospitalRouter.use(requireAuthenticatedUser);
 
 hospitalRouter.get("/state", async (request, response, next) => {
   try {
+    const payload = await getScopedHospitalStateForUser(request.authUser!);
     response.json({
       success: true,
-      ...(await getScopedHospitalStateForUser(request.authUser!)),
+      ...payload,
+      session: {
+        user: request.authUser!,
+        organization: payload.state.organization,
+        permissions: getCapabilitiesForRole(request.authUser!.role),
+        landingPath: landingPathByRole[request.authUser!.role],
+      },
     });
   } catch (error) {
     next(error);
@@ -205,6 +236,7 @@ hospitalRouter.post(
 hospitalRouter.post(
   "/medical-records",
   requireCapabilities("health-records:create"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const draft = medicalRecordDraftSchema.parse(request.body);
@@ -221,6 +253,7 @@ hospitalRouter.post(
 hospitalRouter.patch(
   "/medical-records/:recordId",
   requireCapabilities("health-records:create"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const draft = medicalRecordUpdateSchema.parse(request.body);
@@ -238,6 +271,7 @@ hospitalRouter.patch(
 hospitalRouter.post(
   "/prescriptions",
   requireCapabilities("prescription:create"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const draft = prescriptionDraftSchema.parse(request.body);
@@ -302,6 +336,7 @@ hospitalRouter.patch(
 hospitalRouter.patch(
   "/prescriptions/:prescriptionId/status",
   requireCapabilities("prescription:dispense"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const { status } = prescriptionStatusSchema.parse(request.body);
@@ -376,9 +411,22 @@ hospitalRouter.get("/lab-requests", async (request, response, next) => {
   }
 });
 
+hospitalRouter.get("/lab-reports/:labReportId", async (request, response, next) => {
+  try {
+    const labReportId = getRouteParam(request.params.labReportId);
+    response.json({
+      success: true,
+      ...(await getLabReportForUser(request.authUser!, labReportId)),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 hospitalRouter.patch(
   "/lab-requests/:labRequestId/status",
   requireCapabilities("lab-request:update"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const { status } = labRequestStatusSchema.parse(request.body);
@@ -396,6 +444,7 @@ hospitalRouter.patch(
 hospitalRouter.post(
   "/lab-requests/:labRequestId/report",
   requireCapabilities("lab-report:create"),
+  requireVerifiedEmail,
   async (request, response, next) => {
     try {
       const draft = labReportDraftSchema.parse(request.body);
@@ -452,6 +501,38 @@ hospitalRouter.post(
       response.status(201).json({
         success: true,
         ...(await createStaffMember(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/users/:userId/account-status",
+  requireCapabilities("user:manage"),
+  async (request, response, next) => {
+    try {
+      const { status } = accountStatusSchema.parse(request.body);
+      const userId = getRouteParam(request.params.userId);
+      response.json({
+        success: true,
+        ...(await updateUserAccountStatus(request.authUser!, userId, status)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/audit-logs",
+  requireCapabilities("reports:view"),
+  async (request, response, next) => {
+    try {
+      response.json({
+        success: true,
+        auditLogs: await getAuditLogs(request.authUser!.organizationId),
       });
     } catch (error) {
       next(error);

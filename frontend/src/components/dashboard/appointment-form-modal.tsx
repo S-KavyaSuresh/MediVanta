@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   type AppointmentSlotLoadRecord,
   type BookingCapacityRecord,
@@ -53,6 +54,7 @@ const emptyDraft: AppointmentDraft = {
   doctorId: "",
   appointmentDate: "",
   appointmentTime: "",
+  reasonForAppointment: "",
 };
 
 const weekdayLabels = [
@@ -99,6 +101,7 @@ function getDraftFromAppointment(initialAppointment?: AppointmentRecord | null):
     doctorId: initialAppointment.doctorId,
     appointmentDate: initialAppointment.appointmentDate,
     appointmentTime: initialAppointment.appointmentTime,
+    reasonForAppointment: initialAppointment.reasonForAppointment,
   };
 }
 
@@ -696,6 +699,23 @@ export function AppointmentFormModal({
               setDraft((current) => ({ ...current, appointmentTime: value }))
             }
           />
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+            Reason for Appointment
+          </label>
+          <Textarea
+            aria-label="Reason for Appointment"
+            placeholder="Briefly describe why this visit is needed"
+            value={draft.reasonForAppointment}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, reasonForAppointment: event.target.value }))
+            }
+          />
+          {errors.reasonForAppointment ? (
+            <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.reasonForAppointment}</p>
+          ) : null}
         </div>
 
         <div className="flex justify-end">

@@ -27,15 +27,30 @@ import type {
   UserRole,
   UserRecord,
 } from "../domain/types.js";
-import { hashPassword } from "../auth/password.js";
+import { getPasswordPolicyErrors, hashPassword } from "../auth/password.js";
 import { loadHospitalState, loadUsers, saveHospitalState, saveUsers } from "./seed-service.js";
+import { writeAuditLog } from "./audit-service.js";
 import { DEMO_ACCOUNT_PASSWORD } from "./demo-data.js";
 import { getCurrentLocalDateIso } from "../utils/date.js";
+import { measurePerfStep } from "../utils/perf-trace.js";
 import {
+  insertAppointment,
+  insertLabReport,
+  insertLabRequest,
   insertMedicalRecord,
   insertPrescription,
+  insertQueueEntry,
+  loadLabReportById,
   markPrescriptionDispensed,
+  revokeSessionsForUser,
+  upsertHospitalSettings,
+  updateAppointmentRecord,
+  updateAppointmentStatusById,
+  updateLabRequestStatusById,
   updateMedicalRecordDetails,
+  updateQueueEntryById,
+  updateQueueEntriesForAppointment,
+  updateQueueStatusesByAppointment,
 } from "../repositories/postgres-store.js";
 
 function getCurrentLocalTimeValue(now = new Date()) {
@@ -218,11 +233,6 @@ function createExternalPatientId(patientName: string) {
   return `external:${normalizePersonKey(patientName).replace(/[^a-z0-9]+/g, "-")}`;
 }
 
-function createTemporaryPatientPassword() {
-  const token = randomBytes(4).toString("hex");
-  return `Care${token}#`;
-}
-
 function getDoctorScopedAppointments(state: HospitalState, doctorId?: string) {
   if (!doctorId) {
     return [];
@@ -363,6 +373,18 @@ function getLabSlotLoads(state: HospitalState, organizationId: string): LabSlotL
   return [...grouped.values()];
 }
 
+function stripLabReportAttachmentContent(report: LabReportRecord): LabReportRecord {
+  return report.attachment?.contentBase64
+    ? {
+        ...report,
+        attachment: {
+          ...report.attachment,
+          contentBase64: undefined,
+        },
+      }
+    : report;
+}
+
 function toSafeUserSummary(user: {
   passwordHash: string;
   id: string;
@@ -398,6 +420,8 @@ function toSafeUserSummary(user: {
   consultationMode?: string;
   profileVerificationStatus?: string;
   administrativeUnit?: string;
+  emailVerified?: boolean;
+  passwordResetRequired?: boolean;
 }) {
   return {
     id: user.id,
@@ -433,7 +457,22 @@ function toSafeUserSummary(user: {
     consultationMode: user.consultationMode,
     profileVerificationStatus: user.profileVerificationStatus,
     administrativeUnit: user.administrativeUnit,
+    emailVerified: user.emailVerified,
+    passwordResetRequired: user.passwordResetRequired,
   };
+}
+
+function sanitizeAttachmentFileName(fileName: string) {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function isPdfPayload(contentBase64: string) {
+  try {
+    const header = Buffer.from(contentBase64, "base64").subarray(0, 5).toString("utf8");
+    return header === "%PDF-";
+  } catch {
+    return false;
+  }
 }
 
 function createAppointmentId(state: HospitalState) {
@@ -565,6 +604,12 @@ function validateAppointmentDraft(
     errors.appointmentTime = "Select a future appointment time.";
   }
 
+  if (draft.reasonForAppointment.trim().length < 3) {
+    errors.reasonForAppointment = "Please enter the reason for appointment.";
+  } else if (draft.reasonForAppointment.trim().length > 280) {
+    errors.reasonForAppointment = "Reason for appointment must be 280 characters or fewer.";
+  }
+
   if (
     draft.doctorId &&
     draft.appointmentDate &&
@@ -669,6 +714,8 @@ function validateLabReportDraft(draft: LabReportDraft) {
   }
 
   if (draft.attachment) {
+    const attachmentPayload = draft.attachment.contentBase64?.trim() ?? "";
+
     if (draft.attachment.contentType !== "application/pdf") {
       errors.attachment = "Only PDF report files are supported.";
     }
@@ -677,8 +724,16 @@ function validateLabReportDraft(draft: LabReportDraft) {
       errors.attachment = "PDF reports must be 2 MB or smaller.";
     }
 
-    if (!draft.attachment.contentBase64.trim()) {
+    if (!attachmentPayload) {
       errors.attachment = "The uploaded PDF file could not be processed.";
+    }
+
+    if (sanitizeAttachmentFileName(draft.attachment.fileName) !== draft.attachment.fileName) {
+      errors.attachment = "Use a PDF file name without unsupported characters.";
+    }
+
+    if (attachmentPayload && !isPdfPayload(attachmentPayload)) {
+      errors.attachment = "Only valid PDF report files are supported.";
     }
   }
 
@@ -699,16 +754,16 @@ function validateMedicalRecordDraft(draft: MedicalRecordDraft) {
     errors.visitDate = "Select the visit date.";
   }
 
-  if (draft.diagnosis.trim().length < 3) {
-    errors.diagnosis = "Enter a clear diagnosis.";
+  if (draft.diagnosis.trim().length < 1) {
+    errors.diagnosis = "Diagnosis is required.";
   }
 
-  if (draft.clinicalNotes.trim().length < 12) {
-    errors.clinicalNotes = "Enter clinical notes with enough detail for the record.";
+  if (draft.clinicalNotes.trim().length < 1) {
+    errors.clinicalNotes = "Clinical notes are required.";
   }
 
-  if (draft.treatmentAdvice.trim().length < 6) {
-    errors.treatmentAdvice = "Enter the treatment or advice shared with the patient.";
+  if (draft.treatmentAdvice.trim().length < 1) {
+    errors.treatmentAdvice = "Treatment or advice is required.";
   }
 
   return {
@@ -729,25 +784,25 @@ function validatePrescriptionDraft(draft: PrescriptionDraft) {
   }
 
   for (const [index, medicine] of draft.medicines.entries()) {
-    if (medicine.medicineName.trim().length < 2) {
-      errors[`medicines.${index}.medicineName`] = "Enter the medicine name.";
+    if (!medicine.medicineName.trim()) {
+      errors[`medicines.${index}.medicineName`] = "Medicine name is required.";
     }
 
-    if (medicine.dosage.trim().length < 2) {
-      errors[`medicines.${index}.dosage`] = "Enter the dosage.";
+    if (!medicine.dosage.trim()) {
+      errors[`medicines.${index}.dosage`] = "Dosage is required.";
     }
 
-    if (medicine.frequency.trim().length < 2) {
-      errors[`medicines.${index}.frequency`] = "Enter the frequency.";
+    if (!medicine.frequency.trim()) {
+      errors[`medicines.${index}.frequency`] = "Frequency is required.";
     }
 
-    if (medicine.duration.trim().length < 2) {
-      errors[`medicines.${index}.duration`] = "Enter the duration.";
+    if (!medicine.duration.trim()) {
+      errors[`medicines.${index}.duration`] = "Duration is required.";
     }
   }
 
-  if (draft.instructions.trim().length < 6) {
-    errors.instructions = "Enter clear prescription instructions.";
+  if (!draft.instructions.trim()) {
+    errors.instructions = "Instructions are required.";
   }
 
   return {
@@ -790,12 +845,18 @@ type PatientProfileDraft = {
   gender: string;
   dateOfBirth: string;
   bloodGroup: string;
-  address: string;
+  preferredLanguage?: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
   allergies: string;
   medicalConditions: string;
-  preferredLanguage?: string;
+  password: string;
+  confirmPassword: string;
 };
 
 type UserProfileDraft = {
@@ -805,6 +866,11 @@ type UserProfileDraft = {
   dateOfBirth?: string;
   bloodGroup?: string;
   address?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   emergencyContact?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
@@ -825,6 +891,53 @@ type UserProfileDraft = {
   administrativeUnit?: string;
 };
 
+function formatStructuredAddress(input: {
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  fallbackAddress?: string;
+}) {
+  const parts = [
+    input.addressLine1?.trim(),
+    input.addressLine2?.trim(),
+    input.city?.trim(),
+    input.state?.trim(),
+    input.postalCode?.trim(),
+  ].filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0) {
+    return parts.join(", ");
+  }
+
+  return input.fallbackAddress?.trim() || undefined;
+}
+
+function normalizeEmergencyContactFields(input: {
+  emergencyContact?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+}) {
+  const explicitName = input.emergencyContactName?.trim() ?? "";
+  const explicitPhoneRaw = input.emergencyContactPhone?.trim() ?? "";
+  const explicitPhone = /[\d+()\-\s]{7,}/.test(explicitPhoneRaw) ? explicitPhoneRaw : "";
+  const legacyValue = input.emergencyContact?.trim() ?? "";
+  const splitValues = legacyValue
+    .split(/[·•|,/]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const phoneCandidate = splitValues.find((value) => /[\d+()\-\s]{7,}/.test(value));
+  const nameCandidate = splitValues.find((value) => value !== phoneCandidate) ?? "";
+  const legacyIsPhoneOnly = !nameCandidate && /[\d+()\-\s]{7,}/.test(legacyValue);
+
+  return {
+    emergencyContactName:
+      explicitName || (!legacyIsPhoneOnly ? nameCandidate || legacyValue : "") || undefined,
+    emergencyContactPhone: explicitPhone || phoneCandidate || (legacyIsPhoneOnly ? legacyValue : "") || undefined,
+  };
+}
+
 function validatePatientProfileBirthDate(dateOfBirth: string) {
   const date = new Date(dateOfBirth);
   const minDate = new Date("1900-01-01T00:00:00.000Z");
@@ -841,14 +954,17 @@ function validatePatientProfileDraft(
   const errors: Record<string, string> = {};
   const normalizedEmail = draft.email.trim().toLowerCase();
   const normalizedPhone = draft.phoneNumber.trim();
+  const passwordErrors = getPasswordPolicyErrors(draft.password);
 
-  if (draft.fullName.trim().length < 2) {
+  if (!draft.fullName.trim()) {
+    errors.fullName = "Full name is required.";
+  } else if (draft.fullName.trim().length < 2) {
     errors.fullName = "Enter a full name with at least 2 characters.";
   }
 
   if (!normalizedEmail) {
-    errors.email = "Enter a valid email address.";
-  } else if (!normalizedEmail.includes("@")) {
+    errors.email = "Email address is required.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     errors.email = "Enter a valid email address.";
   }
 
@@ -862,7 +978,9 @@ function validatePatientProfileDraft(
     errors.email = "An account with this email already exists.";
   }
 
-  if (normalizedPhone.length < 7) {
+  if (!normalizedPhone) {
+    errors.phoneNumber = "Phone number is required.";
+  } else if (normalizedPhone.length < 7) {
     errors.phoneNumber = "Enter a valid phone number.";
   } else if (
     users.some(
@@ -887,8 +1005,24 @@ function validatePatientProfileDraft(
     errors.bloodGroup = "Select a blood group.";
   }
 
-  if (draft.address.trim().length < 5) {
-    errors.address = "Enter a valid address.";
+  if (draft.preferredLanguage?.trim() && draft.preferredLanguage.trim().length < 2) {
+    errors.preferredLanguage = "Enter a valid preferred language.";
+  }
+
+  if (draft.addressLine1.trim().length < 5) {
+    errors.addressLine1 = "Enter a valid address line 1.";
+  }
+
+  if (draft.city.trim().length < 2) {
+    errors.city = "Enter a valid city.";
+  }
+
+  if (draft.state.trim().length < 2) {
+    errors.state = "Enter a valid state.";
+  }
+
+  if (draft.postalCode.trim().length < 4) {
+    errors.postalCode = "Enter a valid postal code.";
   }
 
   if (draft.emergencyContactName.trim().length < 2) {
@@ -897,6 +1031,18 @@ function validatePatientProfileDraft(
 
   if (draft.emergencyContactPhone.trim().length < 7) {
     errors.emergencyContactPhone = "Enter an emergency contact phone number.";
+  }
+
+  if (!draft.password) {
+    errors.password = "Password is required.";
+  } else if (passwordErrors.length > 0) {
+    errors.password = passwordErrors[0] ?? "Password is required.";
+  }
+
+  if (!draft.confirmPassword) {
+    errors.confirmPassword = "Please confirm your password.";
+  } else if (draft.password !== draft.confirmPassword) {
+    errors.confirmPassword = "Passwords do not match.";
   }
 
   return {
@@ -913,6 +1059,11 @@ const editableProfileFieldsByRole: Record<UserRole, readonly (keyof UserProfileD
     "dateOfBirth",
     "bloodGroup",
     "address",
+    "addressLine1",
+    "addressLine2",
+    "city",
+    "state",
+    "postalCode",
     "emergencyContactName",
     "emergencyContactPhone",
     "allergies",
@@ -957,10 +1108,14 @@ function validateSharedProfileDraft(role: UserRole, draft: UserProfileDraft) {
 
   const optionalMinLengthFields: Array<keyof Pick<
     UserProfileDraft,
-    "phoneNumber" | "address" | "emergencyContactName" | "emergencyContactPhone" | "preferredLanguage" | "qualifications" | "experience" | "languages" | "consultationFee" | "availableTimings" | "deskLabel" | "consultationMode"
+    "phoneNumber" | "address" | "addressLine1" | "city" | "state" | "postalCode" | "emergencyContactName" | "emergencyContactPhone" | "preferredLanguage" | "qualifications" | "experience" | "languages" | "consultationFee" | "availableTimings" | "deskLabel" | "consultationMode"
   >> = [
     "phoneNumber",
     "address",
+    "addressLine1",
+    "city",
+    "state",
+    "postalCode",
     "emergencyContactName",
     "emergencyContactPhone",
     "preferredLanguage",
@@ -977,7 +1132,13 @@ function validateSharedProfileDraft(role: UserRole, draft: UserProfileDraft) {
     const value = draft[field];
     if (value && value.trim().length > 0) {
       const minLength =
-        field === "phoneNumber" ? 7 : field === "consultationFee" ? 2 : 3;
+        field === "phoneNumber" || field === "emergencyContactPhone"
+          ? 7
+          : field === "postalCode"
+            ? 4
+            : field === "consultationFee"
+              ? 2
+              : 2;
       if (value.trim().length < minLength) {
         errors[field] = "Enter a valid value.";
       }
@@ -1095,22 +1256,29 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
     (appointment) => appointment.patientName === user.patientName,
   );
   const appointmentIds = new Set(appointments.map((appointment) => appointment.id));
+  const emailVerified = user.emailVerified !== false;
 
   return {
     ...state,
     appointments,
-    medicalRecords: state.medicalRecords.filter(
-      (record) =>
-        record.patientId === user.id || record.patientName === getPatientDisplayName(user),
-    ),
-    prescriptions: state.prescriptions.filter(
-      (prescription) =>
-        prescription.patientId === user.id ||
-        prescription.patientName === getPatientDisplayName(user),
-    ),
+    medicalRecords: emailVerified
+      ? state.medicalRecords.filter(
+          (record) =>
+            record.patientId === user.id || record.patientName === getPatientDisplayName(user),
+        )
+      : [],
+    prescriptions: emailVerified
+      ? state.prescriptions.filter(
+          (prescription) =>
+            prescription.patientId === user.id ||
+            prescription.patientName === getPatientDisplayName(user),
+        )
+      : [],
     labTests: state.labTests.filter((test) => test.organizationId === user.organizationId),
     labRequests: getScopedLabRequestsForUser(user, state),
-    labReports: state.labReports.filter((report) => report.patientId === user.id),
+    labReports: emailVerified
+      ? state.labReports.filter((report) => report.patientId === user.id)
+      : [],
     queueEntries: state.queueEntries.filter(
       (entry) =>
         entry.patientName === user.patientName ||
@@ -1120,7 +1288,7 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
 }
 
 export async function getScopedHospitalStateForUser(user: SafeUser): Promise<HospitalStateResponse> {
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("scope.load-state", () => loadHospitalState());
   const scopedState = withScopedState(user.role, user, state);
   const organizationId = getUserOrganizationId(user, state);
   const sharedMeta = {
@@ -1129,7 +1297,7 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
   };
 
   if (user.role === "doctor") {
-    const users = await loadUsers();
+    const users = await measurePerfStep("scope.load-users", () => loadUsers());
     const scopedPatients = await getDoctorScopedPatients(state, user, users);
     const patientProfiles = users
       .filter(
@@ -1153,7 +1321,7 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
     return { state: scopedState, meta: sharedMeta };
   }
 
-  const users = await loadUsers();
+  const users = await measurePerfStep("scope.load-users", () => loadUsers());
   const userCounts: Record<UserRole, number> = {
     patient: users.filter((currentUser) => currentUser.role === "patient").length,
     doctor: users.filter((currentUser) => currentUser.role === "doctor").length,
@@ -1181,6 +1349,24 @@ export async function getLabRequestsForUser(user: SafeUser) {
   };
 }
 
+export async function getLabReportForUser(user: SafeUser, labReportId: string) {
+  const state = await loadHospitalState();
+  const scopedState = withScopedState(user.role, user, state);
+  const scopedReport = scopedState.labReports.find((report) => report.id === labReportId);
+
+  if (!scopedReport) {
+    throw createHttpError(404, "Laboratory report not found.");
+  }
+
+  const report = await loadLabReportById(labReportId, scopedReport.organizationId);
+
+  if (!report) {
+    throw createHttpError(404, "Laboratory report not found.");
+  }
+
+  return { report };
+}
+
 export async function updateLabRequestStatus(
   user: SafeUser,
   labRequestId: string,
@@ -1206,20 +1392,33 @@ export async function updateLabRequestStatus(
     throw createHttpError(400, "That laboratory status transition is not allowed.");
   }
 
+  const updatedRequest: LabRequestRecord = {
+    ...request,
+    status,
+  };
   const nextState: HospitalState = {
     ...state,
     labRequests: state.labRequests.map((currentRequest) =>
-      currentRequest.id === labRequestId
-        ? {
-            ...currentRequest,
-            status,
-          }
-        : currentRequest,
+      currentRequest.id === labRequestId ? updatedRequest : currentRequest,
     ),
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  await measurePerfStep("lab-request.status.write", () =>
+    updateLabRequestStatusById({
+      labRequestId,
+      organizationId: request.organizationId,
+      status,
+    }),
+  );
+
+  return {
+    patch: {
+      labRequests: [updatedRequest],
+      meta: {
+        labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
+      },
+    },
+  };
 }
 
 export async function createLabReport(
@@ -1275,21 +1474,46 @@ export async function createLabReport(
     attachment: draft.attachment,
   };
 
+  const updatedRequest: LabRequestRecord = {
+    ...request,
+    status: "Completed",
+  };
   const nextState: HospitalState = {
     ...state,
     labRequests: state.labRequests.map((currentRequest) =>
-      currentRequest.id === labRequestId
-        ? {
-            ...currentRequest,
-            status: "Completed",
-          }
-        : currentRequest,
+      currentRequest.id === labRequestId ? updatedRequest : currentRequest,
     ),
     labReports: [report, ...state.labReports],
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  await measurePerfStep("lab-report.write", async () => {
+    await updateLabRequestStatusById({
+      labRequestId,
+      organizationId: request.organizationId,
+      status: "Completed",
+    });
+    await insertLabReport(report);
+  });
+  await writeAuditLog({
+    organizationId: request.organizationId,
+    actorUserId: user.id,
+    action: "lab.report.created",
+    entityType: "lab-report",
+    entityId: report.id,
+    metadata: {
+      requestId: request.id,
+      testName: report.testName,
+    },
+  });
+  return {
+    patch: {
+      labRequests: [updatedRequest],
+      labReports: [stripLabReportAttachmentContent(report)],
+      meta: {
+        labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
+      },
+    },
+  };
 }
 
 export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDraft) {
@@ -1297,7 +1521,9 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
     throw createHttpError(403, "You do not have access to create medical records.");
   }
 
-  const [state, users] = await Promise.all([loadHospitalState(), loadUsers()]);
+  const [state, users] = await measurePerfStep("medical-record.load-context", () =>
+    Promise.all([loadHospitalState(), loadUsers()]),
+  );
   const validation = validateMedicalRecordDraft(draft);
 
   if (!validation.isValid) {
@@ -1310,11 +1536,19 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
   const patient = scopedPatients.get(draft.patientId);
 
   if (!patient) {
-    throw createHttpError(403, "You can only create records for patients in your scope.");
+    throw createHttpError(400, "Please review the medical record details provided.", {
+      errors: {
+        patientId: "Please select a patient.",
+      },
+    });
   }
 
   if (draft.appointmentId && !patient.appointmentIds.has(draft.appointmentId)) {
-    throw createHttpError(403, "That appointment is not available in your workspace.");
+    throw createHttpError(400, "Please review the medical record details provided.", {
+      errors: {
+        appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
   }
 
   const appointment = draft.appointmentId
@@ -1322,7 +1556,11 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
     : undefined;
 
   if (appointment && appointment.doctorId !== user.doctorId) {
-    throw createHttpError(403, "That appointment is not available in your workspace.");
+    throw createHttpError(400, "Please review the medical record details provided.", {
+      errors: {
+        appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
   }
 
   const doctor = getDoctorById(state, user.doctorId ?? "");
@@ -1347,9 +1585,23 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
     updatedAt: undefined,
   };
 
-  await insertMedicalRecord(record);
+  await measurePerfStep("medical-record.write", () => insertMedicalRecord(record));
+  await writeAuditLog({
+    organizationId: doctor.organizationId,
+    actorUserId: user.id,
+    action: "medical-record.created",
+    entityType: "medical-record",
+    entityId: record.id,
+    metadata: {
+      patientId: record.patientId,
+    },
+  });
 
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      medicalRecords: [record],
+    },
+  };
 }
 
 export async function updateMedicalRecord(
@@ -1361,7 +1613,7 @@ export async function updateMedicalRecord(
     throw createHttpError(403, "You do not have access to edit medical records.");
   }
 
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("medical-record.update.load-state", () => loadHospitalState());
   const recordIndex = state.medicalRecords.findIndex((record) => record.id === recordId);
 
   if (recordIndex === -1) {
@@ -1401,17 +1653,38 @@ export async function updateMedicalRecord(
     });
   }
 
-  await updateMedicalRecordDetails({
-    recordId,
+  await measurePerfStep("medical-record.update.write", () =>
+    updateMedicalRecordDetails({
+      recordId,
+      organizationId: record.organizationId,
+      doctorId: record.doctorId,
+      diagnosis: draft.diagnosis.trim(),
+      clinicalNotes: draft.clinicalNotes.trim(),
+      treatmentAdvice: draft.treatmentAdvice.trim(),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+  await writeAuditLog({
     organizationId: record.organizationId,
-    doctorId: record.doctorId,
-    diagnosis: draft.diagnosis.trim(),
-    clinicalNotes: draft.clinicalNotes.trim(),
-    treatmentAdvice: draft.treatmentAdvice.trim(),
-    updatedAt: new Date().toISOString(),
+    actorUserId: user.id,
+    action: "medical-record.updated",
+    entityType: "medical-record",
+    entityId: recordId,
   });
 
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      medicalRecords: [
+        {
+          ...record,
+          diagnosis: draft.diagnosis.trim(),
+          clinicalNotes: draft.clinicalNotes.trim(),
+          treatmentAdvice: draft.treatmentAdvice.trim(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    },
+  };
 }
 
 export async function createPrescription(user: SafeUser, draft: PrescriptionDraft) {
@@ -1419,7 +1692,9 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     throw createHttpError(403, "You do not have access to create prescriptions.");
   }
 
-  const [state, users] = await Promise.all([loadHospitalState(), loadUsers()]);
+  const [state, users] = await measurePerfStep("prescription.load-context", () =>
+    Promise.all([loadHospitalState(), loadUsers()]),
+  );
   const normalizedDraft = normalizePrescriptionDraft(draft);
   const validation = validatePrescriptionDraft(normalizedDraft);
 
@@ -1433,11 +1708,19 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   const patient = scopedPatients.get(normalizedDraft.patientId);
 
   if (!patient) {
-    throw createHttpError(403, "You can only prescribe for patients in your scope.");
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        patientId: "Please select a patient.",
+      },
+    });
   }
 
   if (normalizedDraft.appointmentId && !patient.appointmentIds.has(normalizedDraft.appointmentId)) {
-    throw createHttpError(403, "That appointment is not available in your workspace.");
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
   }
 
   const appointment = normalizedDraft.appointmentId
@@ -1445,7 +1728,11 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     : undefined;
 
   if (appointment && appointment.doctorId !== user.doctorId) {
-    throw createHttpError(403, "That appointment is not available in your workspace.");
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
   }
 
   const doctor = getDoctorById(state, user.doctorId ?? "");
@@ -1468,9 +1755,23 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     createdAt: new Date().toISOString(),
   };
 
-  await insertPrescription(prescription);
+  await measurePerfStep("prescription.write", () => insertPrescription(prescription));
+  await writeAuditLog({
+    organizationId: doctor.organizationId,
+    actorUserId: user.id,
+    action: "prescription.created",
+    entityType: "prescription",
+    entityId: prescription.id,
+    metadata: {
+      patientId: prescription.patientId,
+    },
+  });
 
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      prescriptions: [prescription],
+    },
+  };
 }
 
 export async function dispensePrescription(
@@ -1486,7 +1787,7 @@ export async function dispensePrescription(
     throw createHttpError(400, "Only dispensing updates are supported in this workflow.");
   }
 
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("appointment.create.load-state", () => loadHospitalState());
   const prescription = state.prescriptions.find((item) => item.id === prescriptionId);
 
   if (!prescription) {
@@ -1501,15 +1802,37 @@ export async function dispensePrescription(
     throw createHttpError(400, "This prescription has already been dispensed.");
   }
 
+  const dispensedAt = new Date().toISOString();
+  const updatedPrescription: PrescriptionRecord = {
+    ...prescription,
+    status: "Dispensed",
+    dispensedAt,
+    dispensedBy: {
+      id: user.id,
+      name: user.displayName,
+    },
+  };
+
   await markPrescriptionDispensed({
     prescriptionId,
     organizationId: prescription.organizationId,
-    dispensedAt: new Date().toISOString(),
+    dispensedAt,
     dispensedById: user.id,
     dispensedByName: user.displayName,
   });
+  await writeAuditLog({
+    organizationId: prescription.organizationId,
+    actorUserId: user.id,
+    action: "prescription.dispensed",
+    entityType: "prescription",
+    entityId: prescriptionId,
+  });
 
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      prescriptions: [updatedPrescription],
+    },
+  };
 }
 
 export async function createAppointment(user: SafeUser, draft: AppointmentDraft) {
@@ -1526,7 +1849,7 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     throw createHttpError(400, "This patient account is missing a valid profile linkage.");
   }
 
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("appointment.create.load-state", () => loadHospitalState());
   const effectiveDraft: AppointmentDraft =
     user.role === "patient"
       ? {
@@ -1560,16 +1883,34 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     departmentId: doctor.departmentId,
     appointmentDate: effectiveDraft.appointmentDate,
     appointmentTime: effectiveDraft.appointmentTime,
+    reasonForAppointment: effectiveDraft.reasonForAppointment.trim(),
     status: "Scheduled",
   };
 
+  await measurePerfStep("appointment.create.write", () => insertAppointment(appointment));
+  await writeAuditLog({
+    organizationId: appointment.organizationId,
+    actorUserId: user.id,
+    action: "appointment.created",
+    entityType: "appointment",
+    entityId: appointment.id,
+    metadata: {
+      doctorId: appointment.doctorId,
+    },
+  });
   const nextState: HospitalState = {
     ...state,
     appointments: [appointment, ...state.appointments],
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      appointments: [appointment],
+      meta: {
+        appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
+      },
+    },
+  };
 }
 
 export async function updateAppointment(
@@ -1577,7 +1918,7 @@ export async function updateAppointment(
   appointmentId: string,
   draft: AppointmentDraft,
 ) {
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("appointment.update.load-state", () => loadHospitalState());
   const validation = validateAppointmentDraft(state, draft, appointmentId);
 
   if (!validation.isValid) {
@@ -1591,36 +1932,84 @@ export async function updateAppointment(
     throw createHttpError(400, "The selected doctor could not be found.");
   }
 
+  const currentAppointment = getAppointmentById(state, appointmentId);
+  if (!currentAppointment) {
+    throw createHttpError(404, "Appointment not found.");
+  }
+
+  const updatedAppointment: AppointmentRecord = {
+    ...currentAppointment,
+    patientName: draft.patientName.trim(),
+    doctorId: doctor.id,
+    departmentId: doctor.departmentId,
+    appointmentDate: draft.appointmentDate,
+    appointmentTime: draft.appointmentTime,
+    reasonForAppointment: draft.reasonForAppointment.trim(),
+  };
+  const updatedQueueEntries = state.queueEntries
+    .filter((entry) => entry.appointmentId === appointmentId)
+    .map((entry) => ({
+      ...entry,
+      patientName: draft.patientName.trim(),
+      doctorId: doctor.id,
+      departmentId: doctor.departmentId,
+      createdAt: draft.appointmentTime,
+      updatedAt: draft.appointmentTime,
+    }));
+
+  await measurePerfStep("appointment.update.write", async () => {
+    await updateAppointmentRecord({
+      appointmentId,
+      organizationId: updatedAppointment.organizationId,
+      patientName: updatedAppointment.patientName,
+      doctorId: updatedAppointment.doctorId,
+      departmentId: updatedAppointment.departmentId,
+      appointmentDate: updatedAppointment.appointmentDate,
+      appointmentTime: updatedAppointment.appointmentTime,
+      reasonForAppointment: updatedAppointment.reasonForAppointment,
+    });
+
+    if (updatedQueueEntries.length > 0) {
+      await updateQueueEntriesForAppointment({
+        organizationId: updatedAppointment.organizationId,
+        appointmentId,
+        patientName: updatedAppointment.patientName,
+        doctorId: updatedAppointment.doctorId,
+        departmentId: updatedAppointment.departmentId,
+        createdAt: updatedAppointment.appointmentTime,
+        updatedAt: updatedAppointment.appointmentTime,
+      });
+    }
+  });
+
   const nextState: HospitalState = {
     ...state,
     appointments: state.appointments.map((appointment) =>
-      appointment.id === appointmentId
-        ? {
-            ...appointment,
-            patientName: draft.patientName.trim(),
-            doctorId: doctor.id,
-            departmentId: doctor.departmentId,
-            appointmentDate: draft.appointmentDate,
-            appointmentTime: draft.appointmentTime,
-          }
-        : appointment,
+      appointment.id === appointmentId ? updatedAppointment : appointment,
     ),
     queueEntries: state.queueEntries.map((entry) =>
       entry.appointmentId === appointmentId
         ? {
             ...entry,
-            patientName: draft.patientName.trim(),
-            doctorId: doctor.id,
-            departmentId: doctor.departmentId,
-            createdAt: draft.appointmentTime,
-            updatedAt: draft.appointmentTime,
+            patientName: updatedAppointment.patientName,
+            doctorId: updatedAppointment.doctorId,
+            departmentId: updatedAppointment.departmentId,
+            createdAt: updatedAppointment.appointmentTime,
+            updatedAt: updatedAppointment.appointmentTime,
           }
         : entry,
     ),
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  return {
+    patch: {
+      appointments: [updatedAppointment],
+      queueEntries: updatedQueueEntries,
+      meta: {
+        appointmentSlotLoads: getAppointmentSlotLoads(nextState, updatedAppointment.organizationId),
+      },
+    },
+  };
 }
 
 export async function setAppointmentStatus(
@@ -1628,7 +2017,7 @@ export async function setAppointmentStatus(
   appointmentId: string,
   status: AppointmentStatus,
 ) {
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("appointment.status.load-state", () => loadHospitalState());
   const appointment = getAppointmentById(state, appointmentId);
 
   if (!appointment) {
@@ -1639,8 +2028,21 @@ export async function setAppointmentStatus(
     user.role === "patient" && appointment.patientName === (user.patientName ?? user.displayName);
   const isOperationsRole =
     user.role === "administrator" || user.role === "receptionist";
+  const isAssignedDoctor =
+    user.role === "doctor" && user.doctorId === appointment.doctorId;
+  const isReceptionist = user.role === "receptionist";
+  const doctorAllowedStatuses =
+    appointment.status === "Checked in"
+      ? ["In consultation"]
+      : appointment.status === "In consultation"
+        ? ["Completed"]
+        : appointment.status === "Scheduled"
+          ? ["Cancelled"]
+          : [];
+  const receptionistAllowedStatuses =
+    appointment.status === "Scheduled" ? ["Checked in", "Cancelled"] : [];
 
-  if (!isPatientOwner && !isOperationsRole) {
+  if (!isPatientOwner && !isOperationsRole && !isAssignedDoctor) {
     throw createHttpError(403, "You do not have access to update this appointment.");
   }
 
@@ -1650,6 +2052,20 @@ export async function setAppointmentStatus(
 
   if (isPatientOwner && appointment.status !== "Scheduled") {
     throw createHttpError(400, "This appointment can no longer be cancelled.");
+  }
+
+  if (isAssignedDoctor && !doctorAllowedStatuses.includes(status)) {
+    throw createHttpError(
+      403,
+      "Doctors can only start, complete, or cancel appointments assigned to them when allowed.",
+    );
+  }
+
+  if (isReceptionist && !receptionistAllowedStatuses.includes(status)) {
+    throw createHttpError(
+      403,
+      "Reception can only check in or cancel scheduled appointments.",
+    );
   }
 
   const allowed = getAllowedAppointmentStatuses(appointment.status);
@@ -1706,8 +2122,65 @@ export async function setAppointmentStatus(
     queueEntries: nextQueueEntries,
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  const updatedAppointment: AppointmentRecord = { ...appointment, status };
+  const changedQueueEntries = nextQueueEntries.filter((entry) => entry.appointmentId === appointment.id);
+
+  await measurePerfStep("appointment.status.write", async () => {
+    await updateAppointmentStatusById({
+      appointmentId: appointment.id,
+      organizationId: appointment.organizationId,
+      status,
+    });
+
+    if (status === "Checked in") {
+      const existingQueueEntry = state.queueEntries.find(
+        (entry) => entry.appointmentId === appointment.id && entry.status !== "Completed",
+      );
+
+      if (existingQueueEntry) {
+        await updateQueueStatusesByAppointment({
+          organizationId: appointment.organizationId,
+          appointmentId: appointment.id,
+          status: existingQueueEntry.status,
+          updatedAt: existingQueueEntry.updatedAt,
+          excludeCompleted: true,
+        });
+      } else if (changedQueueEntries[0]) {
+        await insertQueueEntry(changedQueueEntries[0]);
+      }
+    }
+
+    if (status === "Cancelled" || status === "In consultation" || status === "Completed") {
+      await updateQueueStatusesByAppointment({
+        organizationId: appointment.organizationId,
+        appointmentId: appointment.id,
+        status: changedQueueEntries[0]?.status ?? "Completed",
+        updatedAt: changedQueueEntries[0]?.updatedAt ?? appointment.appointmentTime,
+        excludeCompleted: status !== "Completed",
+      });
+    }
+  });
+  if (status === "Cancelled" || status === "Checked in") {
+    await writeAuditLog({
+      organizationId: appointment.organizationId,
+      actorUserId: user.id,
+      action:
+        status === "Cancelled"
+          ? "appointment.cancelled"
+          : "appointment.checked-in",
+      entityType: "appointment",
+      entityId: appointment.id,
+    });
+  }
+  return {
+    patch: {
+      appointments: [updatedAppointment],
+      queueEntries: changedQueueEntries,
+      meta: {
+        appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
+      },
+    },
+  };
 }
 
 export async function advanceQueue(
@@ -1715,7 +2188,7 @@ export async function advanceQueue(
   queueEntryId: string,
   status: QueueStatus,
 ) {
-  const state = await loadHospitalState();
+  const state = await measurePerfStep("queue.load-state", () => loadHospitalState());
   const queueEntry = state.queueEntries.find((entry) => entry.id === queueEntryId);
 
   if (!queueEntry) {
@@ -1726,12 +2199,6 @@ export async function advanceQueue(
   if (!allowed.includes(status)) {
     throw createHttpError(400, "That queue transition is not allowed.");
   }
-
-  const nextQueueEntries = state.queueEntries.map((entry) =>
-    entry.id === queueEntry.id
-      ? { ...entry, status, updatedAt: queueEntry.updatedAt }
-      : entry,
-  );
 
   const linkedAppointmentId = queueEntry.appointmentId;
   let nextAppointments = state.appointments;
@@ -1751,14 +2218,43 @@ export async function advanceQueue(
     );
   }
 
-  const nextState: HospitalState = {
-    ...state,
-    queueEntries: nextQueueEntries,
-    appointments: nextAppointments,
-  };
+  const updatedQueueEntry = { ...queueEntry, status, updatedAt: queueEntry.updatedAt };
+  const updatedAppointment = linkedAppointmentId
+    ? nextAppointments.find((appointment) => appointment.id === linkedAppointmentId)
+    : undefined;
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  await measurePerfStep("queue.write", async () => {
+    await updateQueueEntryById({
+      queueEntryId: queueEntry.id,
+      organizationId: queueEntry.organizationId,
+      status,
+      updatedAt: queueEntry.updatedAt,
+    });
+
+    if (updatedAppointment) {
+      await updateAppointmentStatusById({
+        appointmentId: updatedAppointment.id,
+        organizationId: updatedAppointment.organizationId,
+        status: updatedAppointment.status,
+      });
+    }
+  });
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "queue.updated",
+    entityType: "queue-entry",
+    entityId: queueEntry.id,
+    metadata: {
+      status,
+    },
+  });
+  return {
+    patch: {
+      queueEntries: [updatedQueueEntry],
+      appointments: updatedAppointment ? [updatedAppointment] : [],
+    },
+  };
 }
 
 type DepartmentDraft = {
@@ -2055,8 +2551,26 @@ export async function updateHospitalSettings(user: SafeUser, draft: HospitalSett
     },
   };
 
-  await saveHospitalState(nextState);
-  return getScopedHospitalStateForUser(user);
+  await measurePerfStep("settings.write", () =>
+    upsertHospitalSettings({
+      organization: nextState.organization,
+      doctorSlotCapacity: nextState.bookingCapacity.doctorSlotCapacity,
+      defaultMaxAppointmentsPerSession: nextState.bookingCapacity.defaultMaxAppointmentsPerSession,
+      labSlotCapacity: nextState.bookingCapacity.labSlotCapacity,
+      configuredSupportLines: nextState.configuredSupportLines,
+      sessions: nextState.bookingCapacity.sessions,
+    }),
+  );
+  return {
+    patch: {
+      organization: nextState.organization,
+      bookingCapacity: nextState.bookingCapacity,
+      meta: {
+        appointmentSlotLoads: getAppointmentSlotLoads(nextState, nextState.organization.id),
+        labSlotLoads: getLabSlotLoads(nextState, nextState.organization.id),
+      },
+    },
+  };
 }
 
 export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
@@ -2093,12 +2607,30 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     createdAt: new Date().toISOString(),
   };
 
-  await saveHospitalState({
+  const nextState: HospitalState = {
     ...state,
     labRequests: [request, ...state.labRequests],
-  });
+  };
 
-  return getScopedHospitalStateForUser(user);
+  await measurePerfStep("lab-request.create.write", () => insertLabRequest(request));
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "lab-request.created",
+    entityType: "lab-request",
+    entityId: request.id,
+    metadata: {
+      testId: request.testId,
+    },
+  });
+  return {
+    patch: {
+      labRequests: [request],
+      meta: {
+        labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
+      },
+    },
+  };
 }
 
 export async function createPatientProfile(user: SafeUser, draft: PatientProfileDraft) {
@@ -2115,8 +2647,8 @@ export async function createPatientProfile(user: SafeUser, draft: PatientProfile
     });
   }
 
-  const temporaryPassword = createTemporaryPatientPassword();
-  const passwordHash = await hashPassword(temporaryPassword);
+  const passwordHash = await hashPassword(draft.password.trim());
+  const formattedAddress = formatStructuredAddress(draft);
   const nextUser: UserRecord = {
     id: `user-patient-${randomBytes(6).toString("hex")}`,
     organizationId: user.organizationId,
@@ -2129,20 +2661,31 @@ export async function createPatientProfile(user: SafeUser, draft: PatientProfile
     gender: draft.gender.trim(),
     dateOfBirth: draft.dateOfBirth,
     bloodGroup: draft.bloodGroup.trim(),
-    address: draft.address.trim(),
+    address: formattedAddress,
+    addressLine1: draft.addressLine1.trim(),
+    addressLine2: draft.addressLine2?.trim() || undefined,
+    city: draft.city.trim(),
+    state: draft.state.trim(),
+    postalCode: draft.postalCode.trim(),
     emergencyContactName: draft.emergencyContactName.trim(),
     emergencyContactPhone: draft.emergencyContactPhone.trim(),
     emergencyContact: `${draft.emergencyContactName.trim()} · ${draft.emergencyContactPhone.trim()}`,
     allergies: draft.allergies.trim() || "None reported",
     medicalConditions: draft.medicalConditions.trim() || "None reported",
     preferredLanguage: draft.preferredLanguage?.trim() || "English",
+    emailVerified: false,
+    passwordResetRequired: false,
   };
 
   await saveUsers([...users, nextUser]);
-  return {
-    ...(await getScopedHospitalStateForUser(user)),
-    temporaryPassword,
-  };
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "patient.registration.created-by-staff",
+    entityType: "user",
+    entityId: nextUser.id,
+  });
+  return getScopedHospitalStateForUser(user);
 }
 
 export async function updatePatientProfile(user: SafeUser, draft: UserProfileDraft) {
@@ -2164,6 +2707,19 @@ export async function updatePatientProfile(user: SafeUser, draft: UserProfileDra
   const currentUser = users[userIndex];
   const previousName = currentUser.patientName ?? currentUser.displayName;
   const nextName = normalizedDraft.fullName.trim();
+  const normalizedEmergency = normalizeEmergencyContactFields({
+    emergencyContact: currentUser.emergencyContact,
+    emergencyContactName: normalizedDraft.emergencyContactName,
+    emergencyContactPhone: normalizedDraft.emergencyContactPhone,
+  });
+  const formattedAddress = formatStructuredAddress({
+    addressLine1: normalizedDraft.addressLine1,
+    addressLine2: normalizedDraft.addressLine2,
+    city: normalizedDraft.city,
+    state: normalizedDraft.state,
+    postalCode: normalizedDraft.postalCode,
+    fallbackAddress: normalizedDraft.address || currentUser.address,
+  });
   const nextUsers = [...users];
   const nextUser: UserRecord = {
     ...currentUser,
@@ -2172,12 +2728,17 @@ export async function updatePatientProfile(user: SafeUser, draft: UserProfileDra
     gender: normalizedDraft.gender?.trim() || undefined,
     dateOfBirth: normalizedDraft.dateOfBirth || undefined,
     bloodGroup: normalizedDraft.bloodGroup?.trim() || undefined,
-    address: normalizedDraft.address?.trim() || undefined,
-    emergencyContactName: normalizedDraft.emergencyContactName?.trim() || undefined,
-    emergencyContactPhone: normalizedDraft.emergencyContactPhone?.trim() || undefined,
+    address: formattedAddress,
+    addressLine1: normalizedDraft.addressLine1?.trim() || undefined,
+    addressLine2: normalizedDraft.addressLine2?.trim() || undefined,
+    city: normalizedDraft.city?.trim() || undefined,
+    state: normalizedDraft.state?.trim() || undefined,
+    postalCode: normalizedDraft.postalCode?.trim() || undefined,
+    emergencyContactName: normalizedEmergency.emergencyContactName,
+    emergencyContactPhone: normalizedEmergency.emergencyContactPhone,
     emergencyContact:
-      normalizedDraft.emergencyContactName?.trim() && normalizedDraft.emergencyContactPhone?.trim()
-        ? `${normalizedDraft.emergencyContactName.trim()} · ${normalizedDraft.emergencyContactPhone.trim()}`
+      normalizedEmergency.emergencyContactName && normalizedEmergency.emergencyContactPhone
+        ? `${normalizedEmergency.emergencyContactName} · ${normalizedEmergency.emergencyContactPhone}`
         : currentUser.emergencyContact,
     allergies: normalizedDraft.allergies?.trim() || undefined,
     medicalConditions: normalizedDraft.medicalConditions?.trim() || undefined,
@@ -2339,6 +2900,78 @@ export async function createStaffMember(user: SafeUser, draft: StaffDraft) {
     saveUsers([...users, nextUser]),
     saveHospitalState(nextState),
   ]);
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "staff.created",
+    entityType: "user",
+    entityId: nextUser.id,
+    metadata: {
+      role: nextUser.role,
+    },
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function updateUserAccountStatus(
+  user: SafeUser,
+  targetUserId: string,
+  status: "Active" | "Deactivated",
+) {
+  if (user.role !== "administrator") {
+    throw createHttpError(403, "You do not have access to manage account status.");
+  }
+
+  if (user.id === targetUserId) {
+    throw createHttpError(400, "You cannot change the status of your own signed-in account.");
+  }
+
+  const users = await loadUsers();
+  const userIndex = users.findIndex((currentUser) => currentUser.id === targetUserId);
+
+  if (userIndex === -1) {
+    throw createHttpError(404, "User account not found.");
+  }
+
+  const targetUser = users[userIndex];
+
+  if (targetUser.organizationId !== user.organizationId) {
+    throw createHttpError(403, "You do not have access to manage this account.");
+  }
+
+  if (targetUser.role === "patient") {
+    throw createHttpError(400, "This staff management area can only manage staff and administrator accounts.");
+  }
+
+  const currentStatus = targetUser.staffStatus?.trim() || "Active";
+  if (currentStatus === status) {
+    return getScopedHospitalStateForUser(user);
+  }
+
+  const nextUsers = [...users];
+  nextUsers[userIndex] = {
+    ...targetUser,
+    staffStatus: status,
+  };
+
+  await saveUsers(nextUsers);
+
+  if (status === "Deactivated") {
+    await revokeSessionsForUser(targetUser.id);
+  }
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: status === "Deactivated" ? "user.account.deactivated" : "user.account.reactivated",
+    entityType: "user",
+    entityId: targetUser.id,
+    metadata: {
+      role: targetUser.role,
+      email: targetUser.email,
+    },
+  });
 
   return getScopedHospitalStateForUser(user);
 }

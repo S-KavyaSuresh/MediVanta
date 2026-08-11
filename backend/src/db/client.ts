@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 
 import { env } from "../config/env.js";
+import { measurePerfStep } from "../utils/perf-trace.js";
 
 type QueryResultRow = Record<string, unknown>;
 
@@ -57,25 +58,29 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params: unknown[] = [],
 ) {
-  const pool = await getPool();
-  return pool.query<T>(sql, params);
+  return measurePerfStep("db.query", async () => {
+    const pool = await getPool();
+    return pool.query<T>(sql, params);
+  });
 }
 
 export async function withTransaction<T>(callback: (client: Queryable) => Promise<T>) {
-  const pool = await getPool();
-  const client = await pool.connect();
+  return measurePerfStep("db.transaction", async () => {
+    const pool = await getPool();
+    const client = await pool.connect();
 
-  try {
-    await client.query("BEGIN");
-    const result = await callback(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release?.();
-  }
+    try {
+      await client.query("BEGIN");
+      const result = await callback(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release?.();
+    }
+  });
 }
 
 export async function getDatabaseHealth() {

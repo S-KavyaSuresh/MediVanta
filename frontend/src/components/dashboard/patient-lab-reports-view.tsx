@@ -103,7 +103,9 @@ export function PatientLabReportsView() {
                       <Button
                         type="button"
                         variant="secondary"
-                        onClick={() => downloadLabReport(report, state.organization.name)}
+                        onClick={() => {
+                          void downloadLabReport(report, state.organization.name);
+                        }}
                       >
                         Download Report
                       </Button>

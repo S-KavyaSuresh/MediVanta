@@ -170,7 +170,7 @@ export function DoctorPrescriptionsView() {
     const validation = validatePrescriptionDraft(draft, activePatientId);
     if (!validation.isValid) {
       setFieldErrors(validation.errors);
-      setMessage("Please review the prescription details provided.");
+      setMessage("Please correct the highlighted prescription fields.");
       setSubmitting(false);
       return;
     }

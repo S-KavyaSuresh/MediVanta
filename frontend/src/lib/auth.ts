@@ -91,6 +91,11 @@ export type SafeUser = {
   dateOfBirth?: string;
   bloodGroup?: string;
   address?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   emergencyContact?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
@@ -109,6 +114,8 @@ export type SafeUser = {
   consultationMode?: string;
   profileVerificationStatus?: string;
   administrativeUnit?: string;
+  emailVerified?: boolean;
+  passwordResetRequired?: boolean;
 };
 
 export type AuthSession = {
@@ -120,12 +127,17 @@ export type AuthSession = {
 
 export function getSafeLandingPath(role: UserRole, candidate?: string | null) {
   const nextPath = typeof candidate === "string" ? candidate.trim() : "";
+  const allowedRoot = landingPathByRole[role];
 
-  if (nextPath === "/dashboard" || nextPath.startsWith("/dashboard/")) {
+  if (
+    nextPath === allowedRoot ||
+    nextPath.startsWith(`${allowedRoot}/`) ||
+    (nextPath === "/dashboard/search" && role !== "patient")
+  ) {
     return nextPath;
   }
 
-  return landingPathByRole[role] ?? "/dashboard";
+  return allowedRoot ?? "/dashboard";
 }
 
 export const capabilitiesByRole: Record<UserRole, Capability[]> = {
@@ -246,7 +258,7 @@ export type TourStep = {
 };
 
 export const roleTitles: Record<UserRole, string> = {
-  patient: "Patient Dashboard",
+  patient: "My Dashboard",
   doctor: "Doctor Workspace",
   receptionist: "Reception Desk",
   laboratory: "Laboratory Workspace",

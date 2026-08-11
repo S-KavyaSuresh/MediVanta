@@ -8,7 +8,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { UserAvatar } from "@/components/dashboard/user-avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { roleTitles } from "@/lib/auth";
+import { getSafeLandingPath, roleTitles } from "@/lib/auth";
 
 export function DashboardHeader({
   onOpenSidebar,
@@ -49,7 +49,7 @@ export function DashboardHeader({
 
                 if (!trimmed) {
                   if (pathname === "/dashboard/search") {
-                    router.push(session.landingPath);
+                    router.push(getSafeLandingPath(session.user.role, session.landingPath));
                   }
 
                   return;

@@ -276,6 +276,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-cardiology",
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "09:30",
+        reasonForAppointment: "Stable hypertension follow-up",
         status: "Checked in",
       },
       {
@@ -286,6 +287,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-radiology",
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:00",
+        reasonForAppointment: "Diagnostic imaging review",
         status: "In consultation",
       },
       {
@@ -296,6 +298,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-general-medicine",
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:45",
+        reasonForAppointment: "General fever follow-up",
         status: "Completed",
       },
       {
@@ -307,6 +310,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-pediatrics",
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "11:15",
+        reasonForAppointment: "Persistent fever",
         status: "Scheduled",
       },
       {
@@ -317,6 +321,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-orthopedics",
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "12:10",
+        reasonForAppointment: "Knee pain review",
         status: "Scheduled",
       },
       {
@@ -327,6 +332,7 @@ export function createDemoHospitalState(): HospitalState {
         departmentId: "dept-neurology",
         appointmentDate: "2026-08-10",
         appointmentTime: "14:00",
+        reasonForAppointment: "Headache and dizziness",
         status: "Scheduled",
       },
     ],
@@ -492,6 +498,10 @@ export function createDemoUsers(passwordHash: string): UserRecord[] {
       dateOfBirth: "1994-03-18",
       bloodGroup: "B+",
       address: "22 Lake View Road, Chennai",
+      addressLine1: "22 Lake View Road",
+      city: "Chennai",
+      state: "Tamil Nadu",
+      postalCode: "600018",
       emergencyContactName: "Anita Nair",
       emergencyContactPhone: "9876501234",
       emergencyContact: "Anita Nair · 9876501234",

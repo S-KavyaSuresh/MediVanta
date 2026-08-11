@@ -19,10 +19,42 @@ import {
   saveUsersSnapshot,
 } from "../repositories/postgres-store.js";
 import { assertDatabaseConfigured, query } from "../db/client.js";
+import { measurePerfStep } from "../utils/perf-trace.js";
 
 const USERS_FILE = "users.json";
 const SESSIONS_FILE = "sessions.json";
 const HOSPITAL_FILE = "hospital-state.json";
+
+function normalizeLegacyEmergencyContact(user: UserRecord): UserRecord {
+  const currentName = user.emergencyContactName?.trim() ?? "";
+  const currentPhone = user.emergencyContactPhone?.trim() ?? "";
+  const legacyContact = user.emergencyContact?.trim() ?? "";
+  const currentPhoneLooksValid = /[\d+()\-\s]{7,}/.test(currentPhone);
+
+  if (currentName && currentPhoneLooksValid) {
+    return user;
+  }
+
+  const splitValues = legacyContact
+    .split(/[·•|,/]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const phoneCandidate = splitValues.find((value) => /[\d+()\-\s]{7,}/.test(value));
+  const nameCandidate = splitValues.find((value) => value !== phoneCandidate) ?? "";
+  const onlyLegacyLooksLikePhone = !nameCandidate && /[\d+()\-\s]{7,}/.test(legacyContact);
+
+  const nextName = currentName || (!onlyLegacyLooksLikePhone ? nameCandidate || legacyContact : "");
+  const nextPhone =
+    (currentPhoneLooksValid ? currentPhone : "") ||
+    phoneCandidate ||
+    (onlyLegacyLooksLikePhone ? legacyContact : "");
+
+  return {
+    ...user,
+    emergencyContactName: nextName || undefined,
+    emergencyContactPhone: nextPhone || undefined,
+  };
+}
 
 function getPatientIdFromName(patientName: string, users: UserRecord[]) {
   const normalizedName = patientName.trim().toLowerCase();
@@ -60,7 +92,18 @@ async function mergeDemoUsers(existingUsers: UserRecord[], passwordHash: string)
       );
 
       return {
-        ...demoUser,
+        ...normalizeLegacyEmergencyContact({
+          ...demoUser,
+          emailVerified: existingUser.emailVerified ?? demoUser.emailVerified,
+          passwordResetRequired:
+            existingUser.passwordResetRequired ?? demoUser.passwordResetRequired,
+          resetTokenHash: existingUser.resetTokenHash,
+          resetOtpHash: existingUser.resetOtpHash,
+          resetExpiresAt: existingUser.resetExpiresAt,
+          verificationTokenHash: existingUser.verificationTokenHash,
+          verificationOtpHash: existingUser.verificationOtpHash,
+          verificationExpiresAt: existingUser.verificationExpiresAt,
+        }),
         displayName: existingUser.displayName ?? demoUser.displayName,
         patientName: existingUser.patientName ?? demoUser.patientName,
         departmentId: existingUser.departmentId ?? demoUser.departmentId,
@@ -70,6 +113,11 @@ async function mergeDemoUsers(existingUsers: UserRecord[], passwordHash: string)
         dateOfBirth: existingUser.dateOfBirth ?? demoUser.dateOfBirth,
         bloodGroup: existingUser.bloodGroup ?? demoUser.bloodGroup,
         address: existingUser.address ?? demoUser.address,
+        addressLine1: existingUser.addressLine1 ?? demoUser.addressLine1,
+        addressLine2: existingUser.addressLine2 ?? demoUser.addressLine2,
+        city: existingUser.city ?? demoUser.city,
+        state: existingUser.state ?? demoUser.state,
+        postalCode: existingUser.postalCode ?? demoUser.postalCode,
         emergencyContact: existingUser.emergencyContact ?? demoUser.emergencyContact,
         emergencyContactName:
           existingUser.emergencyContactName ?? demoUser.emergencyContactName,
@@ -104,10 +152,21 @@ async function mergeDemoUsers(existingUsers: UserRecord[], passwordHash: string)
     (user) => !demoUsersByEmail.has(user.email.toLowerCase()),
   );
 
-  return [...normalizedDemoUsers, ...nonDemoUsers].map((user) => ({
-    ...user,
-    organizationId: user.organizationId ?? DEMO_ORGANIZATION.id,
-  }));
+  return [...normalizedDemoUsers, ...nonDemoUsers].map((user) =>
+    normalizeLegacyEmergencyContact({
+      ...user,
+      organizationId: user.organizationId ?? DEMO_ORGANIZATION.id,
+    }),
+  );
+}
+
+function normalizePersistedUsers(users: UserRecord[]) {
+  return users.map((user) =>
+    normalizeLegacyEmergencyContact({
+      ...user,
+      organizationId: user.organizationId ?? DEMO_ORGANIZATION.id,
+    }),
+  );
 }
 
 function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
@@ -240,23 +299,31 @@ export async function importLegacyJsonData() {
 }
 
 export async function loadUsers() {
-  const users = await loadUsersSnapshot();
-  const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
-  return mergeDemoUsers(users, passwordHash);
+  return measurePerfStep("users.load", async () => {
+    const users = await loadUsersSnapshot();
+    return normalizePersistedUsers(users);
+  });
 }
 
 export async function saveUsers(users: UserRecord[]) {
-  await saveUsersSnapshot(users);
+  await measurePerfStep("users.save", async () => {
+    await saveUsersSnapshot(users);
+  });
 }
 
 export async function loadHospitalState() {
-  const state = (await loadHospitalStateSnapshot()) ?? createDemoHospitalState();
-  const users = await loadUsers();
-  return hydrateHospitalState(state, users);
+  return measurePerfStep("hospital-state.load", async () => {
+    const state =
+      (await loadHospitalStateSnapshot({ includeLabReportAttachmentContent: false })) ??
+      createDemoHospitalState();
+    return hydrateHospitalState(state, []);
+  });
 }
 
 export async function saveHospitalState(state: HospitalState) {
-  await saveHospitalStateSnapshot(state);
+  await measurePerfStep("hospital-state.save", async () => {
+    await saveHospitalStateSnapshot(state);
+  });
 }
 
 export async function loadSessions() {

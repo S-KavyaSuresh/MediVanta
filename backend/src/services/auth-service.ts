@@ -1,26 +1,30 @@
 import { randomBytes } from "node:crypto";
 
-import type {
-  AuthSessionPayload,
-  OrganizationRecord,
-  SafeUser,
-  SessionRecord,
-  UserRecord,
-} from "../domain/types.js";
+import type { AuthSessionPayload, OrganizationRecord, SafeUser, UserRecord } from "../domain/types.js";
 import { getCapabilitiesForRole, landingPathByRole } from "../auth/permissions.js";
-import { verifyPassword } from "../auth/password.js";
+import { verifyPassword, hashSecret } from "../auth/password.js";
+import {
+  createAccessToken,
+  createRefreshToken,
+  getAccessTokenLifetimeSeconds,
+  getRefreshTokenLifetimeSeconds,
+  verifyAccessToken,
+  verifyRefreshToken,
+} from "../auth/jwt.js";
 import { DEMO_ORGANIZATION } from "./demo-data.js";
 import {
   deleteExpiredSessions,
-  deleteSessionById,
   loadOrganizationById,
+  loadSessionById,
   loadUserByEmail,
-  loadUserBySessionId,
-  replaceSessionForUser,
+  loadUserById,
+  loadActiveSessionsForUser,
+  revokeOtherSession,
+  revokeSession,
+  insertSession,
+  updateSessionActivity,
 } from "../repositories/postgres-store.js";
-
-const SHORT_SESSION_SECONDS = 60 * 60 * 12;
-const LONG_SESSION_SECONDS = 60 * 60 * 24 * 30;
+import { measurePerfStep } from "../utils/perf-trace.js";
 
 function toSafeUser(user: UserRecord): SafeUser {
   return {
@@ -39,6 +43,11 @@ function toSafeUser(user: UserRecord): SafeUser {
     dateOfBirth: user.dateOfBirth,
     bloodGroup: user.bloodGroup,
     address: user.address,
+    addressLine1: user.addressLine1,
+    addressLine2: user.addressLine2,
+    city: user.city,
+    state: user.state,
+    postalCode: user.postalCode,
     emergencyContact: user.emergencyContact,
     emergencyContactName: user.emergencyContactName,
     emergencyContactPhone: user.emergencyContactPhone,
@@ -57,6 +66,8 @@ function toSafeUser(user: UserRecord): SafeUser {
     consultationMode: user.consultationMode,
     profileVerificationStatus: user.profileVerificationStatus,
     administrativeUnit: user.administrativeUnit,
+    emailVerified: user.emailVerified,
+    passwordResetRequired: user.passwordResetRequired,
   };
 }
 
@@ -73,14 +84,29 @@ async function getOrganizationForUser(user: UserRecord): Promise<OrganizationRec
   };
 }
 
+function getFallbackOrganization(organizationId?: string | null): OrganizationRecord {
+  return {
+    ...DEMO_ORGANIZATION,
+    id: organizationId ?? DEMO_ORGANIZATION.id,
+  };
+}
+
 export async function authenticateUser(email: string, password: string) {
-  const user = await loadUserByEmail(email.trim().toLowerCase());
+  const user = await measurePerfStep("auth.load-user", () =>
+    loadUserByEmail(email.trim().toLowerCase()),
+  );
 
   if (!user) {
     return null;
   }
 
-  const matches = await verifyPassword(password, user.passwordHash);
+  if (user.staffStatus?.trim().toLowerCase() === "deactivated") {
+    return null;
+  }
+
+  const matches = await measurePerfStep("auth.verify-password", () =>
+    verifyPassword(password, user.passwordHash),
+  );
   if (!matches) {
     return null;
   }
@@ -88,47 +114,114 @@ export async function authenticateUser(email: string, password: string) {
   return user;
 }
 
-export async function createSession(userId: string, remember: boolean) {
-  const sessionId = randomBytes(32).toString("hex");
-  const expiresAt = new Date(
-    Date.now() + (remember ? LONG_SESSION_SECONDS : SHORT_SESSION_SECONDS) * 1000,
-  ).toISOString();
+export async function issueAuthSession(
+  user: UserRecord,
+  remember: boolean,
+  userAgent?: string,
+) {
+  const sessionId = randomBytes(16).toString("hex");
+  const refreshToken = createRefreshToken({
+    userId: user.id,
+    sessionId,
+    type: "refresh",
+  });
+  const accessToken = createAccessToken({
+    userId: user.id,
+    role: user.role,
+    organizationId: user.organizationId,
+  });
+  const now = new Date().toISOString();
+  const refreshMaxAgeSeconds = getRefreshTokenLifetimeSeconds();
+  const accessMaxAgeSeconds = getAccessTokenLifetimeSeconds();
+  const expiresAt = new Date(Date.now() + refreshMaxAgeSeconds * 1000).toISOString();
 
-  const nextSession: SessionRecord = {
-    id: sessionId,
-    userId,
-    expiresAt,
-    remember,
-  };
-
-  await replaceSessionForUser(nextSession);
+  await measurePerfStep("auth.insert-session", () =>
+    insertSession({
+      id: sessionId,
+      userId: user.id,
+      expiresAt,
+      remember,
+      createdAt: now,
+      lastUsedAt: now,
+      userAgent,
+      deviceLabel: userAgent?.slice(0, 120),
+      refreshTokenHash: hashSecret(refreshToken),
+    }),
+  );
 
   return {
+    accessToken,
+    refreshToken,
+    accessMaxAgeSeconds,
+    refreshMaxAgeSeconds,
     sessionId,
-    maxAgeSeconds: remember ? LONG_SESSION_SECONDS : SHORT_SESSION_SECONDS,
   };
 }
 
-export async function destroySession(sessionId: string) {
-  await deleteSessionById(sessionId);
+export async function revokeCurrentSession(sessionId: string) {
+  await revokeSession(sessionId);
 }
 
-export async function getUserFromSession(sessionId?: string | null) {
-  if (!sessionId) {
+export async function resolveUserFromAccessToken(accessToken?: string | null) {
+  if (!accessToken) {
     return null;
   }
 
-  const session = await loadUserBySessionId(sessionId);
-  if (!session) {
+  const payload = verifyAccessToken(accessToken);
+  if (!payload?.userId) {
     return null;
   }
 
-  if (new Date(session.expiresAt).getTime() <= Date.now()) {
-    await Promise.all([deleteSessionById(sessionId), deleteExpiredSessions()]);
+  return measurePerfStep("auth.access-user", () => loadUserById(payload.userId));
+}
+
+export async function refreshAuthSession(refreshToken?: string | null, _userAgent?: string) {
+  if (!refreshToken) {
     return null;
   }
 
-  return session.user;
+  const payload = verifyRefreshToken(refreshToken);
+  if (!payload?.userId || !payload.sessionId || payload.type !== "refresh") {
+    return null;
+  }
+
+  const session = await measurePerfStep("auth.load-session", () =>
+    loadSessionById(payload.sessionId),
+  );
+  if (
+    !session ||
+    session.userId !== payload.userId ||
+    session.revokedAt ||
+    !session.refreshTokenHash ||
+    session.refreshTokenHash !== hashSecret(refreshToken) ||
+    new Date(session.expiresAt).getTime() <= Date.now()
+  ) {
+    return null;
+  }
+
+  const user = await measurePerfStep("auth.refresh-user", () =>
+    loadUserById(payload.userId),
+  );
+  if (!user) {
+    return null;
+  }
+
+  await measurePerfStep("auth.refresh-housekeeping", () =>
+    Promise.all([updateSessionActivity(session.id), deleteExpiredSessions()]),
+  );
+
+  return {
+    user,
+    accessToken: createAccessToken({
+      userId: user.id,
+      role: user.role,
+      organizationId: user.organizationId,
+    }),
+    refreshToken,
+    accessMaxAgeSeconds: getAccessTokenLifetimeSeconds(),
+    refreshMaxAgeSeconds: getRefreshTokenLifetimeSeconds(),
+    sessionId: session.id,
+  };
 }
 
 export async function buildSessionPayload(user: UserRecord): Promise<AuthSessionPayload> {
@@ -137,11 +230,32 @@ export async function buildSessionPayload(user: UserRecord): Promise<AuthSession
     organizationId: user.organizationId ?? DEMO_ORGANIZATION.id,
   };
   const role = normalizedUser.role;
+  let organization: OrganizationRecord;
+
+  try {
+    organization = await measurePerfStep("auth.load-organization", () =>
+      getOrganizationForUser(normalizedUser),
+    );
+  } catch {
+    organization = getFallbackOrganization(normalizedUser.organizationId);
+  }
 
   return {
     user: toSafeUser(normalizedUser),
-    organization: await getOrganizationForUser(normalizedUser),
+    organization,
     permissions: getCapabilitiesForRole(role) ?? [],
     landingPath: landingPathByRole[role] ?? "/dashboard",
   };
+}
+
+export async function listActiveSessions(userId: string, currentSessionId?: string | null) {
+  const sessions = await loadActiveSessionsForUser(userId);
+  return sessions.map((session) => ({
+    ...session,
+    current: session.id === currentSessionId,
+  }));
+}
+
+export async function revokeUserSession(userId: string, sessionId: string) {
+  await revokeOtherSession(userId, sessionId);
 }

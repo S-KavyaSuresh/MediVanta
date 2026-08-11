@@ -39,8 +39,7 @@ export function AuthProvider({
           permissions: [],
           landingPath: "/login",
         }));
-        router.push("/login");
-        router.refresh();
+        router.replace("/login");
       },
     }),
     [router, session],

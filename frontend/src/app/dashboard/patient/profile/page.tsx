@@ -13,6 +13,11 @@ const genderOptions = ["Female", "Male", "Non-binary", "Prefer not to say"].map(
   label: value,
 }));
 
+const languageOptions = ["English", "Tamil", "Hindi"].map((value) => ({
+  value,
+  label: value,
+}));
+
 function getAge(dateOfBirth?: string) {
   if (!dateOfBirth) {
     return "Not assigned";
@@ -43,11 +48,26 @@ function parseEmergencyContact(sessionEmergencyContact?: string) {
   return { name, phone };
 }
 
+function getEmergencyContactPhone(value?: string, fallback?: string) {
+  const direct = value?.trim() ?? "";
+  if (/[\d+()\-\s]{7,}/.test(direct)) {
+    return direct;
+  }
+
+  return fallback?.trim() ?? "";
+}
+
+function formatPatientId(id: string) {
+  const suffix = id.replace(/^user-patient-?/, "").replace(/[^a-zA-Z0-9]/g, "").slice(-6).toUpperCase();
+  return `PAT-${suffix || "000001"}`;
+}
+
 export default function PatientProfilePage() {
   const { session } = useAuth();
+  const parsedEmergency = parseEmergencyContact(session.user.emergencyContact);
   const emergencyContact = {
-    name: session.user.emergencyContactName ?? parseEmergencyContact(session.user.emergencyContact).name,
-    phone: session.user.emergencyContactPhone ?? parseEmergencyContact(session.user.emergencyContact).phone,
+    name: session.user.emergencyContactName ?? parsedEmergency.name,
+    phone: getEmergencyContactPhone(session.user.emergencyContactPhone, parsedEmergency.phone),
   };
 
   return (
@@ -61,7 +81,11 @@ export default function PatientProfilePage() {
         gender: session.user.gender ?? "",
         dateOfBirth: session.user.dateOfBirth ?? "",
         bloodGroup: session.user.bloodGroup ?? "",
-        address: session.user.address ?? "",
+        addressLine1: session.user.addressLine1 ?? session.user.address ?? "",
+        addressLine2: session.user.addressLine2 ?? "",
+        city: session.user.city ?? "",
+        state: session.user.state ?? "",
+        postalCode: session.user.postalCode ?? "",
         emergencyContactName: emergencyContact.name,
         emergencyContactPhone: emergencyContact.phone,
         allergies: session.user.allergies ?? "",
@@ -69,7 +93,7 @@ export default function PatientProfilePage() {
         preferredLanguage: session.user.preferredLanguage ?? session.organization.defaultLanguage ?? "",
       }}
       derivedValues={{
-        profileId: session.user.id,
+        profileId: formatPatientId(session.user.id),
         age: getAge(session.user.dateOfBirth),
         organization: session.organization.name,
         status: "Active",
@@ -84,12 +108,16 @@ export default function PatientProfilePage() {
         { key: "gender", label: "Gender", type: "select", options: genderOptions },
         { key: "bloodGroup", label: "Blood Group", type: "select", options: bloodGroupOptions },
         { key: "organization", label: "Hospital / Organization", type: "readonly", editable: false },
-        { key: "address", label: "Address", type: "textarea" },
+        { key: "addressLine1", label: "Address Line 1", type: "text" },
+        { key: "addressLine2", label: "Address Line 2", type: "text" },
+        { key: "city", label: "City", type: "text" },
+        { key: "state", label: "State", type: "text" },
+        { key: "postalCode", label: "Postal Code", type: "text" },
         { key: "emergencyContactName", label: "Emergency Contact Name", type: "text" },
         { key: "emergencyContactPhone", label: "Emergency Contact Phone", type: "tel" },
         { key: "allergies", label: "Allergies", type: "textarea" },
         { key: "medicalConditions", label: "Existing / Chronic Medical Conditions", type: "textarea" },
-        { key: "preferredLanguage", label: "Preferred Language", type: "text" },
+        { key: "preferredLanguage", label: "Preferred Language", type: "select", options: languageOptions },
         { key: "status", label: "Account Status", type: "readonly", editable: false },
       ]}
     />

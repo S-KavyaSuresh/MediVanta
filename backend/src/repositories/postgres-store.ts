@@ -1,11 +1,13 @@
 import type {
   AppointmentRecord,
+  AppointmentStatus,
   BookingCapacityRecord,
   BookingSessionCapacityRecord,
   DepartmentRecord,
   DoctorRecord,
   HospitalState,
   LabReportRecord,
+  LabRequestStatus,
   LabRequestRecord,
   LabTestRecord,
   MedicalRecordRecord,
@@ -13,6 +15,7 @@ import type {
   PrescriptionMedicineRecord,
   PrescriptionRecord,
   QueueEntryRecord,
+  QueueStatus,
   SessionRecord,
   UserRecord,
 } from "../domain/types.js";
@@ -35,6 +38,14 @@ function asNumber(value: unknown) {
 
 function asBoolean(value: unknown) {
   return typeof value === "boolean" ? value : value === "true";
+}
+
+function asTimestampString(value: unknown) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return typeof value === "string" ? value : undefined;
 }
 
 function chunk<T>(items: T[], size: number) {
@@ -87,6 +98,14 @@ async function upsertUsers(client: SqlClient, users: UserRecord[]) {
     "doctor_id",
     "assigned_doctor_id",
     "status",
+    "email_verified",
+    "password_reset_required",
+    "reset_token_hash",
+    "reset_otp_hash",
+    "reset_expires_at",
+    "verification_token_hash",
+    "verification_otp_hash",
+    "verification_expires_at",
   ];
 
   for (const batch of chunk(users, 100)) {
@@ -102,6 +121,14 @@ async function upsertUsers(client: SqlClient, users: UserRecord[]) {
         user.doctorId ?? null,
         user.assignedDoctorId ?? null,
         user.staffStatus ?? null,
+        user.emailVerified ?? true,
+        user.passwordResetRequired ?? false,
+        user.resetTokenHash ?? null,
+        user.resetOtpHash ?? null,
+        user.resetExpiresAt ?? null,
+        user.verificationTokenHash ?? null,
+        user.verificationOtpHash ?? null,
+        user.verificationExpiresAt ?? null,
       ];
 
       const rowPlaceholders = row.map((value, columnIndex) => {
@@ -123,6 +150,14 @@ async function upsertUsers(client: SqlClient, users: UserRecord[]) {
          doctor_id = excluded.doctor_id,
          assigned_doctor_id = excluded.assigned_doctor_id,
          status = excluded.status,
+         email_verified = excluded.email_verified,
+         password_reset_required = excluded.password_reset_required,
+         reset_token_hash = excluded.reset_token_hash,
+         reset_otp_hash = excluded.reset_otp_hash,
+         reset_expires_at = excluded.reset_expires_at,
+         verification_token_hash = excluded.verification_token_hash,
+         verification_otp_hash = excluded.verification_otp_hash,
+         verification_expires_at = excluded.verification_expires_at,
          updated_at = now()`,
       values,
     );
@@ -193,6 +228,11 @@ function mapUserRows(rows: Record<string, unknown>[]) {
     dateOfBirth: asString(row.date_of_birth),
     bloodGroup: asString(row.blood_group),
     address: asString(row.address),
+    addressLine1: asString(row.address_line_1),
+    addressLine2: asString(row.address_line_2),
+    city: asString(row.city),
+    state: asString(row.state),
+    postalCode: asString(row.postal_code),
     emergencyContact: asString(row.emergency_contact),
     emergencyContactName: asString(row.emergency_contact_name),
     emergencyContactPhone: asString(row.emergency_contact_phone),
@@ -211,6 +251,15 @@ function mapUserRows(rows: Record<string, unknown>[]) {
     consultationMode: asString(row.consultation_mode),
     profileVerificationStatus: asString(row.profile_verification_status),
     administrativeUnit: asString(row.administrative_unit),
+    emailVerified: typeof row.email_verified === "boolean" ? row.email_verified : true,
+    passwordResetRequired:
+      typeof row.password_reset_required === "boolean" ? row.password_reset_required : false,
+    resetTokenHash: asString(row.reset_token_hash),
+    resetOtpHash: asString(row.reset_otp_hash),
+    resetExpiresAt: asTimestampString(row.reset_expires_at),
+    verificationTokenHash: asString(row.verification_token_hash),
+    verificationOtpHash: asString(row.verification_otp_hash),
+    verificationExpiresAt: asTimestampString(row.verification_expires_at),
   }));
 }
 
@@ -237,6 +286,11 @@ export async function loadUsersSnapshot() {
       pp.date_of_birth,
       pp.blood_group,
       pp.address,
+      pp.address_line_1,
+      pp.address_line_2,
+      pp.city,
+      pp.state,
+      pp.postal_code,
       pp.emergency_contact,
       pp.emergency_contact_name,
       pp.emergency_contact_phone,
@@ -254,7 +308,15 @@ export async function loadUsersSnapshot() {
       coalesce(dp.professional_registration_number, sp.professional_registration_number) as professional_registration_number,
       dp.consultation_mode,
       dp.profile_verification_status,
-      sp.administrative_unit
+      sp.administrative_unit,
+      u.email_verified,
+      u.password_reset_required,
+      u.reset_token_hash,
+      u.reset_otp_hash,
+      u.reset_expires_at,
+      u.verification_token_hash,
+      u.verification_otp_hash,
+      u.verification_expires_at
     from users u
     left join patient_profiles pp on pp.user_id = u.id
     left join doctor_profiles dp on dp.user_id = u.id
@@ -284,6 +346,11 @@ export async function loadUserByEmail(email: string) {
       pp.date_of_birth,
       pp.blood_group,
       pp.address,
+      pp.address_line_1,
+      pp.address_line_2,
+      pp.city,
+      pp.state,
+      pp.postal_code,
       pp.emergency_contact,
       pp.emergency_contact_name,
       pp.emergency_contact_phone,
@@ -301,7 +368,15 @@ export async function loadUserByEmail(email: string) {
       coalesce(dp.professional_registration_number, sp.professional_registration_number) as professional_registration_number,
       dp.consultation_mode,
       dp.profile_verification_status,
-      sp.administrative_unit
+      sp.administrative_unit,
+      u.email_verified,
+      u.password_reset_required,
+      u.reset_token_hash,
+      u.reset_otp_hash,
+      u.reset_expires_at,
+      u.verification_token_hash,
+      u.verification_otp_hash,
+      u.verification_expires_at
     from users u
     left join patient_profiles pp on pp.user_id = u.id
     left join doctor_profiles dp on dp.user_id = u.id
@@ -312,6 +387,136 @@ export async function loadUserByEmail(email: string) {
   );
 
   return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+}
+
+export async function loadUserById(userId: string) {
+  const result = await query(
+    `select
+      u.id,
+      u.organization_id,
+      u.email,
+      u.display_name,
+      u.role,
+      u.password_hash,
+      u.doctor_id,
+      u.assigned_doctor_id,
+      u.status,
+      coalesce(pp.patient_name, u.display_name) as patient_name,
+      coalesce(dp.department_id, sp.department_id) as department_id,
+      coalesce(pp.phone_number, dp.phone_number, sp.phone_number) as phone_number,
+      coalesce(pp.gender, dp.gender, sp.gender) as gender,
+      pp.date_of_birth,
+      pp.blood_group,
+      pp.address,
+      pp.address_line_1,
+      pp.address_line_2,
+      pp.city,
+      pp.state,
+      pp.postal_code,
+      pp.emergency_contact,
+      pp.emergency_contact_name,
+      pp.emergency_contact_phone,
+      pp.allergies,
+      pp.medical_conditions,
+      pp.preferred_language,
+      coalesce(dp.qualifications, sp.qualifications) as qualifications,
+      dp.experience,
+      dp.languages,
+      dp.consultation_fee,
+      dp.available_timings,
+      sp.desk_label,
+      coalesce(dp.designation, sp.designation) as designation,
+      coalesce(dp.shift, sp.shift) as shift,
+      coalesce(dp.professional_registration_number, sp.professional_registration_number) as professional_registration_number,
+      dp.consultation_mode,
+      dp.profile_verification_status,
+      sp.administrative_unit,
+      u.email_verified,
+      u.password_reset_required,
+      u.reset_token_hash,
+      u.reset_otp_hash,
+      u.reset_expires_at,
+      u.verification_token_hash,
+      u.verification_otp_hash,
+      u.verification_expires_at
+    from users u
+    left join patient_profiles pp on pp.user_id = u.id
+    left join doctor_profiles dp on dp.user_id = u.id
+    left join staff_profiles sp on sp.user_id = u.id
+    where u.id = $1
+    limit 1`,
+    [userId],
+  );
+
+  return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+}
+
+export async function updateUserAuthState(
+  userId: string,
+  updates: {
+    passwordHash?: string | null;
+    emailVerified?: boolean;
+    passwordResetRequired?: boolean;
+    resetTokenHash?: string | null;
+    resetOtpHash?: string | null;
+    resetExpiresAt?: string | null;
+    verificationTokenHash?: string | null;
+    verificationOtpHash?: string | null;
+    verificationExpiresAt?: string | null;
+  },
+) {
+  const assignments: string[] = [];
+  const params: unknown[] = [userId];
+
+  const pushAssignment = (column: string, value: unknown) => {
+    params.push(value);
+    assignments.push(`${column} = $${params.length}`);
+  };
+
+  if (updates.passwordHash !== undefined) {
+    pushAssignment("password_hash", updates.passwordHash);
+  }
+
+  if (updates.emailVerified !== undefined) {
+    pushAssignment("email_verified", updates.emailVerified);
+  }
+
+  if (updates.passwordResetRequired !== undefined) {
+    pushAssignment("password_reset_required", updates.passwordResetRequired);
+  }
+
+  if (updates.resetTokenHash !== undefined) {
+    pushAssignment("reset_token_hash", updates.resetTokenHash);
+  }
+
+  if (updates.resetOtpHash !== undefined) {
+    pushAssignment("reset_otp_hash", updates.resetOtpHash);
+  }
+
+  if (updates.resetExpiresAt !== undefined) {
+    pushAssignment("reset_expires_at", updates.resetExpiresAt);
+  }
+
+  if (updates.verificationTokenHash !== undefined) {
+    pushAssignment("verification_token_hash", updates.verificationTokenHash);
+  }
+
+  if (updates.verificationOtpHash !== undefined) {
+    pushAssignment("verification_otp_hash", updates.verificationOtpHash);
+  }
+
+  if (updates.verificationExpiresAt !== undefined) {
+    pushAssignment("verification_expires_at", updates.verificationExpiresAt);
+  }
+
+  assignments.push("updated_at = now()");
+
+  await query(
+    `update users
+     set ${assignments.join(", ")}
+     where id = $1`,
+    params,
+  );
 }
 
 export async function loadUserBySessionId(sessionId: string) {
@@ -333,6 +538,11 @@ export async function loadUserBySessionId(sessionId: string) {
       pp.date_of_birth,
       pp.blood_group,
       pp.address,
+      pp.address_line_1,
+      pp.address_line_2,
+      pp.city,
+      pp.state,
+      pp.postal_code,
       pp.emergency_contact,
       pp.emergency_contact_name,
       pp.emergency_contact_phone,
@@ -351,6 +561,14 @@ export async function loadUserBySessionId(sessionId: string) {
       dp.consultation_mode,
       dp.profile_verification_status,
       sp.administrative_unit,
+      u.email_verified,
+      u.password_reset_required,
+      u.reset_token_hash,
+      u.reset_otp_hash,
+      u.reset_expires_at,
+      u.verification_token_hash,
+      u.verification_otp_hash,
+      u.verification_expires_at,
       s.expires_at
     from sessions s
     inner join users u on u.id = s.user_id
@@ -376,14 +594,196 @@ export async function replaceSessionForUser(session: SessionRecord) {
   await withTransaction(async (client) => {
     await client.query("delete from sessions where user_id = $1", [session.userId]);
     await client.query(
-      "insert into sessions (id, user_id, expires_at, remember) values ($1, $2, $3, $4)",
-      [session.id, session.userId, session.expiresAt, session.remember],
+      `insert into sessions (
+        id, user_id, expires_at, remember, created_at, last_used_at, revoked_at,
+        user_agent, device_label, refresh_token_hash
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        session.id,
+        session.userId,
+        session.expiresAt,
+        session.remember,
+        session.createdAt ?? new Date().toISOString(),
+        session.lastUsedAt ?? new Date().toISOString(),
+        session.revokedAt ?? null,
+        session.userAgent ?? null,
+        session.deviceLabel ?? null,
+        session.refreshTokenHash ?? null,
+      ],
     );
   });
 }
 
 export async function deleteSessionById(sessionId: string) {
   await query("delete from sessions where id = $1", [sessionId]);
+}
+
+export async function insertSession(session: SessionRecord) {
+  await query(
+    `insert into sessions (
+      id, user_id, expires_at, remember, created_at, last_used_at, revoked_at,
+      user_agent, device_label, refresh_token_hash
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      session.id,
+      session.userId,
+      session.expiresAt,
+      session.remember,
+      session.createdAt ?? new Date().toISOString(),
+      session.lastUsedAt ?? new Date().toISOString(),
+      session.revokedAt ?? null,
+      session.userAgent ?? null,
+      session.deviceLabel ?? null,
+      session.refreshTokenHash ?? null,
+    ],
+  );
+}
+
+export async function revokeSession(sessionId: string) {
+  await query("update sessions set revoked_at = now() where id = $1", [sessionId]);
+}
+
+export async function updateSessionActivity(sessionId: string) {
+  await query("update sessions set last_used_at = now() where id = $1", [sessionId]);
+}
+
+export async function loadSessionById(sessionId: string) {
+  const result = await query(
+    `select
+      id,
+      user_id,
+      expires_at,
+      remember,
+      created_at,
+      last_used_at,
+      revoked_at,
+      user_agent,
+      device_label,
+      refresh_token_hash
+    from sessions
+    where id = $1
+    limit 1`,
+    [sessionId],
+  );
+
+  if (!result.rows[0]) {
+    return null;
+  }
+
+  const row = result.rows[0];
+
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    expiresAt: new Date(String(row.expires_at)).toISOString(),
+    remember: Boolean(row.remember),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    lastUsedAt: new Date(String(row.last_used_at)).toISOString(),
+    revokedAt: asString(row.revoked_at)
+      ? new Date(String(row.revoked_at)).toISOString()
+      : undefined,
+    userAgent: asString(row.user_agent),
+    deviceLabel: asString(row.device_label),
+    refreshTokenHash: asString(row.refresh_token_hash),
+  } satisfies SessionRecord;
+}
+
+export async function loadActiveSessionsForUser(userId: string) {
+  const result = await query(
+    `select
+      id,
+      user_id,
+      expires_at,
+      created_at,
+      last_used_at,
+      user_agent,
+      device_label
+    from sessions
+    where user_id = $1 and revoked_at is null and expires_at > now()
+    order by last_used_at desc`,
+    [userId],
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    userId: String(row.user_id),
+    expiresAt: new Date(String(row.expires_at)).toISOString(),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    lastUsedAt: new Date(String(row.last_used_at)).toISOString(),
+    deviceLabel: asString(row.device_label),
+    userAgent: asString(row.user_agent),
+  }));
+}
+
+export async function revokeOtherSession(userId: string, sessionId: string) {
+  await query(
+    "update sessions set revoked_at = now() where id = $1 and user_id = $2 and revoked_at is null",
+    [sessionId, userId],
+  );
+}
+
+export async function revokeSessionsForUser(userId: string) {
+  await query(
+    "update sessions set revoked_at = now() where user_id = $1 and revoked_at is null",
+    [userId],
+  );
+}
+
+export async function insertAuditLog(input: {
+  id: string;
+  organizationId?: string;
+  actorUserId?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  metadataJson?: string;
+}) {
+  await query(
+    `insert into audit_logs (
+      id, organization_id, actor_user_id, action, entity_type, entity_id, metadata_json
+    ) values ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      input.id,
+      input.organizationId ?? null,
+      input.actorUserId ?? null,
+      input.action,
+      input.entityType,
+      input.entityId ?? null,
+      input.metadataJson ?? null,
+    ],
+  );
+}
+
+export async function loadAuditLogsByOrganization(organizationId: string, limit = 100) {
+  const result = await query(
+    `select
+      id,
+      organization_id,
+      actor_user_id,
+      action,
+      entity_type,
+      entity_id,
+      metadata_json,
+      created_at
+    from audit_logs
+    where organization_id = $1
+    order by created_at desc
+    limit $2`,
+    [organizationId, limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    organizationId: asString(row.organization_id),
+    actorUserId: asString(row.actor_user_id),
+    action: String(row.action),
+    entityType: String(row.entity_type),
+    entityId: asString(row.entity_id),
+    metadata: asString(row.metadata_json)
+      ? (JSON.parse(String(row.metadata_json)) as Record<string, string>)
+      : undefined,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+  }));
 }
 
 export async function deleteExpiredSessions() {
@@ -401,6 +801,209 @@ export async function loadOrganizationById(organizationId: string) {
   }
 
   return mapOrganization(organizationResult.rows[0], settingsResult.rows[0]);
+}
+
+export async function insertLabRequest(request: LabRequestRecord) {
+  await query(
+    `insert into lab_requests (
+      id, organization_id, patient_id, hospital_id, patient_name, test_id,
+      test_name, department_id, requested_date, requested_time, status, created_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      request.id,
+      request.organizationId,
+      request.patientId,
+      request.hospitalId,
+      request.patientName,
+      request.testId,
+      request.testName,
+      request.departmentId,
+      request.requestedDate,
+      request.requestedTime,
+      request.status,
+      request.createdAt,
+    ],
+  );
+}
+
+export async function updateLabRequestStatusById(input: {
+  labRequestId: string;
+  organizationId: string;
+  status: LabRequestStatus;
+}) {
+  await query(
+    `update lab_requests
+     set status = $3
+     where id = $1 and organization_id = $2`,
+    [input.labRequestId, input.organizationId, input.status],
+  );
+}
+
+export async function insertLabReport(report: LabReportRecord) {
+  await query(
+    `insert into lab_reports (
+      id, organization_id, lab_request_id, patient_id, hospital_id, test_name,
+      report_title, result_summary, uploaded_at, uploaded_by_id, uploaded_by_name,
+      attachment_file_name, attachment_file_size, attachment_content_base64
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [
+      report.id,
+      report.organizationId,
+      report.labRequestId,
+      report.patientId,
+      report.hospitalId,
+      report.testName,
+      report.reportTitle,
+      report.resultSummary,
+      report.uploadedAt,
+      report.uploadedBy.id,
+      report.uploadedBy.name,
+      report.attachment?.fileName ?? null,
+      report.attachment?.fileSize ?? null,
+      report.attachment?.contentBase64 ?? null,
+    ],
+  );
+}
+
+export async function loadLabReportById(labReportId: string, organizationId: string) {
+  const result = await query(
+    `select
+      id,
+      organization_id,
+      lab_request_id,
+      patient_id,
+      hospital_id,
+      test_name,
+      report_title,
+      result_summary,
+      uploaded_at,
+      uploaded_by_id,
+      uploaded_by_name,
+      attachment_file_name,
+      attachment_file_size,
+      attachment_content_base64
+    from lab_reports
+    where id = $1 and organization_id = $2
+    limit 1`,
+    [labReportId, organizationId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: String(row.id),
+    labRequestId: String(row.lab_request_id),
+    patientId: String(row.patient_id),
+    hospitalId: String(row.hospital_id),
+    organizationId: String(row.organization_id),
+    testName: String(row.test_name),
+    reportTitle: String(row.report_title),
+    resultSummary: String(row.result_summary),
+    uploadedAt: new Date(String(row.uploaded_at)).toISOString(),
+    uploadedBy: {
+      id: String(row.uploaded_by_id),
+      name: String(row.uploaded_by_name),
+    },
+    attachment: asString(row.attachment_file_name)
+      ? {
+          fileName: String(row.attachment_file_name),
+          contentType: "application/pdf" as const,
+          fileSize: asNumber(row.attachment_file_size),
+          contentBase64: String(row.attachment_content_base64),
+        }
+      : undefined,
+  } satisfies LabReportRecord;
+}
+
+export async function upsertHospitalSettings(input: {
+  organization: OrganizationRecord;
+  doctorSlotCapacity: number;
+  defaultMaxAppointmentsPerSession: number;
+  labSlotCapacity: number;
+  configuredSupportLines: number;
+  sessions: BookingSessionCapacityRecord[];
+}) {
+  await withTransaction(async (client) => {
+    await client.query(
+      `insert into organizations (
+        id, name, slug, address, city, state, contact_phone, contact_email,
+        emergency_contact, operating_hours, timezone, default_language, updated_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+      on conflict (id) do update set
+        name = excluded.name,
+        slug = excluded.slug,
+        address = excluded.address,
+        city = excluded.city,
+        state = excluded.state,
+        contact_phone = excluded.contact_phone,
+        contact_email = excluded.contact_email,
+        emergency_contact = excluded.emergency_contact,
+        operating_hours = excluded.operating_hours,
+        timezone = excluded.timezone,
+        default_language = excluded.default_language,
+        updated_at = now()`,
+      [
+        input.organization.id,
+        input.organization.name,
+        input.organization.slug,
+        input.organization.address ?? null,
+        input.organization.city ?? null,
+        input.organization.state ?? null,
+        input.organization.contactPhone ?? null,
+        input.organization.contactEmail ?? null,
+        input.organization.emergencyContact ?? null,
+        input.organization.operatingHours ?? null,
+        input.organization.timezone ?? null,
+        input.organization.defaultLanguage ?? null,
+      ],
+    );
+
+    await client.query(
+      `insert into hospital_settings (
+        organization_id, doctor_slot_capacity, default_max_appointments_per_session,
+        lab_slot_capacity, configured_support_lines, emergency_services_enabled,
+        default_consultation_slot_duration_minutes, updated_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, now())
+      on conflict (organization_id) do update set
+        doctor_slot_capacity = excluded.doctor_slot_capacity,
+        default_max_appointments_per_session = excluded.default_max_appointments_per_session,
+        lab_slot_capacity = excluded.lab_slot_capacity,
+        configured_support_lines = excluded.configured_support_lines,
+        emergency_services_enabled = excluded.emergency_services_enabled,
+        default_consultation_slot_duration_minutes = excluded.default_consultation_slot_duration_minutes,
+        updated_at = now()`,
+      [
+        input.organization.id,
+        input.doctorSlotCapacity,
+        input.defaultMaxAppointmentsPerSession,
+        input.labSlotCapacity,
+        input.configuredSupportLines,
+        input.organization.emergencyServicesEnabled ?? true,
+        input.organization.defaultConsultationSlotDurationMinutes ?? 30,
+      ],
+    );
+
+    await client.query("delete from booking_session_capacities where organization_id = $1", [
+      input.organization.id,
+    ]);
+
+    await insertRows(
+      client,
+      "booking_session_capacities",
+      ["organization_id", "id", "label", "start_time", "end_time", "max_appointments"],
+      input.sessions.map((session) => [
+        input.organization.id,
+        session.id,
+        session.label,
+        session.startTime,
+        session.endTime,
+        session.maxAppointments,
+      ]),
+    );
+  });
 }
 
 export async function insertMedicalRecord(record: MedicalRecordRecord) {
@@ -426,6 +1029,193 @@ export async function insertMedicalRecord(record: MedicalRecordRecord) {
       record.createdAt,
       record.updatedAt ?? null,
     ],
+  );
+}
+
+export async function insertAppointment(appointment: AppointmentRecord) {
+  await query(
+    `insert into appointments (
+      id, organization_id, patient_id, patient_name, doctor_id, department_id,
+      appointment_date, appointment_time, reason_for_appointment, status
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      appointment.id,
+      appointment.organizationId,
+      appointment.patientId ?? null,
+      appointment.patientName,
+      appointment.doctorId,
+      appointment.departmentId,
+      appointment.appointmentDate,
+      appointment.appointmentTime,
+      appointment.reasonForAppointment,
+      appointment.status,
+    ],
+  );
+}
+
+export async function updateAppointmentRecord(input: {
+  appointmentId: string;
+  organizationId: string;
+  patientName: string;
+  doctorId: string;
+  departmentId: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  reasonForAppointment: string;
+}) {
+  await query(
+    `update appointments
+     set patient_name = $3,
+         doctor_id = $4,
+         department_id = $5,
+         appointment_date = $6,
+         appointment_time = $7,
+         reason_for_appointment = $8
+     where id = $1 and organization_id = $2`,
+    [
+      input.appointmentId,
+      input.organizationId,
+      input.patientName,
+      input.doctorId,
+      input.departmentId,
+      input.appointmentDate,
+      input.appointmentTime,
+      input.reasonForAppointment,
+    ],
+  );
+}
+
+export async function insertQueueEntry(entry: QueueEntryRecord) {
+  await query(
+    `insert into queue_entries (
+      id, organization_id, patient_name, department_id, doctor_id,
+      appointment_id, status, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      entry.id,
+      entry.organizationId,
+      entry.patientName,
+      entry.departmentId,
+      entry.doctorId ?? null,
+      entry.appointmentId ?? null,
+      entry.status,
+      entry.createdAt,
+      entry.updatedAt,
+    ],
+  );
+}
+
+export async function updateQueueEntriesForAppointment(input: {
+  organizationId: string;
+  appointmentId: string;
+  patientName: string;
+  doctorId: string;
+  departmentId: string;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  await query(
+    `update queue_entries
+     set patient_name = $3,
+         doctor_id = $4,
+         department_id = $5,
+         created_at = $6,
+         updated_at = $7
+     where organization_id = $1 and appointment_id = $2`,
+    [
+      input.organizationId,
+      input.appointmentId,
+      input.patientName,
+      input.doctorId,
+      input.departmentId,
+      input.createdAt,
+      input.updatedAt,
+    ],
+  );
+}
+
+export async function updateAppointmentStatusById(input: {
+  appointmentId: string;
+  organizationId: string;
+  status: AppointmentStatus;
+}) {
+  await query(
+    `update appointments
+     set status = $3
+     where id = $1 and organization_id = $2`,
+    [input.appointmentId, input.organizationId, input.status],
+  );
+}
+
+export async function updateQueueStatusesByAppointment(input: {
+  organizationId: string;
+  appointmentId: string;
+  status: QueueStatus;
+  updatedAt: string;
+  excludeCompleted?: boolean;
+}) {
+  await query(
+    `update queue_entries
+     set status = $3,
+         updated_at = $4
+     where organization_id = $1
+       and appointment_id = $2
+       ${input.excludeCompleted ? "and status <> 'Completed'" : ""}`,
+    [
+      input.organizationId,
+      input.appointmentId,
+      input.status,
+      input.updatedAt,
+    ],
+  );
+}
+
+export async function loadQueueEntriesByAppointment(
+  organizationId: string,
+  appointmentId: string,
+) {
+  const result = await query(
+    `select
+      id,
+      organization_id,
+      patient_name,
+      department_id,
+      doctor_id,
+      appointment_id,
+      status,
+      created_at,
+      updated_at
+    from queue_entries
+    where organization_id = $1 and appointment_id = $2
+    order by created_at asc`,
+    [organizationId, appointmentId],
+  );
+
+  return result.rows.map((row): QueueEntryRecord => ({
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    patientName: String(row.patient_name),
+    departmentId: String(row.department_id),
+    doctorId: asString(row.doctor_id),
+    appointmentId: asString(row.appointment_id),
+    status: row.status as QueueStatus,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  }));
+}
+
+export async function updateQueueEntryById(input: {
+  queueEntryId: string;
+  organizationId: string;
+  status: QueueStatus;
+  updatedAt: string;
+}) {
+  await query(
+    `update queue_entries
+     set status = $3,
+         updated_at = $4
+     where id = $1 and organization_id = $2`,
+    [input.queueEntryId, input.organizationId, input.status, input.updatedAt],
   );
 }
 
@@ -546,6 +1336,11 @@ async function saveUsersSnapshotWithClient(client: SqlClient, users: UserRecord[
       "date_of_birth",
       "blood_group",
       "address",
+      "address_line_1",
+      "address_line_2",
+      "city",
+      "state",
+      "postal_code",
       "emergency_contact",
       "emergency_contact_name",
       "emergency_contact_phone",
@@ -561,6 +1356,11 @@ async function saveUsersSnapshotWithClient(client: SqlClient, users: UserRecord[
       user.dateOfBirth ?? null,
       user.bloodGroup ?? null,
       user.address ?? null,
+      user.addressLine1 ?? null,
+      user.addressLine2 ?? null,
+      user.city ?? null,
+      user.state ?? null,
+      user.postalCode ?? null,
       user.emergencyContact ?? null,
       user.emergencyContactName ?? null,
       user.emergencyContactPhone ?? null,
@@ -652,12 +1452,34 @@ export async function saveUsersSnapshot(users: UserRecord[]) {
 }
 
 export async function loadSessionsSnapshot() {
-  const result = await query("select id, user_id, expires_at, remember from sessions order by expires_at asc");
+  const result = await query(
+    `select
+      id,
+      user_id,
+      expires_at,
+      remember,
+      created_at,
+      last_used_at,
+      revoked_at,
+      user_agent,
+      device_label,
+      refresh_token_hash
+    from sessions
+    order by expires_at asc`,
+  );
   return result.rows.map((row): SessionRecord => ({
     id: String(row.id),
     userId: String(row.user_id),
     expiresAt: new Date(String(row.expires_at)).toISOString(),
     remember: Boolean(row.remember),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    lastUsedAt: new Date(String(row.last_used_at)).toISOString(),
+    revokedAt: asString(row.revoked_at)
+      ? new Date(String(row.revoked_at)).toISOString()
+      : undefined,
+    userAgent: asString(row.user_agent),
+    deviceLabel: asString(row.device_label),
+    refreshTokenHash: asString(row.refresh_token_hash),
   }));
 }
 
@@ -666,8 +1488,30 @@ async function saveSessionsSnapshotWithClient(client: SqlClient, sessions: Sessi
   await insertRows(
     client,
     "sessions",
-    ["id", "user_id", "expires_at", "remember"],
-    sessions.map((session) => [session.id, session.userId, session.expiresAt, session.remember]),
+    [
+      "id",
+      "user_id",
+      "expires_at",
+      "remember",
+      "created_at",
+      "last_used_at",
+      "revoked_at",
+      "user_agent",
+      "device_label",
+      "refresh_token_hash",
+    ],
+    sessions.map((session) => [
+      session.id,
+      session.userId,
+      session.expiresAt,
+      session.remember,
+      session.createdAt ?? new Date().toISOString(),
+      session.lastUsedAt ?? new Date().toISOString(),
+      session.revokedAt ?? null,
+      session.userAgent ?? null,
+      session.deviceLabel ?? null,
+      session.refreshTokenHash ?? null,
+    ]),
   );
 }
 
@@ -677,7 +1521,7 @@ export async function saveSessionsSnapshot(sessions: SessionRecord[]) {
   });
 }
 
-export async function loadHospitalStateSnapshot() {
+export async function loadHospitalStateSnapshot(options?: { includeLabReportAttachmentContent?: boolean }) {
   const organizationResult = await query("select * from organizations order by created_at asc limit 1");
   if (organizationResult.rows.length === 0) {
     return null;
@@ -751,6 +1595,7 @@ export async function loadHospitalStateSnapshot() {
       departmentId: String(row.department_id),
       appointmentDate: String(row.appointment_date),
       appointmentTime: String(row.appointment_time),
+      reasonForAppointment: asString(row.reason_for_appointment) ?? "",
       status: row.status as AppointmentRecord["status"],
     })),
     queueEntries: queueResult.rows.map((row): QueueEntryRecord => ({
@@ -843,7 +1688,9 @@ export async function loadHospitalStateSnapshot() {
             fileName: String(row.attachment_file_name),
             contentType: "application/pdf",
             fileSize: asNumber(row.attachment_file_size),
-            contentBase64: String(row.attachment_content_base64),
+            contentBase64: options?.includeLabReportAttachmentContent === false
+              ? undefined
+              : String(row.attachment_content_base64),
           }
         : undefined,
     })),
@@ -981,7 +1828,7 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
   await insertRows(
       client,
       "appointments",
-      ["id", "organization_id", "patient_id", "patient_name", "doctor_id", "department_id", "appointment_date", "appointment_time", "status"],
+      ["id", "organization_id", "patient_id", "patient_name", "doctor_id", "department_id", "appointment_date", "appointment_time", "reason_for_appointment", "status"],
       state.appointments.map((appointment) => [
         appointment.id,
         state.organization.id,
@@ -991,6 +1838,7 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         appointment.departmentId,
         appointment.appointmentDate,
         appointment.appointmentTime,
+        appointment.reasonForAppointment ?? null,
         appointment.status,
       ]),
     );

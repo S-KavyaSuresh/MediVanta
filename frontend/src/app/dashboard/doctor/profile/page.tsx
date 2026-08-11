@@ -11,6 +11,11 @@ const genderOptions = ["Female", "Male", "Non-binary", "Prefer not to say"].map(
   label: value,
 }));
 
+function formatDoctorId(id?: string) {
+  const suffix = (id ?? "").replace(/^doc-?/, "").replace(/[^a-zA-Z0-9]/g, "").slice(-6).toUpperCase();
+  return `DOC-${suffix || "000001"}`;
+}
+
 export default function DoctorProfilePage() {
   const { session } = useAuth();
   const { getDepartmentName, state } = useHospitalData();
@@ -36,7 +41,7 @@ export default function DoctorProfilePage() {
         consultationMode: session.user.consultationMode ?? "",
       }}
       derivedValues={{
-        profileId: session.user.doctorId ?? session.user.id,
+        profileId: formatDoctorId(session.user.doctorId ?? session.user.id),
         specialization: doctor?.specialization ?? "Not assigned",
         department: doctor ? getDepartmentName(doctor.departmentId) : "Not assigned",
         organization: session.organization.name,

@@ -35,6 +35,7 @@ import {
   validateAppointmentDraft,
 } from "@/lib/hospital-data";
 import type { SafeUser, UserRole } from "@/lib/auth";
+import type { AuthSession, Organization } from "@/lib/auth";
 
 type ValidationResult = ReturnType<typeof validateAppointmentDraft> & {
   message?: string;
@@ -46,6 +47,18 @@ type HospitalMeta = {
   patientProfiles?: SafeUser[];
   appointmentSlotLoads?: AppointmentSlotLoadRecord[];
   labSlotLoads?: LabSlotLoadRecord[];
+};
+
+type HospitalMutationPatch = {
+  organization?: Organization;
+  bookingCapacity?: HospitalState["bookingCapacity"];
+  appointments?: HospitalState["appointments"];
+  queueEntries?: HospitalState["queueEntries"];
+  medicalRecords?: HospitalState["medicalRecords"];
+  prescriptions?: HospitalState["prescriptions"];
+  labRequests?: HospitalState["labRequests"];
+  labReports?: HospitalState["labReports"];
+  meta?: HospitalMeta;
 };
 
 type HospitalContextValue = {
@@ -70,6 +83,10 @@ type HospitalContextValue = {
     specialization?: string;
     status: string;
   }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  updateUserAccountStatus: (
+    userId: string,
+    status: "Active" | "Deactivated",
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
   createAppointment: (draft: AppointmentDraft) => Promise<ValidationResult>;
   createMedicalRecord: (draft: MedicalRecordDraft) => Promise<{
     ok: boolean;
@@ -91,17 +108,22 @@ type HospitalContextValue = {
     gender: string;
     dateOfBirth: string;
     bloodGroup: string;
-    address: string;
+    preferredLanguage?: string;
+    addressLine1: string;
+    addressLine2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
     emergencyContactName: string;
     emergencyContactPhone: string;
     allergies: string;
     medicalConditions: string;
-    preferredLanguage?: string;
+    password: string;
+    confirmPassword: string;
   }) => Promise<{
     ok: boolean;
     message?: string;
     fieldErrors?: Record<string, string>;
-    temporaryPassword?: string;
   }>;
   createPrescription: (draft: PrescriptionDraft) => Promise<{
     ok: boolean;
@@ -155,9 +177,24 @@ type HospitalContextValue = {
 const HospitalDataContext = createContext<HospitalContextValue | null>(null);
 
 type HospitalApiResponse = {
-  state: HospitalState;
+  state?: HospitalState;
   meta?: HospitalMeta;
+  session?: AuthSession;
+  patch?: HospitalMutationPatch;
 };
+
+function mergeById<T extends { id: string }>(current: T[], incoming?: T[]) {
+  if (!incoming?.length) {
+    return current;
+  }
+
+  const next = new Map(current.map((item) => [item.id, item] as const));
+  for (const item of incoming) {
+    next.set(item.id, item);
+  }
+
+  return [...next.values()];
+}
 
 export function HospitalDataProvider({
   children,
@@ -172,8 +209,31 @@ export function HospitalDataProvider({
   const [meta, setMeta] = useState<HospitalMeta | undefined>(initialMeta);
 
   const updateFromResponse = useCallback((response: HospitalApiResponse) => {
-    setState(normalizeHospitalState(response.state));
-    setMeta(response.meta);
+    if (response.state) {
+      setState(normalizeHospitalState(response.state));
+    } else if (response.patch) {
+      setState((current) =>
+        normalizeHospitalState({
+          ...current,
+          organization: response.patch?.organization ?? current.organization,
+          bookingCapacity: response.patch?.bookingCapacity ?? current.bookingCapacity,
+          appointments: mergeById(current.appointments, response.patch?.appointments),
+          queueEntries: mergeById(current.queueEntries, response.patch?.queueEntries),
+          medicalRecords: mergeById(current.medicalRecords, response.patch?.medicalRecords),
+          prescriptions: mergeById(current.prescriptions, response.patch?.prescriptions),
+          labRequests: mergeById(current.labRequests, response.patch?.labRequests),
+          labReports: mergeById(current.labReports, response.patch?.labReports),
+        }),
+      );
+    }
+
+    if (response.meta || response.patch?.meta) {
+      setMeta((current) => ({
+        ...(current ?? {}),
+        ...(response.meta ?? {}),
+        ...(response.patch?.meta ?? {}),
+      }));
+    }
   }, []);
 
   const departmentSummaries = useMemo(() => getDepartmentSummaries(state), [state]);
@@ -221,6 +281,30 @@ export function HospitalDataProvider({
           method: "POST",
           body: JSON.stringify(draft),
         });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateUserAccountStatus = useCallback(
+    async (userId: string, status: "Active" | "Deactivated") => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/users/${userId}/account-status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          },
+        );
         updateFromResponse(response);
         return { ok: true };
       } catch (error) {
@@ -320,15 +404,21 @@ export function HospitalDataProvider({
       gender: string;
       dateOfBirth: string;
       bloodGroup: string;
-      address: string;
+      preferredLanguage?: string;
+      addressLine1: string;
+      addressLine2?: string;
+      city: string;
+      state: string;
+      postalCode: string;
       emergencyContactName: string;
       emergencyContactPhone: string;
       allergies: string;
       medicalConditions: string;
-      preferredLanguage?: string;
+      password: string;
+      confirmPassword: string;
     }) => {
       try {
-        const response = await apiRequest<HospitalApiResponse & { temporaryPassword?: string }>(
+        const response = await apiRequest<HospitalApiResponse>(
           "/api/hospital/patients",
           {
           method: "POST",
@@ -336,7 +426,7 @@ export function HospitalDataProvider({
           },
         );
         updateFromResponse(response);
-        return { ok: true, temporaryPassword: response.temporaryPassword };
+        return { ok: true };
       } catch (error) {
         const maybeError = error as Error & { fieldErrors?: Record<string, string> };
         return {
@@ -596,6 +686,7 @@ export function HospitalDataProvider({
       metrics,
       createDepartment,
       createStaffMember,
+      updateUserAccountStatus,
       createAppointment,
       createMedicalRecord,
       updateMedicalRecord,
@@ -620,6 +711,7 @@ export function HospitalDataProvider({
       advanceQueue,
       createDepartment,
       createStaffMember,
+      updateUserAccountStatus,
       createAppointment,
       createMedicalRecord,
       updateMedicalRecord,

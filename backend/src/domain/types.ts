@@ -119,6 +119,7 @@ export type AppointmentRecord = {
   departmentId: string;
   appointmentDate: string;
   appointmentTime: string;
+  reasonForAppointment: string;
   status: AppointmentStatus;
 };
 
@@ -159,7 +160,7 @@ export type LabReportAttachmentRecord = {
   fileName: string;
   contentType: "application/pdf";
   fileSize: number;
-  contentBase64: string;
+  contentBase64?: string;
 };
 
 export type LabReportRecord = {
@@ -283,6 +284,11 @@ export type UserRecord = {
   dateOfBirth?: string;
   bloodGroup?: string;
   address?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   emergencyContact?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
@@ -301,9 +307,14 @@ export type UserRecord = {
   consultationMode?: string;
   profileVerificationStatus?: string;
   administrativeUnit?: string;
+  emailVerified?: boolean;
+  passwordResetRequired?: boolean;
   resetTokenHash?: string;
   resetOtpHash?: string;
   resetExpiresAt?: string;
+  verificationTokenHash?: string;
+  verificationOtpHash?: string;
+  verificationExpiresAt?: string;
 };
 
 export type SessionRecord = {
@@ -311,6 +322,34 @@ export type SessionRecord = {
   userId: string;
   expiresAt: string;
   remember: boolean;
+  createdAt?: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+  userAgent?: string;
+  deviceLabel?: string;
+  refreshTokenHash?: string;
+};
+
+export type ActiveSessionRecord = {
+  id: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string;
+  current: boolean;
+  deviceLabel?: string;
+  userAgent?: string;
+};
+
+export type AuditLogRecord = {
+  id: string;
+  organizationId?: string;
+  actorUserId?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  metadata?: Record<string, string>;
+  createdAt: string;
 };
 
 export type SafeUser = Omit<
@@ -327,6 +366,7 @@ export type AuthSessionPayload = {
 
 export type HospitalStateResponse = {
   state: HospitalState;
+  session?: AuthSessionPayload;
   meta?: {
     userCounts?: Record<UserRole, number>;
     users?: SafeUser[];
@@ -341,6 +381,7 @@ export type AppointmentDraft = {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
+  reasonForAppointment: string;
 };
 
 export type LabRequestDraft = {

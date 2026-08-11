@@ -295,6 +295,7 @@ export type AppointmentRecord = {
   departmentId: string;
   appointmentDate: string;
   appointmentTime: string;
+  reasonForAppointment: string;
   status: AppointmentStatus;
 };
 
@@ -334,7 +335,7 @@ export type LabReportAttachmentRecord = {
   fileName: string;
   contentType: "application/pdf";
   fileSize: number;
-  contentBase64: string;
+  contentBase64?: string;
 };
 
 export type LabReportRecord = {
@@ -461,6 +462,7 @@ export type AppointmentDraft = {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
+  reasonForAppointment: string;
 };
 
 export type LabRequestDraft = {
@@ -702,6 +704,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-cardiology",
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "09:30",
+    reasonForAppointment: "Stable hypertension follow-up",
     status: "Checked in",
   },
   {
@@ -711,6 +714,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-radiology",
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:00",
+    reasonForAppointment: "Diagnostic imaging review",
     status: "In consultation",
   },
   {
@@ -720,6 +724,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-general-medicine",
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:45",
+    reasonForAppointment: "General fever follow-up",
     status: "Completed",
   },
   {
@@ -730,6 +735,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-pediatrics",
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "11:15",
+    reasonForAppointment: "Persistent fever",
     status: "Scheduled",
   },
   {
@@ -739,6 +745,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-orthopedics",
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "12:10",
+    reasonForAppointment: "Knee pain review",
     status: "Scheduled",
   },
   {
@@ -748,6 +755,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     departmentId: "dept-neurology",
     appointmentDate: "2026-08-10",
     appointmentTime: "14:00",
+    reasonForAppointment: "Headache and dizziness",
     status: "Scheduled",
   },
 ];
@@ -1064,6 +1072,12 @@ export function validateAppointmentDraft(
     errors.appointmentTime = "Select a valid appointment time.";
   } else if (draft.appointmentDate && isPastLocalTimeSlot(draft.appointmentDate, draft.appointmentTime)) {
     errors.appointmentTime = "Select a future appointment time.";
+  }
+
+  if (draft.reasonForAppointment.trim().length < 3) {
+    errors.reasonForAppointment = "Please enter the reason for appointment.";
+  } else if (draft.reasonForAppointment.trim().length > 280) {
+    errors.reasonForAppointment = "Reason for appointment must be 280 characters or fewer.";
   }
 
   if (

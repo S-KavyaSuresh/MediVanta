@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -48,7 +49,9 @@ function getDepartmentUnitLabel(user: {
 }
 
 export function AdminUsersView() {
-  const { createStaffMember, getDepartmentName, meta, state } = useHospitalData();
+  const { createStaffMember, getDepartmentName, meta, state, updateUserAccountStatus } =
+    useHospitalData();
+  const { session } = useAuth();
   const { pushToast } = useToast();
   const [modalOpen, setModalOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -79,8 +82,75 @@ export function AdminUsersView() {
                 </p>
                 <p>
                   <span className="font-medium text-[color:var(--foreground)]">Status:</span>{" "}
-                  {user.staffStatus?.trim() || "Not assigned"}
+                  {user.staffStatus?.trim() || "Active"}
                 </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {user.id === session.user.id ? (
+                  <p className="text-sm text-[color:var(--muted-foreground)]">
+                    Current signed-in account
+                  </p>
+                ) : user.staffStatus?.trim() === "Deactivated" ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={async () => {
+                      const confirmed = window.confirm(
+                        "Reactivate this account?\nThe user will be able to sign in again.",
+                      );
+
+                      if (!confirmed) {
+                        return;
+                      }
+
+                      const result = await updateUserAccountStatus(user.id, "Active");
+                      if (!result.ok) {
+                        pushToast(
+                          "Unable to reactivate account",
+                          result.message ?? "Please try again.",
+                        );
+                        return;
+                      }
+
+                      pushToast(
+                        "Account reactivated",
+                        `${user.displayName} can sign in again.`,
+                      );
+                    }}
+                  >
+                    Reactivate Account
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={async () => {
+                      const confirmed = window.confirm(
+                        "Deactivate this account?\nThe user will no longer be able to sign in. Existing hospital records will be preserved.",
+                      );
+
+                      if (!confirmed) {
+                        return;
+                      }
+
+                      const result = await updateUserAccountStatus(user.id, "Deactivated");
+                      if (!result.ok) {
+                        pushToast(
+                          "Unable to deactivate account",
+                          result.message ?? "Please try again.",
+                        );
+                        return;
+                      }
+
+                      pushToast(
+                        "Account deactivated",
+                        `${user.displayName} can no longer sign in.`,
+                      );
+                    }}
+                  >
+                    Deactivate Account
+                  </Button>
+                )}
               </div>
             </Card>
           ))}

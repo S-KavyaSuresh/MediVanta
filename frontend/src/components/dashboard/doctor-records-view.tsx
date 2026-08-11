@@ -517,7 +517,9 @@ export function DoctorRecordsView() {
                       <Button
                         type="button"
                         variant="ghost"
-                        onClick={() => downloadLabReport(report, state.organization.name)}
+                        onClick={() => {
+                          void downloadLabReport(report, state.organization.name);
+                        }}
                       >
                         Download Report
                       </Button>

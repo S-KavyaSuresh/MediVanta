@@ -4,11 +4,23 @@ import createHttpError from "http-errors";
 import type { Capability, SafeUser } from "../domain/types.js";
 import { getCapabilitiesForRole } from "../auth/permissions.js";
 import { DEMO_ORGANIZATION } from "../services/demo-data.js";
-import { getUserFromSession } from "../services/auth-service.js";
+import {
+  ACCESS_COOKIE_NAME,
+  REFRESH_COOKIE_NAME,
+  clearAuthCookies,
+  setAuthCookies,
+} from "../auth/session-cookie.js";
+import { verifyRefreshToken } from "../auth/jwt.js";
+import {
+  refreshAuthSession,
+  resolveUserFromAccessToken,
+} from "../services/auth-service.js";
+import { measurePerfStep } from "../utils/perf-trace.js";
 
 declare module "express-serve-static-core" {
   interface Request {
     authUser?: SafeUser;
+    authSessionId?: string | null;
   }
 }
 
@@ -44,6 +56,11 @@ function toSafeUser(user: {
     dateOfBirth: user.dateOfBirth,
     bloodGroup: user.bloodGroup,
     address: user.address,
+    addressLine1: user.addressLine1,
+    addressLine2: user.addressLine2,
+    city: user.city,
+    state: user.state,
+    postalCode: user.postalCode,
     emergencyContact: user.emergencyContact,
     emergencyContactName: user.emergencyContactName,
     emergencyContactPhone: user.emergencyContactPhone,
@@ -62,27 +79,89 @@ function toSafeUser(user: {
     consultationMode: user.consultationMode,
     profileVerificationStatus: user.profileVerificationStatus,
     administrativeUnit: user.administrativeUnit,
+    emailVerified: user.emailVerified,
+    passwordResetRequired: user.passwordResetRequired,
   };
 }
 
 export async function requireAuthenticatedUser(
   request: Request,
-  _response: Response,
+  response: Response,
   next: NextFunction,
 ) {
   try {
     const cookies = parseCookies(request.headers.cookie);
-    const user = await getUserFromSession(cookies.medivanta_session);
+    let user = await measurePerfStep("auth.middleware.access", () =>
+      resolveUserFromAccessToken(cookies[ACCESS_COOKIE_NAME]),
+    );
+    let currentSessionId: string | null = null;
+
+    const refreshPayload = cookies[REFRESH_COOKIE_NAME]
+      ? verifyRefreshToken(cookies[REFRESH_COOKIE_NAME])
+      : null;
+
+    if (refreshPayload?.sessionId) {
+      currentSessionId = refreshPayload.sessionId;
+    }
+
+    if (!user) {
+      const refreshed = await measurePerfStep("auth.middleware.refresh", () =>
+        refreshAuthSession(
+          cookies[REFRESH_COOKIE_NAME],
+          request.headers["user-agent"],
+        ),
+      );
+
+      if (refreshed) {
+        setAuthCookies(response, {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          accessMaxAgeSeconds: refreshed.accessMaxAgeSeconds,
+          refreshMaxAgeSeconds: refreshed.refreshMaxAgeSeconds,
+        });
+        user = refreshed.user;
+        currentSessionId = refreshed.sessionId;
+      }
+    }
 
     if (!user) {
       throw createHttpError(401, "Please sign in to continue.");
     }
 
+    if (user.staffStatus?.trim().toLowerCase() === "deactivated") {
+      clearAuthCookies(response);
+      throw createHttpError(403, "This account is currently inactive.");
+    }
+
     request.authUser = toSafeUser(user);
+    request.authSessionId = currentSessionId;
     next();
   } catch (error) {
     next(error);
   }
+}
+
+export function requireVerifiedEmail(
+  request: Request,
+  _response: Response,
+  next: NextFunction,
+) {
+  if (!request.authUser) {
+    next(createHttpError(401, "Please sign in to continue."));
+    return;
+  }
+
+  if (request.authUser.emailVerified === false) {
+    next(
+      createHttpError(
+        403,
+        "Please verify your email address before opening sensitive medical information.",
+      ),
+    );
+    return;
+  }
+
+  next();
 }
 
 export function requireCapabilities(...requiredCapabilities: Capability[]) {

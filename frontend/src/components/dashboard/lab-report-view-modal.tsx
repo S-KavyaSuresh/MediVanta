@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { apiRequest } from "@/lib/api";
 import type { LabReportRecord } from "@/lib/hospital-data";
 
 type LabReportViewModalProps = {
@@ -34,7 +35,7 @@ function downloadBlob(fileName: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadLabReport(report: LabReportRecord, organizationName: string) {
+function saveLabReportDownload(report: LabReportRecord, organizationName: string) {
   const formattedDate = new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -43,7 +44,7 @@ export function downloadLabReport(report: LabReportRecord, organizationName: str
     minute: "2-digit",
   }).format(new Date(report.uploadedAt));
 
-  if (report.attachment) {
+  if (report.attachment?.contentBase64) {
     const bytes = decodeBase64(report.attachment.contentBase64);
     downloadBlob(
       report.attachment.fileName,
@@ -68,12 +69,29 @@ export function downloadLabReport(report: LabReportRecord, organizationName: str
   );
 }
 
+async function resolveReportForDownload(report: LabReportRecord) {
+  if (report.attachment?.contentBase64) {
+    return report;
+  }
+
+  const payload = await apiRequest<{ report: LabReportRecord }>(
+    `/api/hospital/lab-reports/${report.id}`,
+  );
+  return payload.report;
+}
+
+export async function downloadLabReport(report: LabReportRecord, organizationName: string) {
+  const fullReport = await resolveReportForDownload(report);
+  saveLabReportDownload(fullReport, organizationName);
+}
+
 export function LabReportViewModal({
   open,
   report,
   organizationName,
   onClose,
 }: LabReportViewModalProps) {
+  const [downloading, setDownloading] = useState(false);
   const formattedDate = useMemo(() => {
     if (!report) {
       return "";
@@ -132,9 +150,18 @@ export function LabReportViewModal({
           <Button
             type="button"
             variant="secondary"
-            onClick={() => downloadLabReport(report, organizationName)}
+            disabled={downloading}
+            onClick={async () => {
+              setDownloading(true);
+
+              try {
+                await downloadLabReport(report, organizationName);
+              } finally {
+                setDownloading(false);
+              }
+            }}
           >
-            Download Report
+            {downloading ? "Downloading..." : "Download Report"}
           </Button>
         </div>
       </div>

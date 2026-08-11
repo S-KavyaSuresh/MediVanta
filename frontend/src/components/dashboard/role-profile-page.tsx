@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { useAuth } from "@/components/providers/auth-provider";
+import { ProfileSecurityPanel } from "@/components/dashboard/profile-security-panel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,11 @@ type EditableProfileDraft = {
   dateOfBirth?: string;
   bloodGroup?: string;
   address?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   emergencyContact?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
@@ -281,6 +287,8 @@ export function RoleProfilePage({
           )}
         </div>
       </Card>
+
+      <ProfileSecurityPanel />
     </div>
   );
 }
