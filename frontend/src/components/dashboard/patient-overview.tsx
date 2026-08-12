@@ -29,6 +29,9 @@ export function PatientOverview() {
     (sum, invoice) => sum + invoice.amountDueCents,
     0,
   );
+  const activeFamilyMemberName = upcomingAppointment?.familyMemberId
+    ? state.familyMembers?.find((member) => member.id === upcomingAppointment.familyMemberId)?.fullName
+    : null;
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -93,6 +96,11 @@ export function PatientOverview() {
             <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
               {getDepartmentName(upcomingAppointment.departmentId)}
             </p>
+            {activeFamilyMemberName ? (
+              <p className="mt-3 text-sm text-[color:var(--muted-foreground)]">
+                Appointment for {activeFamilyMemberName}
+              </p>
+            ) : null}
             {activeQueueEntry ? (
               <p className="mt-3 text-sm text-[color:var(--muted-foreground)]">
                 Queue status: {activeQueueEntry.status} ({activeQueueEntry.id})

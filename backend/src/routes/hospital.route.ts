@@ -4,27 +4,42 @@ import { z } from "zod";
 import {
   advanceQueue,
   createAppointment,
+  createClinicalAttachment,
   createInventoryBatch,
   createDepartment,
+  createFamilyMember,
   createLabReport,
   createLabRequest,
   createMedicalRecord,
+  createMedicalHistoryEntry,
   createPatientProfile,
   createPrescription,
   createStaffMember,
   dispensePrescription,
+  getFamilyMembers,
+  getConversationSignals,
   getDoctorHistory,
   getLabReportForUser,
   getLabRequestsForUser,
   getScopedHospitalStateForUser,
+  getTelemedicineMessages,
+  getTelemedicineSessionForAppointment,
+  joinTelemedicineSession,
   markAllUserNotificationsRead,
   markNotificationAsRead,
   recordInvoicePayment,
+  searchHospitalWorkspaceScoped,
+  sendTelemedicineMessage,
+  sendTelemedicineSignal,
   setAppointmentStatus,
+  setTelemedicineSessionStatus,
+  unlinkFamilyMember,
+  updateFamilyMember,
   updateUserAccountStatus,
   updateHospitalSettings,
   updateInventoryBatch,
   updateMedicalRecord,
+  updatePrescription,
   updatePatientProfile,
   updateLabRequestStatus,
   updateAppointment,
@@ -41,14 +56,16 @@ const hospitalRouter = Router();
 
 const appointmentDraftSchema = z.object({
   patientName: z.string(),
+  familyMemberId: z.string().optional(),
   doctorId: z.string(),
   appointmentDate: z.string(),
   appointmentTime: z.string(),
   reasonForAppointment: z.string(),
+  consultationMode: z.enum(["In Person", "Online"]).default("In Person"),
 });
 
 const appointmentStatusSchema = z.object({
-  status: z.enum(["Scheduled", "Checked in", "In consultation", "Completed", "Cancelled"]),
+  status: z.enum(["Scheduled", "Checked in", "In consultation", "Completed", "Cancelled", "No Show"]),
 });
 
 const queueStatusSchema = z.object({
@@ -76,6 +93,7 @@ const labRequestDraftSchema = z.object({
   testId: z.string(),
   requestedDate: z.string(),
   requestedTime: z.string(),
+  familyMemberId: z.string().optional(),
 });
 
 const labRequestStatusSchema = z.object({
@@ -113,7 +131,9 @@ const medicalRecordUpdateSchema = medicalRecordDraftSchema.pick({
 const prescriptionDraftSchema = z.object({
   patientId: z.string(),
   appointmentId: z.string().optional(),
+  familyMemberId: z.string().optional(),
   instructions: z.string(),
+  followUpDate: z.string().optional(),
   medicines: z.array(
     z.object({
       medicineId: z.string().optional(),
@@ -222,6 +242,56 @@ const hospitalSettingsSchema = z.object({
   defaultLabSlotCapacity: z.number().int(),
 });
 
+const familyMemberDraftSchema = z.object({
+  fullName: z.string(),
+  relationship: z.string(),
+  dateOfBirth: z.string().optional(),
+  gender: z.string().optional(),
+  bloodGroup: z.string().optional(),
+  phoneNumber: z.string().optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+  allergies: z.string().optional(),
+  medicalConditions: z.string().optional(),
+  preferredLanguage: z.string().optional(),
+});
+
+const medicalHistoryDraftSchema = z.object({
+  category: z.enum(["Vaccination", "Surgery"]),
+  title: z.string(),
+  details: z.string().optional(),
+  recordedDate: z.string(),
+  familyMemberId: z.string().optional(),
+});
+
+const clinicalAttachmentDraftSchema = z.object({
+  label: z.string(),
+  fileName: z.string(),
+  contentType: z.enum(["application/pdf", "image/png", "image/jpeg"]),
+  fileSize: z.number().int().positive(),
+  contentBase64: z.string(),
+  familyMemberId: z.string().optional(),
+  medicalRecordId: z.string().optional(),
+});
+
+const telemedicineMessageSchema = z.object({
+  message: z.string(),
+});
+
+const telemedicineSignalSchema = z.object({
+  recipientUserId: z.string(),
+  signalType: z.enum(["offer", "answer", "ice-candidate", "hangup"]),
+  payload: z.string(),
+});
+
+const telemedicineStatusSchema = z.object({
+  status: z.enum(["Scheduled", "Live", "Ended"]),
+});
+
+const searchQuerySchema = z.object({
+  q: z.string().default(""),
+});
+
 const accountStatusSchema = z.object({
   status: z.enum(["Active", "Deactivated"]),
 });
@@ -271,6 +341,22 @@ hospitalRouter.get(
       response.json({
         success: true,
         ...(await getDoctorHistory(request.authUser!, queryParams)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/search",
+  requireCapabilities("search:view"),
+  async (request, response, next) => {
+    try {
+      const { q } = searchQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await searchHospitalWorkspaceScoped(request.authUser!, q)),
       });
     } catch (error) {
       next(error);
@@ -361,6 +447,102 @@ hospitalRouter.post(
   },
 );
 
+hospitalRouter.post(
+  "/family-members",
+  requireCapabilities("family-member:manage"),
+  async (request, response, next) => {
+    try {
+      const draft = familyMemberDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createFamilyMember(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/family-members",
+  requireCapabilities("family-member:manage"),
+  async (request, response, next) => {
+    try {
+      response.json({
+        success: true,
+        ...(await getFamilyMembers(request.authUser!)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/family-members/:familyMemberId",
+  requireCapabilities("family-member:manage"),
+  async (request, response, next) => {
+    try {
+      const draft = familyMemberDraftSchema.parse(request.body);
+      const familyMemberId = getRouteParam(request.params.familyMemberId);
+      response.json({
+        success: true,
+        ...(await updateFamilyMember(request.authUser!, familyMemberId, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.delete(
+  "/family-members/:familyMemberId",
+  requireCapabilities("family-member:manage"),
+  async (request, response, next) => {
+    try {
+      const familyMemberId = getRouteParam(request.params.familyMemberId);
+      response.json({
+        success: true,
+        ...(await unlinkFamilyMember(request.authUser!, familyMemberId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/medical-history",
+  requireCapabilities("medical-history:create"),
+  async (request, response, next) => {
+    try {
+      const draft = medicalHistoryDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createMedicalHistoryEntry(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/clinical-attachments",
+  requireCapabilities("clinical-attachment:create"),
+  async (request, response, next) => {
+    try {
+      const draft = clinicalAttachmentDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createClinicalAttachment(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 hospitalRouter.patch(
   "/profile",
   requireCapabilities("profile:update"),
@@ -386,6 +568,24 @@ hospitalRouter.patch(
       response.json({
         success: true,
         ...(await updateHospitalSettings(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/prescriptions/:prescriptionId",
+  requireCapabilities("prescription:create"),
+  requireVerifiedEmail,
+  async (request, response, next) => {
+    try {
+      const draft = prescriptionDraftSchema.parse(request.body);
+      const prescriptionId = getRouteParam(request.params.prescriptionId);
+      response.json({
+        success: true,
+        ...(await updatePrescription(request.authUser!, prescriptionId, draft)),
       });
     } catch (error) {
       next(error);
@@ -486,6 +686,122 @@ hospitalRouter.post(
       response.json({
         success: true,
         ...(await markAllUserNotificationsRead(request.authUser!)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/telemedicine/appointments/:appointmentId",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const appointmentId = getRouteParam(request.params.appointmentId);
+      response.json({
+        success: true,
+        ...(await getTelemedicineSessionForAppointment(request.authUser!, appointmentId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/telemedicine/appointments/:appointmentId/join",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const appointmentId = getRouteParam(request.params.appointmentId);
+      response.json({
+        success: true,
+        ...(await joinTelemedicineSession(request.authUser!, appointmentId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/telemedicine/sessions/:sessionId/messages",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const sessionId = getRouteParam(request.params.sessionId);
+      response.json({
+        success: true,
+        ...(await getTelemedicineMessages(request.authUser!, sessionId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/telemedicine/sessions/:sessionId/messages",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const { message } = telemedicineMessageSchema.parse(request.body);
+      const sessionId = getRouteParam(request.params.sessionId);
+      response.status(201).json({
+        success: true,
+        ...(await sendTelemedicineMessage(request.authUser!, sessionId, message)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/telemedicine/sessions/:sessionId/signals",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const sessionId = getRouteParam(request.params.sessionId);
+      const since = typeof request.query.since === "string" ? request.query.since : undefined;
+      response.json({
+        success: true,
+        ...(await getConversationSignals(request.authUser!, sessionId, since)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/telemedicine/sessions/:sessionId/signals",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const draft = telemedicineSignalSchema.parse(request.body);
+      const sessionId = getRouteParam(request.params.sessionId);
+      response.status(201).json({
+        success: true,
+        ...(await sendTelemedicineSignal(request.authUser!, sessionId, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/telemedicine/sessions/:sessionId/status",
+  requireCapabilities("telemedicine:join"),
+  async (request, response, next) => {
+    try {
+      const { status } = telemedicineStatusSchema.parse(request.body);
+      const sessionId = getRouteParam(request.params.sessionId);
+      response.json({
+        success: true,
+        ...(await setTelemedicineSessionStatus(request.authUser!, sessionId, status)),
       });
     } catch (error) {
       next(error);

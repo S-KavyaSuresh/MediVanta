@@ -9,6 +9,7 @@ import {
 import { LabRequestFormModal } from "@/components/dashboard/lab-request-form-modal";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -16,6 +17,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import type { LabReportRecord } from "@/lib/hospital-data";
 
 export function PatientLabTestsView() {
+  const { session } = useAuth();
   const { createLabRequest, getDepartmentName, meta, state } = useHospitalData();
   const [open, setOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<LabReportRecord | null>(null);
@@ -30,7 +32,7 @@ export function PatientLabTestsView() {
       <PageHeader
         eyebrow="Patient Dashboard"
         title="Lab Tests"
-        description="Request a new lab test and track the status of your existing laboratory requests."
+        description="Request a new lab test, book for a linked family member when needed, and track the status of your laboratory requests."
         action={
           <Button type="button" onClick={() => setOpen(true)}>
             Book Lab Test
@@ -41,6 +43,9 @@ export function PatientLabTestsView() {
         <div className="space-y-4">
           {state.labRequests.map((request) => {
             const report = reportsByRequestId.get(request.id);
+            const familyMemberName = request.familyMemberId
+              ? state.familyMembers?.find((member) => member.id === request.familyMemberId)?.fullName
+              : null;
 
             return (
               <Card key={request.id} className="space-y-3">
@@ -54,6 +59,7 @@ export function PatientLabTestsView() {
                 <div className="space-y-1 text-sm text-[color:var(--muted-foreground)]">
                   <p>{state.organization.name}</p>
                   <p>{getDepartmentName(request.departmentId)} · {request.id}</p>
+                  {familyMemberName ? <p>Request for {familyMemberName}</p> : null}
                 </div>
                 {request.status === "Completed" ? (
                   report ? (
@@ -98,6 +104,8 @@ export function PatientLabTestsView() {
         labSlotLoads={meta?.labSlotLoads ?? []}
         labTests={state.labTests}
         existingRequests={state.labRequests}
+        patientName={session.user.patientName ?? session.user.displayName}
+        familyMembers={state.familyMembers}
         onClose={() => setOpen(false)}
         onSubmit={createLabRequest}
       />

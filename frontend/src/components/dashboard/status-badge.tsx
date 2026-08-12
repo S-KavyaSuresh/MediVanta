@@ -22,6 +22,8 @@ export function StatusBadge({ status }: { status: StatusValue }) {
   const variant =
     status === "Cancelled"
       ? "danger"
+      : status === "No Show"
+        ? "neutral"
       : status === "Available" ||
           status === "Operational" ||
           status === "Completed" ||

@@ -6,9 +6,13 @@ import type {
   AppointmentRecord,
   AppointmentSlotLoadRecord,
   AppointmentStatus,
+  ClinicalAttachmentDraft,
+  ClinicalAttachmentRecord,
   DepartmentRecord,
   DepartmentStatus,
   DoctorStatus,
+  FamilyMemberDraft,
+  FamilyMemberRecord,
   HospitalState,
   HospitalStateResponse,
   InventoryItemDraft,
@@ -16,6 +20,8 @@ import type {
   InvoiceItemRecord,
   InvoiceRecord,
   InvoiceStatus,
+  MedicalHistoryEntryDraft,
+  MedicalHistoryEntryRecord,
   MedicalRecordDraft,
   MedicalRecordRecord,
   LabReportDraft,
@@ -32,6 +38,8 @@ import type {
   QueueEntryRecord,
   QueueStatus,
   SafeUser,
+  TelemedicineMessageRecord,
+  TelemedicineSessionStatus,
   UserRole,
   UserRecord,
 } from "../domain/types.js";
@@ -63,6 +71,7 @@ import {
   updateInventoryItemRecord,
   updateLabRequestStatusById,
   updateMedicalRecordDetails,
+  updatePrescriptionRecord,
   updateQueueEntryById,
   updateQueueEntriesForAppointment,
   updateQueueStatusesByAppointment,
@@ -82,7 +91,7 @@ function getSlotTimeValue(value: string) {
 }
 
 function isCapacityConsumingAppointment(status: AppointmentStatus) {
-  return status !== "Cancelled";
+  return status !== "Cancelled" && status !== "No Show";
 }
 
 function isCapacityConsumingLabRequest(status: LabRequestRecord["status"]) {
@@ -228,6 +237,54 @@ function isPastLocalAppointmentSlot(date: string, time: string, now = new Date()
   return getSlotTimeValue(time) <= getCurrentLocalTimeValue(now);
 }
 
+function shouldBecomeNoShow(appointment: AppointmentRecord, now = new Date()) {
+  if (appointment.status !== "Scheduled") {
+    return false;
+  }
+
+  return appointment.appointmentDate < getCurrentLocalDateIso(now);
+}
+
+async function reconcileNoShowAppointments(state: HospitalState, now = new Date()) {
+  const staleAppointments = state.appointments.filter((appointment) => shouldBecomeNoShow(appointment, now));
+
+  if (staleAppointments.length === 0) {
+    return state;
+  }
+
+  await Promise.all(
+    staleAppointments.flatMap((appointment) => [
+      updateAppointmentStatusById({
+        appointmentId: appointment.id,
+        organizationId: appointment.organizationId,
+        status: "No Show",
+      }),
+      updateQueueStatusesByAppointment({
+        organizationId: appointment.organizationId,
+        appointmentId: appointment.id,
+        status: "Completed",
+        updatedAt: `${appointment.appointmentDate}T23:59:00`,
+        excludeCompleted: true,
+      }),
+    ]),
+  );
+
+  return {
+    ...state,
+    appointments: state.appointments.map<AppointmentRecord>((appointment) =>
+      shouldBecomeNoShow(appointment, now)
+        ? { ...appointment, status: "No Show" as AppointmentStatus }
+        : appointment,
+    ),
+    queueEntries: state.queueEntries.map<QueueEntryRecord>((entry) =>
+      staleAppointments.some((appointment) => appointment.id === entry.appointmentId) &&
+      entry.status !== "Completed"
+        ? { ...entry, status: "Completed" as QueueStatus }
+        : entry,
+    ),
+  };
+}
+
 function getDoctorById(state: HospitalState, doctorId: string) {
   return state.doctors.find((doctor) => doctor.id === doctorId);
 }
@@ -236,8 +293,166 @@ function getAppointmentById(state: HospitalState, appointmentId: string) {
   return state.appointments.find((appointment) => appointment.id === appointmentId);
 }
 
+function getFamilyMemberById(state: HospitalState, familyMemberId?: string) {
+  if (!familyMemberId) {
+    return undefined;
+  }
+
+  return state.familyMembers?.find((member) => member.id === familyMemberId);
+}
+
 function getPatientDisplayName(user: SafeUser) {
   return user.patientName ?? user.displayName;
+}
+
+function canPatientManageAppointment(appointment: AppointmentRecord, now = new Date()) {
+  return (
+    appointment.status === "Scheduled" &&
+    appointment.appointmentDate >= getCurrentLocalDateIso(now) &&
+    !isPastLocalAppointmentSlot(appointment.appointmentDate, appointment.appointmentTime, now)
+  );
+}
+
+function isPatientOwnedAppointment(user: SafeUser, appointment: AppointmentRecord) {
+  return (
+    user.role === "patient" &&
+    (appointment.patientId === user.id ||
+      appointment.patientName === (user.patientName ?? user.displayName))
+  );
+}
+
+function validateFamilyMemberDraft(draft: FamilyMemberDraft) {
+  const errors: Record<string, string> = {};
+
+  if (draft.fullName.trim().length < 2) {
+    errors.fullName = "Enter a full name with at least 2 characters.";
+  }
+
+  if (draft.relationship.trim().length < 2) {
+    errors.relationship = "Enter the relationship.";
+  }
+
+  if (draft.dateOfBirth) {
+    const date = new Date(`${draft.dateOfBirth}T00:00:00`);
+    if (Number.isNaN(date.getTime()) || draft.dateOfBirth > getCurrentLocalDateIso()) {
+      errors.dateOfBirth = "Enter a valid date of birth.";
+    }
+  }
+
+  if (draft.phoneNumber?.trim() && draft.phoneNumber.trim().length < 7) {
+    errors.phoneNumber = "Enter a valid phone number.";
+  }
+
+  if (draft.emergencyContactPhone?.trim() && draft.emergencyContactPhone.trim().length < 7) {
+    errors.emergencyContactPhone = "Enter a valid emergency contact phone number.";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+function validateMedicalHistoryDraft(draft: MedicalHistoryEntryDraft) {
+  const errors: Record<string, string> = {};
+
+  if (draft.title.trim().length < 3) {
+    errors.title = "Enter a clear title.";
+  }
+
+  if (!draft.recordedDate || draft.recordedDate > getCurrentLocalDateIso()) {
+    errors.recordedDate = "Recorded date cannot be in the future.";
+  }
+
+  if (draft.details?.trim() && draft.details.trim().length < 3) {
+    errors.details = "Enter more detail or leave this field blank.";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+function validateClinicalAttachmentDraft(draft: ClinicalAttachmentDraft) {
+  const errors: Record<string, string> = {};
+  const maxFileSize = 5 * 1024 * 1024;
+
+  if (draft.label.trim().length < 2) {
+    errors.label = "Enter a label for this file.";
+  }
+
+  if (draft.fileName.trim().length < 3) {
+    errors.fileName = "Enter a valid file name.";
+  }
+
+  if (!["application/pdf", "image/png", "image/jpeg"].includes(draft.contentType)) {
+    errors.contentType = "Only PDF, PNG, and JPEG files are supported.";
+  }
+
+  if (draft.fileSize > maxFileSize) {
+    errors.fileSize = "Files must be 5 MB or smaller.";
+  }
+
+  if (!draft.contentBase64.trim()) {
+    errors.contentBase64 = "Please attach a valid file.";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+function canEditPrescription(prescription: PrescriptionRecord, user: SafeUser, now = Date.now()) {
+  if (user.role !== "doctor" || prescription.doctorId !== user.doctorId) {
+    return false;
+  }
+
+  if (prescription.status === "Dispensed") {
+    return false;
+  }
+
+  const createdAt = new Date(prescription.createdAt).getTime();
+  if (Number.isNaN(createdAt)) {
+    return false;
+  }
+
+  return now - createdAt <= 3 * 60 * 60 * 1000;
+}
+
+function isTelemedicineJoinAvailable(appointment: AppointmentRecord, now = new Date()) {
+  if (appointment.consultationMode !== "Online") {
+    return {
+      allowed: false,
+      message: "This appointment is not scheduled as an online consultation.",
+    };
+  }
+
+  if (appointment.status === "Cancelled" || appointment.status === "Completed") {
+    return {
+      allowed: false,
+      message: "This consultation is no longer available.",
+    };
+  }
+
+  const appointmentTime = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}:00`);
+  if (Number.isNaN(appointmentTime.getTime())) {
+    return {
+      allowed: false,
+      message: "This consultation is not available yet.",
+    };
+  }
+
+  const joinWindowOpensAt = appointmentTime.getTime() - 10 * 60 * 1000;
+  if (now.getTime() < joinWindowOpensAt) {
+    return {
+      allowed: false,
+      message: "This consultation will be available 10 minutes before the appointment.",
+    };
+  }
+
+  return { allowed: true };
 }
 
 function getUserOrganizationId(user: SafeUser, state: HospitalState) {
@@ -1058,6 +1273,56 @@ async function notifyUsers(input: {
   return notifications;
 }
 
+async function notifyUsersOnceForEntity(input: {
+  organizationId: string;
+  userIds: string[];
+  title: string;
+  message: string;
+  category: NotificationRecord["category"];
+  relatedEntityType: string;
+  relatedEntityId: string;
+}) {
+  const requestedUserIds = [...new Set(input.userIds.filter(Boolean))];
+
+  if (requestedUserIds.length === 0) {
+    return [] as NotificationRecord[];
+  }
+
+  const existingNotifications = await query<{ user_id: string }>(
+    `select user_id
+       from notifications
+      where organization_id = $1
+        and related_entity_type = $2
+        and related_entity_id = $3
+        and title = $4
+        and user_id = any($5::text[])`,
+    [
+      input.organizationId,
+      input.relatedEntityType,
+      input.relatedEntityId,
+      input.title,
+      requestedUserIds,
+    ],
+  );
+
+  const alreadyNotified = new Set(existingNotifications.rows.map((row) => String(row.user_id)));
+  const pendingUserIds = requestedUserIds.filter((userId) => !alreadyNotified.has(userId));
+
+  if (pendingUserIds.length === 0) {
+    return [] as NotificationRecord[];
+  }
+
+  return notifyUsers({
+    organizationId: input.organizationId,
+    userIds: pendingUserIds,
+    title: input.title,
+    message: input.message,
+    category: input.category,
+    relatedEntityType: input.relatedEntityType,
+    relatedEntityId: input.relatedEntityId,
+  });
+}
+
 function buildInvoiceRecord(input: {
   patientId: string;
   patientName: string;
@@ -1181,6 +1446,13 @@ function validateAppointmentDraft(
     errors.reasonForAppointment = "Please enter the reason for appointment.";
   } else if (draft.reasonForAppointment.trim().length > 280) {
     errors.reasonForAppointment = "Reason for appointment must be 280 characters or fewer.";
+  }
+
+  if (
+    draft.consultationMode &&
+    !["In Person", "Online"].includes(draft.consultationMode)
+  ) {
+    errors.consultationMode = "Select a valid consultation mode.";
   }
 
   if (
@@ -1401,6 +1673,10 @@ function validatePrescriptionDraft(draft: PrescriptionDraft) {
     errors.instructions = "Instructions are required.";
   }
 
+  if (draft.followUpDate && draft.followUpDate < getCurrentLocalDateIso()) {
+    errors.followUpDate = "Follow-up date cannot be in the past.";
+  }
+
   return {
     isValid: Object.keys(errors).length === 0,
     errors,
@@ -1411,6 +1687,7 @@ function normalizePrescriptionDraft(draft: PrescriptionDraft): PrescriptionDraft
   return {
     patientId: draft.patientId.trim(),
     appointmentId: draft.appointmentId?.trim() || undefined,
+    familyMemberId: draft.familyMemberId?.trim() || undefined,
     medicines: draft.medicines.map((medicine) => {
       const normalizedMedicine = normalizePrescriptionMedicine(medicine);
       const resolvedQuantity = resolveMedicineTotalQuantity(normalizedMedicine);
@@ -1421,6 +1698,7 @@ function normalizePrescriptionDraft(draft: PrescriptionDraft): PrescriptionDraft
       };
     }),
     instructions: draft.instructions.trim(),
+    followUpDate: draft.followUpDate?.trim() || undefined,
   };
 }
 
@@ -1788,6 +2066,18 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
         role === "administrator"
           ? state.inventoryItems.filter((item) => item.organizationId === user.organizationId)
           : [],
+      familyMembers: (state.familyMembers ?? []).filter(
+        (member) => member.organizationId === user.organizationId,
+      ),
+      medicalHistoryEntries: (state.medicalHistoryEntries ?? []).filter(
+        (entry) => entry.organizationId === user.organizationId,
+      ),
+      clinicalAttachments: (state.clinicalAttachments ?? []).filter(
+        (attachment) => attachment.organizationId === user.organizationId,
+      ),
+      telemedicineSessions: (state.telemedicineSessions ?? []).filter(
+        (session) => session.organizationId === user.organizationId,
+      ),
       notifications: getScopedNotificationsForUser(user, state),
     };
   }
@@ -1797,6 +2087,9 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       (appointment) => appointment.doctorId === user.doctorId,
     );
     const appointmentIds = new Set(appointments.map((appointment) => appointment.id));
+    const patientIds = new Set(
+      appointments.map((appointment) => appointment.patientId).filter(Boolean) as string[],
+    );
     const queueEntries = state.queueEntries.filter(
       (entry) =>
         entry.doctorId === user.doctorId || (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false),
@@ -1823,6 +2116,24 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
         const linkedRequest = state.labRequests.find((request) => request.id === report.labRequestId);
         return linkedRequest ? patientNames.has(linkedRequest.patientName) : false;
       }),
+      familyMembers: (state.familyMembers ?? []).filter((member) =>
+        patientIds.has(member.primaryPatientUserId) ||
+        appointments.some((appointment) => appointment.familyMemberId === member.id),
+      ),
+      medicalHistoryEntries: (state.medicalHistoryEntries ?? []).filter((entry) =>
+        patientIds.has(entry.patientUserId) ||
+        appointments.some((appointment) => appointment.familyMemberId === entry.familyMemberId),
+      ),
+      clinicalAttachments: (state.clinicalAttachments ?? []).filter((attachment) =>
+        patientIds.has(attachment.patientUserId) ||
+        appointments.some((appointment) => appointment.familyMemberId === attachment.familyMemberId),
+      ),
+      telemedicineSessions: (state.telemedicineSessions ?? []).filter(
+        (session) =>
+          session.organizationId === user.organizationId &&
+          (session.doctorUserId === user.id ||
+            appointments.some((appointment) => appointment.id === session.appointmentId)),
+      ),
       invoices: [],
       inventoryItems: state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
       notifications: getScopedNotificationsForUser(user, state),
@@ -1867,7 +2178,8 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
   }
 
   const appointments = state.appointments.filter(
-    (appointment) => appointment.patientName === user.patientName,
+    (appointment) =>
+      appointment.patientId === user.id || appointment.patientName === user.patientName,
   );
   const appointmentIds = new Set(appointments.map((appointment) => appointment.id));
   const emailVerified = user.emailVerified !== false;
@@ -1901,15 +2213,36 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
         entry.patientName === user.patientName ||
         (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false),
     ),
+    familyMembers: (state.familyMembers ?? []).filter(
+      (member) => member.primaryPatientUserId === user.id,
+    ),
+    medicalHistoryEntries: emailVerified
+      ? (state.medicalHistoryEntries ?? []).filter(
+          (entry) => entry.patientUserId === user.id,
+        )
+      : [],
+    clinicalAttachments: emailVerified
+      ? (state.clinicalAttachments ?? []).filter(
+          (attachment) => attachment.patientUserId === user.id,
+        )
+      : [],
+    telemedicineSessions: (state.telemedicineSessions ?? []).filter(
+      (session) =>
+        session.patientUserId === user.id &&
+        appointments.some((appointment) => appointment.id === session.appointmentId),
+    ),
   };
 }
 
 export async function getScopedHospitalStateForUser(user: SafeUser): Promise<HospitalStateResponse> {
   const state = await measurePerfStep("scope.load-state", () => loadHospitalState());
-  const repairedInvoices = await measurePerfStep("scope.repair-zero-invoices", () =>
-    repairBrokenZeroValueInvoices(state),
+  const noShowReconciledState = await measurePerfStep("scope.reconcile-no-shows", () =>
+    reconcileNoShowAppointments(state),
   );
-  const repairedState = buildInvoiceStateWithUpdates(state, repairedInvoices);
+  const repairedInvoices = await measurePerfStep("scope.repair-zero-invoices", () =>
+    repairBrokenZeroValueInvoices(noShowReconciledState),
+  );
+  const repairedState = buildInvoiceStateWithUpdates(noShowReconciledState, repairedInvoices);
   const reconciledInvoices = await measurePerfStep("scope.reconcile-invoices", () =>
     reconcileMissingInvoices(repairedState),
   );
@@ -1926,9 +2259,15 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
     appointmentSlotLoads: getAppointmentSlotLoads(effectiveState, organizationId),
     labSlotLoads: getLabSlotLoads(effectiveState, organizationId),
   };
+  const users = await measurePerfStep("scope.load-users", () => loadUsers());
+  const doctorProfiles = users
+    .filter(
+      (currentUser) =>
+        currentUser.role === "doctor" && currentUser.organizationId === organizationId,
+    )
+    .map(toSafeUserSummary);
 
   if (user.role === "doctor") {
-    const users = await measurePerfStep("scope.load-users", () => loadUsers());
     const scopedPatients = await getDoctorScopedPatients(effectiveState, user, users);
     const patientProfiles = users
       .filter(
@@ -1944,15 +2283,15 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
       meta: {
         ...sharedMeta,
         patientProfiles,
+        doctorProfiles,
       },
     };
   }
 
   if (user.role !== "administrator") {
-    return { state: scopedState, meta: sharedMeta };
+    return { state: scopedState, meta: { ...sharedMeta, doctorProfiles } };
   }
 
-  const users = await measurePerfStep("scope.load-users", () => loadUsers());
   const userCounts: Record<UserRole, number> = {
     patient: users.filter((currentUser) => currentUser.role === "patient").length,
     doctor: users.filter((currentUser) => currentUser.role === "doctor").length,
@@ -1966,14 +2305,26 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
     state: scopedState,
     meta: {
       ...sharedMeta,
+      doctorProfiles,
       userCounts,
       users: users.map(toSafeUserSummary),
     },
   };
 }
 
+export async function getFamilyMembers(user: SafeUser) {
+  if (user.role !== "patient") {
+    throw createHttpError(403, "You do not have access to manage family members.");
+  }
+
+  const scoped = await getScopedHospitalStateForUser(user);
+  return {
+    familyMembers: scoped.state.familyMembers ?? [],
+  };
+}
+
 export async function getLabRequestsForUser(user: SafeUser) {
-  const state = await loadHospitalState();
+  const state = await reconcileNoShowAppointments(await loadHospitalState());
 
   return {
     labRequests: getScopedLabRequestsForUser(user, state),
@@ -2072,6 +2423,7 @@ export async function getDoctorHistory(
         id: String(row.id),
         patientId: String(row.patient_id),
         patientName: String(row.patient_name),
+        familyMemberId: asString(row.family_member_id),
         doctorId: String(row.doctor_id),
         doctorName: String(row.doctor_name),
         appointmentId: asString(row.appointment_id),
@@ -2169,8 +2521,10 @@ export async function getDoctorHistory(
       hospitalId: String(row.hospital_id),
       organizationId: String(row.organization_id),
       appointmentId: asString(row.appointment_id),
+      familyMemberId: asString(row.family_member_id),
       medicines: medicinesByPrescriptionId.get(String(row.id)) ?? [],
       instructions: String(row.instructions),
+      followUpDate: asString(row.follow_up_date),
       status: row.status as PrescriptionRecord["status"],
       createdAt: new Date(String(row.created_at)).toISOString(),
       dispensedAt: asString(row.dispensed_at)
@@ -2415,6 +2769,7 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
   const appointment = draft.appointmentId
     ? getAppointmentById(state, draft.appointmentId)
     : undefined;
+  const familyMember = getFamilyMemberById(state, appointment?.familyMemberId);
 
   if (appointment && appointment.doctorId !== user.doctorId) {
     throw createHttpError(400, "Please review the medical record details provided.", {
@@ -2432,9 +2787,10 @@ export async function createMedicalRecord(user: SafeUser, draft: MedicalRecordDr
   const record: MedicalRecordRecord = {
     id: createMedicalRecordId(),
     patientId: patient.patientId,
-    patientName: patient.patientName,
+    patientName: familyMember?.fullName ?? patient.patientName,
     doctorId: doctor.id,
     doctorName: doctor.name,
+    familyMemberId: familyMember?.id,
     appointmentId: draft.appointmentId,
     hospitalId: doctor.organizationId,
     organizationId: doctor.organizationId,
@@ -2587,11 +2943,38 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   const appointment = normalizedDraft.appointmentId
     ? getAppointmentById(state, normalizedDraft.appointmentId)
     : undefined;
+  const effectiveFamilyMemberId =
+    normalizedDraft.familyMemberId ?? appointment?.familyMemberId ?? undefined;
+  const familyMember = getFamilyMemberById(state, effectiveFamilyMemberId);
 
   if (appointment && appointment.doctorId !== user.doctorId) {
     throw createHttpError(400, "Please review the prescription details provided.", {
       errors: {
         appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
+  }
+
+  if (
+    effectiveFamilyMemberId &&
+    (!familyMember || familyMember.primaryPatientUserId !== patient.patientId)
+  ) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        familyMemberId: "Selected family member does not belong to this patient.",
+      },
+    });
+  }
+
+  if (
+    effectiveFamilyMemberId &&
+    appointment &&
+    appointment.familyMemberId &&
+    appointment.familyMemberId !== effectiveFamilyMemberId
+  ) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        familyMemberId: "Selected family member does not match the linked appointment.",
       },
     });
   }
@@ -2636,7 +3019,8 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   const prescription: PrescriptionRecord = {
     id: createPrescriptionId(),
     patientId: patient.patientId,
-    patientName: patient.patientName,
+    patientName: familyMember?.fullName ?? patient.patientName,
+    familyMemberId: effectiveFamilyMemberId,
     doctorId: doctor.id,
     doctorName: doctor.name,
     hospitalId: doctor.organizationId,
@@ -2644,6 +3028,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     appointmentId: normalizedDraft.appointmentId,
     medicines: normalizedMedicines,
     instructions: normalizedDraft.instructions,
+    followUpDate: normalizedDraft.followUpDate,
     status: "Issued",
     createdAt: new Date().toISOString(),
   };
@@ -2660,11 +3045,22 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     organizationId: doctor.organizationId,
     userIds: [patient.patientId, ...pharmacistUserIds],
     title: "Prescription issued",
-    message: `${doctor.name} issued a prescription for ${patient.patientName}.`,
+    message: `${doctor.name} issued a prescription for ${familyMember?.fullName ?? patient.patientName}.`,
     category: "Prescription",
     relatedEntityType: "prescription",
     relatedEntityId: prescription.id,
   });
+  const followUpNotifications = prescription.followUpDate
+    ? await notifyUsersOnceForEntity({
+        organizationId: doctor.organizationId,
+        userIds: [patient.patientId],
+        title: "Follow-up reminder",
+        message: `A follow-up visit is planned for ${prescription.followUpDate} for ${familyMember?.fullName ?? patient.patientName}.`,
+        category: "Prescription",
+        relatedEntityType: "prescription-follow-up",
+        relatedEntityId: prescription.id,
+      })
+    : [];
   await writeAuditLog({
     organizationId: doctor.organizationId,
     actorUserId: user.id,
@@ -2679,7 +3075,157 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   return {
     patch: {
       prescriptions: [prescription],
-      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
+      notifications: [...createdNotifications, ...followUpNotifications].filter(
+        (notification) => notification.userId === user.id,
+      ),
+    },
+  };
+}
+
+export async function updatePrescription(
+  user: SafeUser,
+  prescriptionId: string,
+  draft: PrescriptionDraft,
+) {
+  const [state, loadedUsers] = await measurePerfStep("prescription.update.load-context", () =>
+    Promise.all([loadHospitalState(), loadUsers()]),
+  );
+  const currentPrescription = state.prescriptions.find((item) => item.id === prescriptionId);
+
+  if (!currentPrescription || currentPrescription.organizationId !== user.organizationId) {
+    throw createHttpError(404, "Prescription not found.");
+  }
+
+  if (!canEditPrescription(currentPrescription, user)) {
+    if (currentPrescription.status === "Dispensed") {
+      throw createHttpError(400, "Dispensed prescriptions can no longer be edited.");
+    }
+
+    throw createHttpError(403, "The editing period for this prescription has ended.");
+  }
+
+  const normalizedDraft = normalizePrescriptionDraft(draft);
+  const validation = validatePrescriptionDraft(normalizedDraft);
+
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const scopedPatients = await getDoctorScopedPatients(state, user, loadedUsers);
+  const patient = scopedPatients.get(normalizedDraft.patientId);
+  if (!patient || patient.patientId !== currentPrescription.patientId) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        patientId: "This prescription can only be edited for the original patient.",
+      },
+    });
+  }
+
+  if (normalizedDraft.appointmentId && !patient.appointmentIds.has(normalizedDraft.appointmentId)) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        appointmentId: "Selected appointment does not belong to this patient.",
+      },
+    });
+  }
+
+  const appointment = normalizedDraft.appointmentId
+    ? getAppointmentById(state, normalizedDraft.appointmentId)
+    : undefined;
+  const effectiveFamilyMemberId =
+    normalizedDraft.familyMemberId ?? appointment?.familyMemberId ?? currentPrescription.familyMemberId;
+  const familyMember = getFamilyMemberById(state, effectiveFamilyMemberId);
+
+  if (
+    effectiveFamilyMemberId &&
+    (!familyMember || familyMember.primaryPatientUserId !== currentPrescription.patientId)
+  ) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        familyMemberId: "Selected family member does not belong to this patient.",
+      },
+    });
+  }
+
+  if (
+    appointment &&
+    appointment.familyMemberId &&
+    appointment.familyMemberId !== effectiveFamilyMemberId
+  ) {
+    throw createHttpError(400, "Please review the prescription details provided.", {
+      errors: {
+        familyMemberId: "Selected family member does not match the linked appointment.",
+      },
+    });
+  }
+
+  const catalogById = new Map(
+    state.medicineCatalog
+      .filter((medicine) => medicine.organizationId === currentPrescription.organizationId)
+      .map((medicine) => [medicine.id, medicine] as const),
+  );
+  const normalizedMedicines = normalizedDraft.medicines.map((medicine, index) => {
+    const catalogMedicine = medicine.medicineId ? catalogById.get(medicine.medicineId) : undefined;
+
+    if (!catalogMedicine) {
+      throw createHttpError(400, "Please review the prescription details provided.", {
+        errors: {
+          [`medicines.${index}.medicineId`]: "Medicine is not linked to the hospital catalog.",
+        },
+      });
+    }
+
+    return {
+      ...medicine,
+      medicineId: catalogMedicine.id,
+      medicineName: catalogMedicine.name,
+      strength: catalogMedicine.strength,
+      dosage: `${medicine.doseQuantity ?? 1} ${medicine.doseUnit ?? catalogMedicine.unit}`.trim(),
+      totalQuantity: getMedicineRequiredQuantity({
+        ...medicine,
+        medicineName: catalogMedicine.name,
+        strength: catalogMedicine.strength,
+        doseUnit: medicine.doseUnit ?? catalogMedicine.unit,
+      }),
+    };
+  });
+
+  const updatedPrescription: PrescriptionRecord = {
+    ...currentPrescription,
+    patientName: familyMember?.fullName ?? currentPrescription.patientName,
+    appointmentId: normalizedDraft.appointmentId ?? currentPrescription.appointmentId,
+    familyMemberId: effectiveFamilyMemberId,
+    medicines: normalizedMedicines,
+    instructions: normalizedDraft.instructions,
+    followUpDate: normalizedDraft.followUpDate,
+  };
+
+  await measurePerfStep("prescription.update.write", () =>
+    updatePrescriptionRecord({
+      prescriptionId,
+      organizationId: updatedPrescription.organizationId,
+      instructions: updatedPrescription.instructions,
+      followUpDate: updatedPrescription.followUpDate,
+      medicines: updatedPrescription.medicines,
+    }),
+  );
+
+  await writeAuditLog({
+    organizationId: updatedPrescription.organizationId,
+    actorUserId: user.id,
+    action: "prescription.updated",
+    entityType: "prescription",
+    entityId: updatedPrescription.id,
+    metadata: {
+      patientId: updatedPrescription.patientId,
+    },
+  });
+
+  return {
+    patch: {
+      prescriptions: [updatedPrescription],
     },
   };
 }
@@ -2981,13 +3527,24 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
   }
 
   const state = await measurePerfStep("appointment.create.load-state", () => loadHospitalState());
+  const selectedFamilyMember = getFamilyMemberById(state, draft.familyMemberId);
   const effectiveDraft: AppointmentDraft =
     user.role === "patient"
       ? {
           ...draft,
-          patientName: user.patientName ?? user.displayName,
+          patientName: selectedFamilyMember?.fullName ?? (user.patientName ?? user.displayName),
+          consultationMode: draft.consultationMode ?? "In Person",
         }
-      : draft;
+      : {
+          ...draft,
+          consultationMode: draft.consultationMode ?? "In Person",
+        };
+
+  if (user.role === "patient" && draft.familyMemberId) {
+    if (!selectedFamilyMember || selectedFamilyMember.primaryPatientUserId !== user.id) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+  }
   const validation = validateAppointmentDraft(state, effectiveDraft);
 
   if (!validation.isValid) {
@@ -3010,11 +3567,13 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     organizationId: doctor.organizationId,
     patientId: user.role === "patient" ? user.id : undefined,
     patientName: effectiveDraft.patientName.trim(),
+    familyMemberId: user.role === "patient" ? draft.familyMemberId?.trim() || undefined : undefined,
     doctorId: doctor.id,
     departmentId: doctor.departmentId,
     appointmentDate: effectiveDraft.appointmentDate,
     appointmentTime: effectiveDraft.appointmentTime,
     reasonForAppointment: effectiveDraft.reasonForAppointment.trim(),
+    consultationMode: effectiveDraft.consultationMode ?? "In Person",
     status: "Scheduled",
   };
 
@@ -3033,7 +3592,7 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
         ...doctorUsers.map((doctorUser) => doctorUser.id),
       ],
       title: "Appointment booked",
-      message: `${appointment.patientName} is scheduled for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`,
+      message: `${appointment.patientName} is scheduled for ${appointment.appointmentDate} at ${appointment.appointmentTime}${appointment.consultationMode === "Online" ? " as an online consultation" : ""}.`,
       category: "Appointment",
       relatedEntityType: "appointment",
       relatedEntityId: appointment.id,
@@ -3046,6 +3605,7 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     entityId: appointment.id,
     metadata: {
       doctorId: appointment.doctorId,
+      consultationMode: appointment.consultationMode ?? "In Person",
     },
   });
   const nextState: HospitalState = {
@@ -3070,7 +3630,68 @@ export async function updateAppointment(
   draft: AppointmentDraft,
 ) {
   const state = await measurePerfStep("appointment.update.load-state", () => loadHospitalState());
-  const validation = validateAppointmentDraft(state, draft, appointmentId);
+  const currentAppointment = getAppointmentById(state, appointmentId);
+  if (!currentAppointment) {
+    throw createHttpError(404, "Appointment not found.");
+  }
+
+  const isOwnedPatientAppointment = isPatientOwnedAppointment(user, currentAppointment);
+  const canManageAppointment =
+    user.role === "administrator" ||
+    user.role === "receptionist" ||
+    (user.role === "patient" && isOwnedPatientAppointment);
+
+  if (!canManageAppointment) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  if (["Completed", "Cancelled"].includes(currentAppointment.status)) {
+    throw createHttpError(400, "This appointment can no longer be rescheduled.");
+  }
+
+  if (user.role === "patient" && currentAppointment.status !== "Scheduled") {
+    throw createHttpError(400, "Only scheduled appointments can be rescheduled.");
+  }
+
+  if (
+    user.role === "patient" &&
+    isPastLocalAppointmentSlot(currentAppointment.appointmentDate, currentAppointment.appointmentTime)
+  ) {
+    throw createHttpError(400, "Past appointments cannot be rescheduled.");
+  }
+
+  const selectedFamilyMember =
+    user.role === "patient"
+      ? getFamilyMemberById(state, draft.familyMemberId ?? currentAppointment.familyMemberId)
+      : getFamilyMemberById(state, currentAppointment.familyMemberId);
+
+  if (
+    user.role === "patient" &&
+    draft.familyMemberId &&
+    (!selectedFamilyMember || selectedFamilyMember.primaryPatientUserId !== user.id)
+  ) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const effectiveDraft: AppointmentDraft =
+    user.role === "patient"
+      ? {
+          ...draft,
+          patientName:
+            selectedFamilyMember?.fullName ??
+            currentAppointment.patientName ??
+            getPatientDisplayName(user),
+          familyMemberId: draft.familyMemberId ?? currentAppointment.familyMemberId,
+          consultationMode: draft.consultationMode ?? currentAppointment.consultationMode ?? "In Person",
+        }
+      : {
+          ...draft,
+          patientName: currentAppointment.patientName,
+          familyMemberId: currentAppointment.familyMemberId,
+          consultationMode: draft.consultationMode ?? currentAppointment.consultationMode ?? "In Person",
+        };
+
+  const validation = validateAppointmentDraft(state, effectiveDraft, appointmentId);
 
   if (!validation.isValid) {
     throw createHttpError(400, "Please correct the appointment details provided.", {
@@ -3078,24 +3699,21 @@ export async function updateAppointment(
     });
   }
 
-  const doctor = getDoctorById(state, draft.doctorId);
+  const doctor = getDoctorById(state, effectiveDraft.doctorId);
   if (!doctor) {
     throw createHttpError(400, "The selected doctor could not be found.");
   }
 
-  const currentAppointment = getAppointmentById(state, appointmentId);
-  if (!currentAppointment) {
-    throw createHttpError(404, "Appointment not found.");
-  }
-
   const updatedAppointment: AppointmentRecord = {
     ...currentAppointment,
-    patientName: draft.patientName.trim(),
+    patientName: effectiveDraft.patientName.trim(),
+    familyMemberId: effectiveDraft.familyMemberId?.trim() || undefined,
     doctorId: doctor.id,
     departmentId: doctor.departmentId,
-    appointmentDate: draft.appointmentDate,
-    appointmentTime: draft.appointmentTime,
-    reasonForAppointment: draft.reasonForAppointment.trim(),
+    appointmentDate: effectiveDraft.appointmentDate,
+    appointmentTime: effectiveDraft.appointmentTime,
+    reasonForAppointment: effectiveDraft.reasonForAppointment.trim(),
+    consultationMode: effectiveDraft.consultationMode ?? "In Person",
   };
   const updatedQueueEntries = state.queueEntries
     .filter((entry) => entry.appointmentId === appointmentId)
@@ -3113,11 +3731,13 @@ export async function updateAppointment(
       appointmentId,
       organizationId: updatedAppointment.organizationId,
       patientName: updatedAppointment.patientName,
+      familyMemberId: updatedAppointment.familyMemberId,
       doctorId: updatedAppointment.doctorId,
       departmentId: updatedAppointment.departmentId,
       appointmentDate: updatedAppointment.appointmentDate,
       appointmentTime: updatedAppointment.appointmentTime,
       reasonForAppointment: updatedAppointment.reasonForAppointment,
+      consultationMode: updatedAppointment.consultationMode,
     });
 
     if (updatedQueueEntries.length > 0) {
@@ -3152,10 +3772,41 @@ export async function updateAppointment(
     ),
   };
 
+  const users = await loadUsers();
+  const doctorUsers = users.filter(
+    (currentUser) =>
+      currentUser.role === "doctor" &&
+      currentUser.organizationId === updatedAppointment.organizationId &&
+      currentUser.doctorId === updatedAppointment.doctorId,
+  );
+  const createdNotifications = await notifyUsers({
+    organizationId: updatedAppointment.organizationId,
+    userIds: [
+      updatedAppointment.patientId ?? user.id,
+      ...doctorUsers.map((doctorUser) => doctorUser.id),
+    ],
+    title: "Appointment rescheduled",
+    message: `${updatedAppointment.patientName} was moved to ${updatedAppointment.appointmentDate} at ${updatedAppointment.appointmentTime}.`,
+    category: "Appointment",
+    relatedEntityType: "appointment",
+    relatedEntityId: updatedAppointment.id,
+  });
+  await writeAuditLog({
+    organizationId: updatedAppointment.organizationId,
+    actorUserId: user.id,
+    action: "appointment.rescheduled",
+    entityType: "appointment",
+    entityId: updatedAppointment.id,
+    metadata: {
+      consultationMode: updatedAppointment.consultationMode ?? "In Person",
+    },
+  });
+
   return {
     patch: {
       appointments: [updatedAppointment],
       queueEntries: updatedQueueEntries,
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
       meta: {
         appointmentSlotLoads: getAppointmentSlotLoads(nextState, updatedAppointment.organizationId),
       },
@@ -3201,7 +3852,7 @@ export async function setAppointmentStatus(
     throw createHttpError(403, "Patients can only cancel their own scheduled appointments.");
   }
 
-  if (isPatientOwner && appointment.status !== "Scheduled") {
+  if (isPatientOwner && !canPatientManageAppointment(appointment)) {
     throw createHttpError(400, "This appointment can no longer be cancelled.");
   }
 
@@ -4102,8 +4753,16 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
   }
 
   const selectedTest = state.labTests.find((test) => test.id === draft.testId);
+  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
   if (!selectedTest) {
     throw createHttpError(400, "The selected lab test could not be found.");
+  }
+
+  if (
+    draft.familyMemberId &&
+    (!familyMember || familyMember.primaryPatientUserId !== user.id)
+  ) {
+    throw createHttpError(403, "You do not have access to this workspace.");
   }
 
   if ((selectedTest.priceCents ?? 0) <= 0) {
@@ -4117,7 +4776,8 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     patientId: user.id,
     hospitalId: user.organizationId,
     organizationId: user.organizationId,
-    patientName: user.patientName ?? user.displayName,
+    patientName: familyMember?.fullName ?? (user.patientName ?? user.displayName),
+    familyMemberId: draft.familyMemberId?.trim() || undefined,
     testId: selectedTest.id,
     testName: selectedTest.name,
     departmentId: "dept-laboratory",
@@ -4560,4 +5220,1387 @@ export async function updateUserAccountStatus(
   });
 
   return getScopedHospitalStateForUser(user);
+}
+
+export async function createFamilyMember(user: SafeUser, draft: FamilyMemberDraft) {
+  if (user.role !== "patient") {
+    throw createHttpError(403, "You do not have access to manage family members.");
+  }
+
+  const validation = validateFamilyMemberDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the family member details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const familyMember: FamilyMemberRecord = {
+    id: `FAM-${Date.now()}-${randomBytes(3).toString("hex")}`,
+    organizationId: user.organizationId,
+    primaryPatientUserId: user.id,
+    fullName: draft.fullName.trim(),
+    relationship: draft.relationship.trim(),
+    dateOfBirth: draft.dateOfBirth?.trim() || undefined,
+    gender: draft.gender?.trim() || undefined,
+    bloodGroup: draft.bloodGroup?.trim() || undefined,
+    phoneNumber: draft.phoneNumber?.trim() || undefined,
+    emergencyContactName: draft.emergencyContactName?.trim() || undefined,
+    emergencyContactPhone: draft.emergencyContactPhone?.trim() || undefined,
+    allergies: draft.allergies?.trim() || undefined,
+    medicalConditions: draft.medicalConditions?.trim() || undefined,
+    preferredLanguage: draft.preferredLanguage?.trim() || undefined,
+    status: "Active",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await query(
+    `insert into family_members (
+      id, organization_id, primary_patient_user_id, full_name, relationship, date_of_birth,
+      gender, blood_group, phone_number, emergency_contact_name, emergency_contact_phone,
+      allergies, medical_conditions, preferred_language, status, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    [
+      familyMember.id,
+      familyMember.organizationId,
+      familyMember.primaryPatientUserId,
+      familyMember.fullName,
+      familyMember.relationship,
+      familyMember.dateOfBirth ?? null,
+      familyMember.gender ?? null,
+      familyMember.bloodGroup ?? null,
+      familyMember.phoneNumber ?? null,
+      familyMember.emergencyContactName ?? null,
+      familyMember.emergencyContactPhone ?? null,
+      familyMember.allergies ?? null,
+      familyMember.medicalConditions ?? null,
+      familyMember.preferredLanguage ?? null,
+      familyMember.status,
+      familyMember.createdAt,
+      familyMember.updatedAt,
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "family-member.created",
+    entityType: "family-member",
+    entityId: familyMember.id,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function updateFamilyMember(
+  user: SafeUser,
+  familyMemberId: string,
+  draft: FamilyMemberDraft,
+) {
+  if (user.role !== "patient") {
+    throw createHttpError(403, "You do not have access to manage family members.");
+  }
+
+  const validation = validateFamilyMemberDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the family member details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const state = await loadHospitalState();
+  const familyMember = getFamilyMemberById(state, familyMemberId);
+  if (!familyMember || familyMember.primaryPatientUserId !== user.id) {
+    throw createHttpError(404, "Family member not found.");
+  }
+
+  await query(
+    `update family_members
+     set full_name = $3,
+         relationship = $4,
+         date_of_birth = $5,
+         gender = $6,
+         blood_group = $7,
+         phone_number = $8,
+         emergency_contact_name = $9,
+         emergency_contact_phone = $10,
+         allergies = $11,
+         medical_conditions = $12,
+         preferred_language = $13,
+         updated_at = $14
+     where id = $1 and organization_id = $2`,
+    [
+      familyMemberId,
+      user.organizationId,
+      draft.fullName.trim(),
+      draft.relationship.trim(),
+      draft.dateOfBirth?.trim() || null,
+      draft.gender?.trim() || null,
+      draft.bloodGroup?.trim() || null,
+      draft.phoneNumber?.trim() || null,
+      draft.emergencyContactName?.trim() || null,
+      draft.emergencyContactPhone?.trim() || null,
+      draft.allergies?.trim() || null,
+      draft.medicalConditions?.trim() || null,
+      draft.preferredLanguage?.trim() || null,
+      new Date().toISOString(),
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "family-member.updated",
+    entityType: "family-member",
+    entityId: familyMemberId,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function unlinkFamilyMember(user: SafeUser, familyMemberId: string) {
+  if (user.role !== "patient") {
+    throw createHttpError(403, "You do not have access to manage family members.");
+  }
+
+  const state = await loadHospitalState();
+  const familyMember = getFamilyMemberById(state, familyMemberId);
+  if (!familyMember || familyMember.primaryPatientUserId !== user.id) {
+    throw createHttpError(404, "Family member not found.");
+  }
+
+  const hasDependencies =
+    state.appointments.some((appointment) => appointment.familyMemberId === familyMemberId) ||
+    state.labRequests.some((request) => request.familyMemberId === familyMemberId) ||
+    state.medicalRecords.some((record) => record.familyMemberId === familyMemberId) ||
+    state.prescriptions.some((prescription) => prescription.familyMemberId === familyMemberId) ||
+    state.labReports.some((report) => report.familyMemberId === familyMemberId) ||
+    state.invoices.some((invoice) => invoice.familyMemberId === familyMemberId);
+
+  if (hasDependencies) {
+    await query(
+      `update family_members
+       set status = 'Inactive',
+           updated_at = $3
+       where id = $1 and organization_id = $2`,
+      [familyMemberId, user.organizationId, new Date().toISOString()],
+    );
+  } else {
+    await query("delete from family_members where id = $1 and organization_id = $2", [
+      familyMemberId,
+      user.organizationId,
+    ]);
+  }
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: hasDependencies ? "family-member.deactivated" : "family-member.unlinked",
+    entityType: "family-member",
+    entityId: familyMemberId,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function createMedicalHistoryEntry(
+  user: SafeUser,
+  draft: MedicalHistoryEntryDraft,
+) {
+  if (!["patient", "doctor", "administrator"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to update clinical history.");
+  }
+
+  const validation = validateMedicalHistoryDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the clinical history details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const patientUserId = user.role === "patient" ? user.id : undefined;
+  if (!patientUserId) {
+    throw createHttpError(400, "A patient context is required for this update.");
+  }
+
+  const state = await loadHospitalState();
+  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
+  if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== patientUserId)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const entry: MedicalHistoryEntryRecord = {
+    id: `HIST-${Date.now()}-${randomBytes(3).toString("hex")}`,
+    organizationId: user.organizationId,
+    patientUserId,
+    familyMemberId: draft.familyMemberId?.trim() || undefined,
+    category: draft.category,
+    title: draft.title.trim(),
+    details: draft.details?.trim() || undefined,
+    recordedDate: draft.recordedDate,
+    createdByUserId: user.id,
+    createdAt: new Date().toISOString(),
+  };
+
+  await query(
+    `insert into medical_history_entries (
+      id, organization_id, patient_user_id, family_member_id, category, title, details,
+      recorded_date, created_by_user_id, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      entry.id,
+      entry.organizationId,
+      entry.patientUserId,
+      entry.familyMemberId ?? null,
+      entry.category,
+      entry.title,
+      entry.details ?? null,
+      entry.recordedDate,
+      entry.createdByUserId,
+      entry.createdAt,
+      null,
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "medical-history.created",
+    entityType: "medical-history",
+    entityId: entry.id,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function createClinicalAttachment(
+  user: SafeUser,
+  draft: ClinicalAttachmentDraft,
+) {
+  if (!["patient", "doctor", "administrator"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to upload clinical files.");
+  }
+
+  const validation = validateClinicalAttachmentDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the clinical file provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const patientUserId = user.role === "patient" ? user.id : undefined;
+  if (!patientUserId) {
+    throw createHttpError(400, "A patient context is required for this upload.");
+  }
+
+  const state = await loadHospitalState();
+  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
+  if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== patientUserId)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const attachment: ClinicalAttachmentRecord = {
+    id: `ATT-${Date.now()}-${randomBytes(3).toString("hex")}`,
+    organizationId: user.organizationId,
+    patientUserId,
+    familyMemberId: draft.familyMemberId?.trim() || undefined,
+    medicalRecordId: draft.medicalRecordId?.trim() || undefined,
+    label: draft.label.trim(),
+    fileName: sanitizeAttachmentFileName(draft.fileName.trim()),
+    contentType: draft.contentType,
+    fileSize: draft.fileSize,
+    contentBase64: draft.contentBase64,
+    uploadedByUserId: user.id,
+    uploadedByName: user.displayName,
+    createdAt: new Date().toISOString(),
+  };
+
+  await query(
+    `insert into clinical_attachments (
+      id, organization_id, patient_user_id, family_member_id, medical_record_id, label, file_name,
+      content_type, file_size, content_base64, uploaded_by_user_id, uploaded_by_name, created_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      attachment.id,
+      attachment.organizationId,
+      attachment.patientUserId,
+      attachment.familyMemberId ?? null,
+      attachment.medicalRecordId ?? null,
+      attachment.label,
+      attachment.fileName,
+      attachment.contentType,
+      attachment.fileSize,
+      attachment.contentBase64,
+      attachment.uploadedByUserId,
+      attachment.uploadedByName,
+      attachment.createdAt,
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "clinical-attachment.uploaded",
+    entityType: "clinical-attachment",
+    entityId: attachment.id,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+async function resolveTelemedicineContext(user: SafeUser, appointmentId?: string, sessionId?: string) {
+  const [state, users] = await Promise.all([loadHospitalState(), loadUsers()]);
+  const appointment =
+    appointmentId ? getAppointmentById(state, appointmentId) : state.appointments.find((item) => {
+      const session = state.telemedicineSessions?.find((entry) => entry.id === sessionId);
+      return session ? item.id === session.appointmentId : false;
+    });
+
+  if (!appointment) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  if (appointment.consultationMode !== "Online") {
+    throw createHttpError(400, "This appointment is not scheduled as an online consultation.");
+  }
+
+  const patientUser =
+    users.find((currentUser) => currentUser.id === appointment.patientId) ??
+    users.find(
+      (currentUser) =>
+        currentUser.role === "patient" &&
+        currentUser.organizationId === appointment.organizationId &&
+        normalizePersonKey(currentUser.patientName ?? currentUser.displayName) ===
+          normalizePersonKey(
+            getFamilyMemberById(state, appointment.familyMemberId)?.primaryPatientUserId === currentUser.id
+              ? currentUser.patientName ?? currentUser.displayName
+              : appointment.patientName,
+          ),
+    );
+  const doctorUser = users.find(
+    (currentUser) =>
+      currentUser.role === "doctor" &&
+      currentUser.organizationId === appointment.organizationId &&
+      currentUser.doctorId === appointment.doctorId,
+  );
+
+  if (!patientUser || !doctorUser) {
+    throw createHttpError(400, "Consultation participants could not be resolved.");
+  }
+
+  const isAuthorized =
+    (user.role === "patient" && patientUser.id === user.id) ||
+    (user.role === "doctor" && doctorUser.id === user.id);
+
+  if (!isAuthorized || user.organizationId !== appointment.organizationId) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const session =
+    state.telemedicineSessions?.find((entry) => entry.appointmentId === appointment.id) ??
+    null;
+
+  return { state, users, appointment, patientUser, doctorUser, session };
+}
+
+export async function getTelemedicineSessionForAppointment(user: SafeUser, appointmentId: string) {
+  const context = await resolveTelemedicineContext(user, appointmentId);
+  const messages = context.session
+    ? (
+        await query(
+          `select id, session_id, organization_id, sender_user_id, sender_name, message, created_at
+           from telemedicine_messages
+           where session_id = $1 and organization_id = $2
+           order by created_at asc`,
+          [context.session.id, context.appointment.organizationId],
+        )
+      ).rows.map(
+        (row): TelemedicineMessageRecord => ({
+          id: String(row.id),
+          sessionId: String(row.session_id),
+          organizationId: String(row.organization_id),
+          senderUserId: String(row.sender_user_id),
+          senderName: String(row.sender_name),
+          message: String(row.message),
+          createdAt: new Date(String(row.created_at)).toISOString(),
+        }),
+      )
+    : [];
+
+  return {
+    appointment: context.appointment,
+    session: context.session,
+    messages,
+  };
+}
+
+export async function joinTelemedicineSession(user: SafeUser, appointmentId: string) {
+  const context = await resolveTelemedicineContext(user, appointmentId);
+  const joinWindow = isTelemedicineJoinAvailable(context.appointment);
+
+  if (!joinWindow.allowed) {
+    throw createHttpError(
+      400,
+      joinWindow.message ?? "This consultation is not available yet.",
+    );
+  }
+
+  let session = context.session;
+
+  if (!session) {
+    session = {
+      id: `TM-${Date.now()}-${randomBytes(3).toString("hex")}`,
+      organizationId: context.appointment.organizationId,
+      appointmentId: context.appointment.id,
+      patientUserId: context.patientUser.id,
+      doctorUserId: context.doctorUser.id,
+      familyMemberId: context.appointment.familyMemberId,
+      status: "Scheduled",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await query(
+      `insert into telemedicine_sessions (
+        id, organization_id, appointment_id, patient_user_id, doctor_user_id, family_member_id,
+        status, started_at, ended_at, created_at, updated_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        session.id,
+        session.organizationId,
+        session.appointmentId,
+        session.patientUserId,
+        session.doctorUserId,
+        session.familyMemberId ?? null,
+        session.status,
+        null,
+        null,
+        session.createdAt,
+        session.updatedAt,
+      ],
+    );
+  }
+
+  return getTelemedicineSessionForAppointment(user, appointmentId);
+}
+
+export async function getTelemedicineMessages(user: SafeUser, sessionId: string) {
+  const context = await resolveTelemedicineContext(user, undefined, sessionId);
+  if (!context.session) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  const result = await query(
+    `select id, session_id, organization_id, sender_user_id, sender_name, message, created_at
+     from telemedicine_messages
+     where session_id = $1 and organization_id = $2
+     order by created_at asc`,
+    [context.session.id, context.session.organizationId],
+  );
+
+  return {
+    messages: result.rows.map(
+      (row): TelemedicineMessageRecord => ({
+        id: String(row.id),
+        sessionId: String(row.session_id),
+        organizationId: String(row.organization_id),
+        senderUserId: String(row.sender_user_id),
+        senderName: String(row.sender_name),
+        message: String(row.message),
+        createdAt: new Date(String(row.created_at)).toISOString(),
+      }),
+    ),
+  };
+}
+
+export async function sendTelemedicineMessage(user: SafeUser, sessionId: string, message: string) {
+  const context = await resolveTelemedicineContext(user, undefined, sessionId);
+  if (!context.session) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  if (message.trim().length < 1) {
+    throw createHttpError(400, "Please enter a message.");
+  }
+
+  const entry: TelemedicineMessageRecord = {
+    id: `TMSG-${Date.now()}-${randomBytes(3).toString("hex")}`,
+    sessionId: context.session.id,
+    organizationId: context.session.organizationId,
+    senderUserId: user.id,
+    senderName: user.displayName,
+    message: message.trim(),
+    createdAt: new Date().toISOString(),
+  };
+
+  await query(
+    `insert into telemedicine_messages (
+      id, session_id, organization_id, sender_user_id, sender_name, message, created_at
+    ) values ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      entry.id,
+      entry.sessionId,
+      entry.organizationId,
+      entry.senderUserId,
+      entry.senderName,
+      entry.message,
+      entry.createdAt,
+    ],
+  );
+
+  return { message: entry };
+}
+
+export async function sendTelemedicineSignal(
+  user: SafeUser,
+  sessionId: string,
+  draft: { recipientUserId: string; signalType: string; payload: string },
+) {
+  const context = await resolveTelemedicineContext(user, undefined, sessionId);
+  if (!context.session) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  const allowedRecipients = [context.patientUser.id, context.doctorUser.id];
+  if (!allowedRecipients.includes(draft.recipientUserId) || draft.recipientUserId === user.id) {
+    throw createHttpError(400, "Please select a valid consultation participant.");
+  }
+
+  const id = `TSIG-${Date.now()}-${randomBytes(3).toString("hex")}`;
+  const createdAt = new Date().toISOString();
+
+  await query(
+    `insert into telemedicine_signals (
+      id, session_id, organization_id, sender_user_id, recipient_user_id, signal_type,
+      payload_json, created_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      id,
+      context.session.id,
+      context.session.organizationId,
+      user.id,
+      draft.recipientUserId,
+      draft.signalType,
+      draft.payload,
+      createdAt,
+    ],
+  );
+
+  return {
+    signal: {
+      id,
+      recipientUserId: draft.recipientUserId,
+      signalType: draft.signalType,
+      payload: draft.payload,
+      createdAt,
+    },
+  };
+}
+
+export async function getConversationSignals(
+  user: SafeUser,
+  sessionId: string,
+  since?: string,
+) {
+  const context = await resolveTelemedicineContext(user, undefined, sessionId);
+  if (!context.session) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  const result = await query(
+    `select id, sender_user_id, recipient_user_id, signal_type, payload_json, created_at
+     from telemedicine_signals
+     where session_id = $1
+       and organization_id = $2
+       and recipient_user_id = $3
+       and ($4::timestamptz is null or created_at > $4::timestamptz)
+     order by created_at asc`,
+    [context.session.id, context.session.organizationId, user.id, since ?? null],
+  );
+
+  return {
+    signals: result.rows.map((row) => ({
+      id: String(row.id),
+      senderUserId: String(row.sender_user_id),
+      recipientUserId: String(row.recipient_user_id),
+      signalType: String(row.signal_type),
+      payload: String(row.payload_json),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+    })),
+  };
+}
+
+export async function setTelemedicineSessionStatus(
+  user: SafeUser,
+  sessionId: string,
+  status: TelemedicineSessionStatus,
+) {
+  const context = await resolveTelemedicineContext(user, undefined, sessionId);
+  if (!context.session) {
+    throw createHttpError(404, "Consultation session not found.");
+  }
+
+  const startedAt =
+    status === "Live" ? context.session.startedAt ?? new Date().toISOString() : context.session.startedAt;
+  const endedAt = status === "Ended" ? new Date().toISOString() : context.session.endedAt;
+  const updatedAt = new Date().toISOString();
+
+  await query(
+    `update telemedicine_sessions
+     set status = $3,
+         started_at = $4,
+         ended_at = $5,
+         updated_at = $6
+     where id = $1 and organization_id = $2`,
+    [sessionId, context.session.organizationId, status, startedAt ?? null, endedAt ?? null, updatedAt],
+  );
+
+  await writeAuditLog({
+    organizationId: context.session.organizationId,
+    actorUserId: user.id,
+    action: `telemedicine.${status.toLowerCase()}`,
+    entityType: "telemedicine-session",
+    entityId: sessionId,
+  });
+
+  return {
+    session: {
+      ...context.session,
+      status,
+      startedAt,
+      endedAt,
+      updatedAt,
+    },
+  };
+}
+
+export async function searchHospitalWorkspace(user: SafeUser, rawQuery: string) {
+  const queryText = rawQuery.trim().toLowerCase();
+  if (!queryText) {
+    return { groups: [] };
+  }
+
+  const [state, users] = await Promise.all([reconcileNoShowAppointments(await loadHospitalState()), loadUsers()]);
+  const scopedState = withScopedState(user.role, user, state);
+  const scopedPatientUsers = users.filter(
+    (currentUser) =>
+      currentUser.role === "patient" &&
+      currentUser.organizationId === user.organizationId &&
+      (user.role !== "patient" || currentUser.id === user.id),
+  );
+
+  const routeByType: Record<string, string> = {
+    patient:
+      user.role === "doctor"
+        ? "/dashboard/doctor/patients"
+        : user.role === "patient"
+          ? "/dashboard/patient/profile"
+          : user.role === "receptionist"
+            ? "/dashboard/appointments"
+            : "/dashboard/admin/users",
+    doctor:
+      user.role === "patient"
+        ? "/dashboard/patient/appointments"
+        : user.role === "doctor"
+          ? "/dashboard/doctor/schedule"
+          : "/dashboard/doctors",
+    department: user.role === "patient" ? "/dashboard/patient/appointments" : "/dashboard/departments",
+    appointment:
+      user.role === "doctor"
+        ? "/dashboard/doctor/appointments"
+        : user.role === "patient"
+          ? "/dashboard/patient/appointments"
+          : "/dashboard/appointments",
+    "medical-record":
+      user.role === "doctor" ? "/dashboard/doctor/records" : "/dashboard/patient/records",
+    prescription:
+      user.role === "doctor"
+        ? "/dashboard/doctor/prescriptions"
+        : user.role === "patient"
+          ? "/dashboard/patient/prescriptions"
+          : user.role === "pharmacist"
+            ? "/dashboard/pharmacy/prescriptions"
+            : "/dashboard/doctor/history?tab=prescriptions",
+    invoice: user.role === "patient" ? "/dashboard/patient/billing" : "/dashboard/admin/billing",
+    medicine: user.role === "pharmacist" ? "/dashboard/pharmacy/inventory" : "/dashboard/admin/billing",
+    laboratory:
+      user.role === "patient"
+        ? "/dashboard/patient/lab-tests"
+        : "/dashboard/laboratory/requests",
+  };
+  const getDepartmentName = (departmentId: string) =>
+    state.departments.find((department) => department.id === departmentId)?.name ?? departmentId;
+  const doctorProfilesByDoctorId = new Map(
+    users
+      .filter(
+        (currentUser) =>
+          currentUser.role === "doctor" && currentUser.organizationId === user.organizationId,
+      )
+      .map((currentUser) => [currentUser.doctorId ?? "", currentUser] as const),
+  );
+  const searchableDoctors =
+    user.role === "doctor" || user.role === "patient"
+      ? state.doctors.filter((doctor) => doctor.organizationId === user.organizationId)
+      : scopedState.doctors;
+  const searchableDepartments =
+    user.role === "doctor" || user.role === "patient"
+      ? state.departments.filter((department) => department.organizationId === user.organizationId)
+      : scopedState.departments;
+
+  const groups = [
+    {
+      title: "Patients",
+      items: scopedPatientUsers
+        .filter((currentUser) =>
+          [currentUser.displayName, currentUser.patientName ?? "", currentUser.email]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((currentUser) => ({
+          id: currentUser.id,
+          heading: currentUser.patientName ?? currentUser.displayName,
+          details: `${currentUser.id} · ${currentUser.email}`,
+          href: routeByType.patient,
+        })),
+    },
+    {
+      title: "Doctors",
+      items: searchableDoctors
+        .filter((doctor) =>
+          [
+            doctor.name,
+            doctor.specialization,
+            doctor.availability,
+            doctor.shiftLabel,
+            getDepartmentName(doctor.departmentId),
+            doctorProfilesByDoctorId.get(doctor.id)?.qualifications ?? "",
+            doctorProfilesByDoctorId.get(doctor.id)?.experience ?? "",
+            doctorProfilesByDoctorId.get(doctor.id)?.languages ?? "",
+            doctorProfilesByDoctorId.get(doctor.id)?.consultationFee ?? "",
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((doctor) => {
+          const profile = doctorProfilesByDoctorId.get(doctor.id);
+
+          return {
+            id: doctor.id,
+            heading: doctor.name,
+            details: [
+              doctor.specialization,
+              getDepartmentName(doctor.departmentId),
+              profile?.qualifications?.trim() || undefined,
+              profile?.experience?.trim() || undefined,
+              profile?.languages?.trim() || undefined,
+              profile?.consultationFee?.trim()
+                ? `Fee ${profile.consultationFee.trim()}`
+                : undefined,
+              doctor.availability,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            href: routeByType.doctor,
+          };
+        }),
+    },
+    {
+      title: "Departments",
+      items: searchableDepartments
+        .filter((department) =>
+          [department.name, department.code, department.description, department.location]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((department) => {
+          const departmentDoctors = searchableDoctors.filter(
+            (doctor) => doctor.departmentId === department.id,
+          );
+          const availableCount = departmentDoctors.filter(
+            (doctor) => doctor.status === "Available" || doctor.status === "Consulting",
+          ).length;
+
+          return {
+            id: department.id,
+            heading: department.name,
+            details: `${department.code} · ${departmentDoctors.length} doctors · ${availableCount} available · ${department.location}`,
+            href: routeByType.department,
+          };
+        }),
+    },
+    {
+      title: "Appointments",
+      items: scopedState.appointments
+        .filter((appointment) =>
+          [
+            appointment.id,
+            appointment.patientName,
+            getDoctorById(scopedState, appointment.doctorId)?.name ?? "",
+            appointment.reasonForAppointment,
+            appointment.status,
+            appointment.consultationMode ?? "",
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((appointment) => ({
+          id: appointment.id,
+          heading: `${appointment.patientName} · ${appointment.id}`,
+          details: `${appointment.appointmentDate} ${appointment.appointmentTime} · ${getDoctorById(scopedState, appointment.doctorId)?.name ?? "Doctor pending"} · ${appointment.status} · ${appointment.consultationMode ?? "In Person"}`,
+          href: routeByType.appointment,
+        })),
+    },
+    ...(user.role === "administrator"
+      ? [
+          {
+            title: "Staff",
+            items: users
+              .filter(
+                (currentUser) =>
+                  currentUser.organizationId === user.organizationId &&
+                  currentUser.role !== "patient" &&
+                  [
+                    currentUser.displayName,
+                    currentUser.email,
+                    currentUser.role,
+                    currentUser.departmentId ?? "",
+                    currentUser.designation ?? "",
+                  ]
+                    .join(" ")
+                    .toLowerCase()
+                    .includes(queryText),
+              )
+              .map((currentUser) => ({
+                id: currentUser.id,
+                heading: currentUser.displayName,
+                details: `${currentUser.email} · ${currentUser.role} · ${currentUser.staffStatus?.trim() || "Active"}`,
+                href: "/dashboard/admin/users",
+              })),
+          },
+        ]
+      : []),
+    {
+      title: "Medical Records",
+      items: scopedState.medicalRecords
+        .filter((record) =>
+          [record.patientName, record.diagnosis, record.visitDate, record.id]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((record) => ({
+          id: record.id,
+          heading: `${record.patientName} · ${record.diagnosis}`,
+          details: `${record.visitDate} · ${record.doctorName}${record.familyMemberId ? ` · ${getFamilyMemberById(scopedState, record.familyMemberId)?.fullName ?? "Family member"}` : ""}`,
+          href: routeByType["medical-record"],
+        })),
+    },
+    {
+      title: "Prescriptions",
+      items: scopedState.prescriptions
+        .filter((prescription) =>
+          [prescription.patientName, prescription.doctorName, prescription.id]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((prescription) => ({
+          id: prescription.id,
+          heading: `${prescription.patientName} · ${prescription.id}`,
+          details: `${prescription.doctorName} · ${prescription.status}${prescription.followUpDate ? ` · Follow-up ${prescription.followUpDate}` : ""}`,
+          href: routeByType.prescription,
+        })),
+    },
+    {
+      title: "Medicines",
+      items: scopedState.medicineCatalog
+        .filter((medicine) =>
+          [medicine.name, medicine.genericName ?? "", medicine.strength ?? ""]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((medicine) => ({
+          id: medicine.id,
+          heading: medicine.name,
+          details: `${medicine.strength ?? medicine.unit} · ${medicine.active ? "Available" : "Inactive"}`,
+          href: routeByType.medicine,
+        })),
+    },
+    {
+      title: "Invoices",
+      items: scopedState.invoices
+        .filter((invoice) =>
+          [invoice.invoiceNumber, invoice.patientName, invoice.paymentStatus]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((invoice) => ({
+          id: invoice.id,
+          heading: `${invoice.invoiceNumber} · ${invoice.patientName}`,
+          details: `${invoice.paymentStatus} · INR ${(invoice.totalCents / 100).toFixed(2)}`,
+          href: routeByType.invoice,
+        })),
+    },
+    {
+      title: "Laboratory",
+      items: scopedState.labRequests
+        .filter((request) =>
+          [request.patientName, request.testName, request.id, request.status]
+            .join(" ")
+            .toLowerCase()
+            .includes(queryText),
+        )
+        .map((request) => ({
+          id: request.id,
+          heading: `${request.testName} · ${request.patientName}`,
+          details: `${request.requestedDate} ${request.requestedTime} · ${request.status}${request.familyMemberId ? ` · ${getFamilyMemberById(scopedState, request.familyMemberId)?.fullName ?? "Family member"}` : ""}`,
+          href: routeByType.laboratory,
+        })),
+    },
+  ].filter((group) => group.items.length > 0);
+
+  return { groups };
+}
+
+function formatSearchRoleLabel(role: UserRole) {
+  switch (role) {
+    case "administrator":
+      return "Administrator";
+    case "doctor":
+      return "Doctor";
+    case "laboratory":
+      return "Laboratory Staff";
+    case "patient":
+      return "Patient";
+    case "pharmacist":
+      return "Pharmacist";
+    case "receptionist":
+      return "Receptionist";
+  }
+}
+
+export async function searchHospitalWorkspaceScoped(user: SafeUser, rawQuery: string) {
+  const normalized = rawQuery.trim().toLowerCase();
+  if (!normalized) {
+    return { groups: [] };
+  }
+
+  const [state, users] = await Promise.all([
+    reconcileNoShowAppointments(await loadHospitalState()),
+    loadUsers(),
+  ]);
+  const scopedState = withScopedState(user.role, user, state);
+  const doctorProfilesByDoctorId = new Map(
+    users
+      .filter(
+        (currentUser) =>
+          currentUser.role === "doctor" && currentUser.organizationId === user.organizationId,
+      )
+      .map((currentUser) => [currentUser.doctorId ?? "", currentUser] as const),
+  );
+  const groups: Array<{
+    title: string;
+    items: Array<{
+      id: string;
+      type: string;
+      heading: string;
+      details: string;
+      actionHref?: string;
+      actionLabel?: string;
+      detail: {
+        title?: string;
+        fields: Array<{ label: string; value: string }>;
+        notes?: string[];
+      };
+    }>;
+  }> = [];
+
+  const rank = (values: string[], options?: { exactFirst?: string[]; startsFirst?: string[] }) => {
+    const normalizedValues = values.map((value) => value.toLowerCase());
+    const exactFirst = (options?.exactFirst ?? []).map((value) => value.toLowerCase());
+    const startsFirst = (options?.startsFirst ?? []).map((value) => value.toLowerCase());
+
+    if (exactFirst.some((value) => value === normalized)) {
+      return 1;
+    }
+    if (normalizedValues.some((value) => value === normalized)) {
+      return 2;
+    }
+    if (startsFirst.some((value) => value.startsWith(normalized))) {
+      return 3;
+    }
+    if (normalizedValues.some((value) => value.startsWith(normalized))) {
+      return 4;
+    }
+    if (normalizedValues.some((value) => value.includes(normalized))) {
+      return 5;
+    }
+    return 99;
+  };
+
+  if (user.role !== "patient") {
+    const patientItems = users
+      .filter((currentUser) => {
+        if (currentUser.role !== "patient" || currentUser.organizationId !== user.organizationId) {
+          return false;
+        }
+
+        if (user.role === "administrator" || user.role === "receptionist") {
+          return true;
+        }
+
+        if (user.role === "doctor") {
+          return (
+            currentUser.assignedDoctorId === user.doctorId ||
+            scopedState.appointments.some((appointment) => appointment.patientId === currentUser.id)
+          );
+        }
+
+        return false;
+      })
+      .map((currentUser) => {
+        const patientName = currentUser.patientName ?? currentUser.displayName;
+        return {
+          currentUser,
+          patientName,
+          score: rank(
+            [
+              patientName,
+              ...(user.role === "administrator" || user.role === "receptionist"
+                ? [currentUser.email, currentUser.phoneNumber ?? ""]
+                : []),
+            ],
+            { exactFirst: [patientName], startsFirst: [patientName] },
+          ),
+        };
+      })
+      .filter((entry) => entry.score < 99)
+      .sort((left, right) => left.score - right.score || left.patientName.localeCompare(right.patientName))
+      .slice(0, 8)
+      .map(({ currentUser, patientName }) => ({
+        id: currentUser.id,
+        type: "patient",
+        heading: patientName,
+        details: [currentUser.id, currentUser.phoneNumber ?? currentUser.email, currentUser.staffStatus ?? "Active"]
+          .filter(Boolean)
+          .join(" - "),
+        actionHref:
+          user.role === "doctor"
+            ? "/dashboard/doctor/patients"
+            : user.role === "receptionist"
+              ? "/dashboard/appointments"
+              : "/dashboard/admin/users",
+        actionLabel: "Open workspace",
+        detail: {
+          title: "Patient summary",
+          fields: [
+            { label: "Name", value: patientName },
+            { label: "Patient ID", value: currentUser.id },
+            { label: "Contact", value: currentUser.phoneNumber ?? currentUser.email },
+            { label: "Gender", value: currentUser.gender ?? "Not provided" },
+            { label: "Status", value: currentUser.staffStatus ?? "Active" },
+          ],
+        },
+      }));
+
+    if (patientItems.length > 0) {
+      groups.push({ title: "Patients", items: patientItems });
+    }
+  }
+
+  const doctorItems = state.doctors
+    .filter((doctor) => doctor.organizationId === user.organizationId)
+    .map((doctor) => {
+      const departmentName =
+        state.departments.find((department) => department.id === doctor.departmentId)?.name ?? doctor.departmentId;
+      const profile = doctorProfilesByDoctorId.get(doctor.id);
+
+      return {
+        doctor,
+        departmentName,
+        profile,
+        score: rank(
+          [
+            doctor.name,
+            doctor.specialization,
+            departmentName,
+            profile?.qualifications ?? "",
+          ],
+          { exactFirst: [doctor.specialization, departmentName], startsFirst: [doctor.specialization, departmentName] },
+        ),
+      };
+    })
+    .filter((entry) => entry.score < 99)
+    .sort((left, right) => left.score - right.score || left.doctor.name.localeCompare(right.doctor.name))
+    .slice(0, 8)
+    .map(({ departmentName, doctor, profile }) => ({
+      id: doctor.id,
+      type: "doctor",
+      heading: doctor.name,
+      details: [doctor.specialization, departmentName, doctor.availability].filter(Boolean).join(" - "),
+      actionHref:
+        user.role === "patient"
+          ? "/dashboard/patient/appointments"
+          : user.role === "doctor"
+            ? "/dashboard/doctor/schedule"
+            : "/dashboard/doctors",
+      actionLabel:
+        user.role === "patient" || user.role === "receptionist" ? "Book appointment" : "Open workspace",
+      detail: {
+        title: "Doctor details",
+        fields: [
+          { label: "Name", value: doctor.name },
+          { label: "Doctor ID", value: doctor.id },
+          { label: "Department", value: departmentName },
+          { label: "Specialization", value: doctor.specialization },
+          { label: "Qualifications", value: profile?.qualifications?.trim() || "Not provided" },
+          { label: "Experience", value: profile?.experience?.trim() || "Not provided" },
+          { label: "Languages", value: profile?.languages?.trim() || "Not provided" },
+          { label: "Consultation fee", value: profile?.consultationFee?.trim() || "Not provided" },
+          { label: "Current availability", value: doctor.availability || doctor.status },
+          { label: "Available timings", value: profile?.availableTimings?.trim() || doctor.shiftLabel },
+        ],
+      },
+    }));
+
+  if (doctorItems.length > 0) {
+    groups.push({ title: "Doctors", items: doctorItems });
+  }
+
+  const departmentItems = state.departments
+    .filter((department) => department.organizationId === user.organizationId)
+    .map((department) => ({
+      department,
+      score: rank(
+        [department.name, department.code, department.description, department.location],
+        { exactFirst: [department.code, department.name], startsFirst: [department.code, department.name] },
+      ),
+    }))
+    .filter((entry) => entry.score < 99)
+    .sort((left, right) => left.score - right.score || left.department.name.localeCompare(right.department.name))
+    .slice(0, 8)
+    .map(({ department }) => {
+      const departmentDoctors = state.doctors.filter((doctor) => doctor.departmentId === department.id);
+      const availableDoctors = departmentDoctors.filter((doctor) =>
+        ["Available", "Consulting", "Emergency duty"].includes(doctor.status),
+      );
+
+      return {
+        id: department.id,
+        type: "department",
+        heading: department.name,
+        details: [
+          department.code,
+          `${departmentDoctors.length} doctors`,
+          `${availableDoctors.length} available`,
+          department.location,
+        ].join(" - "),
+        actionHref:
+          user.role === "patient" ? "/dashboard/patient/appointments" : "/dashboard/departments",
+        actionLabel: "Open workspace",
+        detail: {
+          title: "Department details",
+          fields: [
+            { label: "Department", value: department.name },
+            { label: "Doctors", value: String(departmentDoctors.length) },
+            { label: "Available / On duty", value: String(availableDoctors.length) },
+            { label: "Location", value: department.location },
+          ],
+          notes: departmentDoctors.slice(0, 5).map((doctor) => `${doctor.name} - ${doctor.specialization} - ${doctor.availability}`),
+        },
+      };
+    });
+
+  if (departmentItems.length > 0) {
+    groups.push({ title: "Departments", items: departmentItems });
+  }
+
+  const appointmentItems = scopedState.appointments
+    .map((appointment) => {
+      const doctorName = getDoctorById(state, appointment.doctorId)?.name ?? "Doctor pending";
+      const departmentName =
+        state.departments.find((department) => department.id === appointment.departmentId)?.name ??
+        appointment.departmentId;
+
+      return {
+        appointment,
+        doctorName,
+        departmentName,
+        score: rank(
+          [appointment.id, appointment.patientName, doctorName, appointment.reasonForAppointment],
+          { exactFirst: [appointment.id], startsFirst: [appointment.id, appointment.patientName, doctorName] },
+        ),
+      };
+    })
+    .filter((entry) => entry.score < 99)
+    .sort(
+      (left, right) =>
+        left.score - right.score ||
+        `${right.appointment.appointmentDate}T${right.appointment.appointmentTime}`.localeCompare(
+          `${left.appointment.appointmentDate}T${left.appointment.appointmentTime}`,
+        ),
+    )
+    .slice(0, 8)
+    .map(({ appointment, departmentName, doctorName }) => ({
+      id: appointment.id,
+      type: "appointment",
+      heading: `${appointment.patientName} - ${appointment.id}`,
+      details: `${appointment.appointmentDate} ${appointment.appointmentTime} - ${doctorName} - ${appointment.status}`,
+      actionHref:
+        user.role === "doctor"
+          ? "/dashboard/doctor/appointments"
+          : user.role === "patient"
+            ? "/dashboard/patient/appointments"
+            : "/dashboard/appointments",
+      actionLabel: "Open workspace",
+      detail: {
+        title: "Appointment details",
+        fields: [
+          { label: "Appointment ID", value: appointment.id },
+          { label: "Patient", value: appointment.patientName },
+          { label: "Doctor", value: doctorName },
+          { label: "Department", value: departmentName },
+          { label: "Date / time", value: `${appointment.appointmentDate} ${appointment.appointmentTime}` },
+          { label: "Consultation mode", value: appointment.consultationMode ?? "In Person" },
+          { label: "Reason", value: appointment.reasonForAppointment || "Not provided" },
+          { label: "Status", value: appointment.status },
+        ],
+      },
+    }));
+
+  if (appointmentItems.length > 0) {
+    groups.push({ title: "Appointments", items: appointmentItems });
+  }
+
+  if (user.role === "administrator") {
+    const staffItems = users
+      .filter(
+        (currentUser) =>
+          currentUser.organizationId === user.organizationId && currentUser.role !== "patient",
+      )
+      .map((currentUser) => ({
+        currentUser,
+        score: rank(
+          [
+            currentUser.displayName,
+            currentUser.email,
+            currentUser.role,
+            currentUser.departmentId ?? "",
+            currentUser.designation ?? "",
+          ],
+          { exactFirst: [currentUser.displayName], startsFirst: [currentUser.displayName] },
+        ),
+      }))
+      .filter((entry) => entry.score < 99)
+      .sort((left, right) => left.score - right.score || left.currentUser.displayName.localeCompare(right.currentUser.displayName))
+      .slice(0, 8)
+      .map(({ currentUser }) => ({
+        id: currentUser.id,
+        type: "staff",
+        heading: currentUser.displayName,
+        details: [currentUser.email, formatSearchRoleLabel(currentUser.role), currentUser.staffStatus?.trim() || "Active"].join(" - "),
+        actionHref: "/dashboard/admin/users",
+        actionLabel: "Open staff management",
+        detail: {
+          title: "Staff details",
+          fields: [
+            { label: "Name", value: currentUser.displayName },
+            { label: "Email", value: currentUser.email },
+            { label: "Role", value: formatSearchRoleLabel(currentUser.role) },
+            { label: "Department / Unit", value: currentUser.departmentId ?? currentUser.designation ?? "Not assigned" },
+            { label: "Status", value: currentUser.staffStatus?.trim() || "Active" },
+          ],
+        },
+      }));
+
+    if (staffItems.length > 0) {
+      groups.push({ title: "Staff", items: staffItems });
+    }
+  }
+
+  const invoiceItems = scopedState.invoices
+    .map((invoice) => ({
+      invoice,
+      score: rank(
+        [invoice.invoiceNumber, invoice.patientName],
+        { exactFirst: [invoice.invoiceNumber], startsFirst: [invoice.invoiceNumber, invoice.patientName] },
+      ),
+    }))
+    .filter((entry) => entry.score < 99)
+    .sort((left, right) => left.score - right.score || right.invoice.createdAt.localeCompare(left.invoice.createdAt))
+    .slice(0, 8)
+    .map(({ invoice }) => ({
+      id: invoice.id,
+      type: "invoice",
+      heading: `${invoice.invoiceNumber} - ${invoice.patientName}`,
+      details: `${invoice.paymentStatus} - INR ${(invoice.totalCents / 100).toFixed(2)}`,
+      actionHref:
+        user.role === "patient" ? "/dashboard/patient/billing" : "/dashboard/admin/billing",
+      actionLabel: "Open billing",
+      detail: {
+        title: "Invoice details",
+        fields: [
+          { label: "Invoice number", value: invoice.invoiceNumber },
+          { label: "Patient", value: invoice.patientName },
+          { label: "Status", value: invoice.paymentStatus },
+          { label: "Total", value: `INR ${(invoice.totalCents / 100).toFixed(2)}` },
+          { label: "Amount due", value: `INR ${(invoice.amountDueCents / 100).toFixed(2)}` },
+        ],
+      },
+    }));
+
+  if (invoiceItems.length > 0) {
+    groups.push({ title: "Invoices", items: invoiceItems });
+  }
+
+  if (user.role === "administrator" || user.role === "doctor" || user.role === "pharmacist") {
+    const medicineItems = scopedState.inventoryItems
+      .map((item) => ({
+        item,
+        score: rank(
+          [item.medicineName, item.genericName ?? "", item.batchNumber, item.unit],
+          { exactFirst: [item.medicineName, item.genericName ?? ""], startsFirst: [item.medicineName, item.genericName ?? ""] },
+        ),
+      }))
+      .filter((entry) => entry.score < 99)
+      .sort((left, right) => left.score - right.score || left.item.medicineName.localeCompare(right.item.medicineName))
+      .slice(0, 8)
+      .map(({ item }) => ({
+        id: item.id,
+        type: "medicine",
+        heading: item.medicineName,
+        details: [
+          item.unit,
+          `${item.quantityInStock} available`,
+          `INR ${(item.unitPriceCents / 100).toFixed(2)} / ${item.unit}`,
+        ].join(" - "),
+        actionHref:
+          user.role === "pharmacist" ? "/dashboard/pharmacy/inventory" : "/dashboard/admin/billing",
+        actionLabel: user.role === "pharmacist" ? "Open inventory" : "Open workspace",
+        detail: {
+          title: "Medicine details",
+          fields: [
+            { label: "Medicine", value: item.medicineName },
+            { label: "Generic name", value: item.genericName ?? "Not provided" },
+            { label: "Strength / form", value: item.unit },
+            { label: "Current available stock", value: `${item.quantityInStock} ${item.unit}` },
+            { label: "Unit price", value: `INR ${(item.unitPriceCents / 100).toFixed(2)} / ${item.unit}` },
+            { label: "Batch number", value: item.batchNumber },
+            { label: "Nearest expiry", value: item.expiryDate },
+          ],
+        },
+      }));
+
+    if (medicineItems.length > 0) {
+      groups.push({ title: "Medicines", items: medicineItems });
+    }
+  }
+
+  return { groups };
 }

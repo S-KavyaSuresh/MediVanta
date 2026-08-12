@@ -3,8 +3,10 @@ import type { Capability, UserRole } from "../domain/types.js";
 export const roleCapabilities: Record<UserRole, Capability[]> = {
   patient: [
     "appointment:create",
+    "appointment:update",
     "appointment:cancel",
     "appointment:view",
+    "search:view",
     "lab-request:create",
     "health-records:view",
     "prescriptions:view",
@@ -14,9 +16,14 @@ export const roleCapabilities: Record<UserRole, Capability[]> = {
     "payment:record",
     "profile:view",
     "profile:update",
+    "family-member:manage",
+    "medical-history:create",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
   doctor: [
     "appointment:view",
+    "search:view",
     "queue:view",
     "doctor:view",
     "department:view",
@@ -30,6 +37,8 @@ export const roleCapabilities: Record<UserRole, Capability[]> = {
     "notifications:view",
     "profile:view",
     "profile:update",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
   laboratory: [
     "laboratory:view",
@@ -69,6 +78,7 @@ export const roleCapabilities: Record<UserRole, Capability[]> = {
     "profile:view",
     "profile:update",
     "operations:view",
+    "family-member:manage",
   ],
   administrator: [
     "appointment:create",
@@ -93,6 +103,10 @@ export const roleCapabilities: Record<UserRole, Capability[]> = {
     "profile:view",
     "profile:update",
     "operations:view",
+    "family-member:manage",
+    "medical-history:create",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
 };
 

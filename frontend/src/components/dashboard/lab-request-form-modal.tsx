@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import type {
   BookingCapacityRecord,
+  FamilyMemberRecord,
   HospitalState,
   LabSlotLoadRecord,
   LabRequestDraft,
@@ -23,6 +24,8 @@ type LabRequestFormModalProps = {
   labSlotLoads: LabSlotLoadRecord[];
   labTests: LabTestRecord[];
   existingRequests: LabRequestRecord[];
+  patientName: string;
+  familyMembers?: FamilyMemberRecord[];
   onClose: () => void;
   onSubmit: (
     draft: LabRequestDraft,
@@ -46,6 +49,8 @@ export function LabRequestFormModal({
   labSlotLoads,
   labTests,
   existingRequests,
+  patientName,
+  familyMembers = [],
   onClose,
   onSubmit,
 }: LabRequestFormModalProps) {
@@ -138,6 +143,29 @@ export function LabRequestFormModal({
           }
         }}
       >
+        <div>
+          <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+            Request for
+          </label>
+          <Select
+            aria-label="Request for"
+            value={draft.familyMemberId ?? "self"}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                familyMemberId: event.target.value === "self" ? undefined : event.target.value,
+              }))
+            }
+          >
+            <option value="self">{patientName}</option>
+            {familyMembers.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.fullName} - {member.relationship}
+              </option>
+            ))}
+          </Select>
+        </div>
+
         <div>
           <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
             Hospital

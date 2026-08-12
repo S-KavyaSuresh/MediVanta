@@ -22,7 +22,7 @@ function getSlotTimeValue(value: string) {
 }
 
 function isCapacityConsumingAppointment(status: AppointmentStatus) {
-  return status !== "Cancelled";
+  return status !== "Cancelled" && status !== "No Show";
 }
 
 function isCapacityConsumingLabRequest(status: LabRequestStatus) {
@@ -237,6 +237,46 @@ export function isPastLocalTimeSlot(date: string, time: string, now = new Date()
   return getSlotTimeValue(time) <= getCurrentLocalTimeValue(now);
 }
 
+export function getTelemedicineJoinAvailability(
+  appointment: Pick<AppointmentRecord, "appointmentDate" | "appointmentTime" | "consultationMode" | "status">,
+  now = new Date(),
+) {
+  if (appointment.consultationMode !== "Online") {
+    return {
+      allowed: false,
+      reason: "Only online appointments can be joined.",
+    };
+  }
+
+  if (appointment.status === "Cancelled" || appointment.status === "Completed") {
+    return {
+      allowed: false,
+      reason: "This consultation is no longer available.",
+    };
+  }
+
+  const scheduledAt = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}:00`);
+  if (Number.isNaN(scheduledAt.getTime())) {
+    return {
+      allowed: false,
+      reason: "This consultation is not available yet.",
+    };
+  }
+
+  const opensAt = scheduledAt.getTime() - 10 * 60 * 1000;
+  if (now.getTime() < opensAt) {
+    return {
+      allowed: false,
+      reason: "Available 10 minutes before the appointment.",
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "",
+  };
+}
+
 export function formatPrescriptionMedicineName(
   medicine: Pick<PrescriptionMedicineRecord, "medicineName" | "strength">,
 ) {
@@ -283,7 +323,8 @@ export type AppointmentStatus =
   | "Checked in"
   | "In consultation"
   | "Completed"
-  | "Cancelled";
+  | "Cancelled"
+  | "No Show";
 
 export type QueueStatus = "Waiting" | "Called" | "In consultation" | "Completed";
 
@@ -338,11 +379,13 @@ export type AppointmentRecord = {
   id: string;
   patientId?: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   departmentId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
+  consultationMode?: "In Person" | "Online";
   status: AppointmentStatus;
 };
 
@@ -382,6 +425,7 @@ export type LabRequestRecord = {
   hospitalId?: string;
   organizationId?: string;
   patientName: string;
+  familyMemberId?: string;
   testId: string;
   testName: string;
   departmentId: string;
@@ -404,6 +448,7 @@ export type LabReportRecord = {
   patientId: string;
   hospitalId: string;
   organizationId: string;
+  familyMemberId?: string;
   testName: string;
   reportTitle: string;
   resultSummary: string;
@@ -419,6 +464,7 @@ export type MedicalRecordRecord = {
   id: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   doctorName: string;
   appointmentId?: string;
@@ -451,6 +497,7 @@ export type PrescriptionRecord = {
   id: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   doctorName: string;
   hospitalId: string;
@@ -458,6 +505,7 @@ export type PrescriptionRecord = {
   appointmentId?: string;
   medicines: PrescriptionMedicineRecord[];
   instructions: string;
+  followUpDate?: string;
   status: PrescriptionStatus;
   createdAt: string;
   dispensedAt?: string;
@@ -500,6 +548,7 @@ export type InvoiceRecord = {
   invoiceNumber: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   organizationId: string;
   hospitalId: string;
   sourceType?: "appointment" | "lab-request" | "prescription";
@@ -542,6 +591,84 @@ export type NotificationRecord = {
   relatedEntityType?: string;
   relatedEntityId?: string;
   read: boolean;
+  createdAt: string;
+};
+
+export type FamilyMemberRecord = {
+  id: string;
+  organizationId: string;
+  primaryPatientUserId: string;
+  fullName: string;
+  relationship: string;
+  dateOfBirth?: string;
+  gender?: string;
+  bloodGroup?: string;
+  phoneNumber?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  allergies?: string;
+  medicalConditions?: string;
+  preferredLanguage?: string;
+  status: "Active" | "Inactive";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MedicalHistoryEntryCategory = "Vaccination" | "Surgery";
+
+export type MedicalHistoryEntryRecord = {
+  id: string;
+  organizationId: string;
+  patientUserId: string;
+  familyMemberId?: string;
+  category: MedicalHistoryEntryCategory;
+  title: string;
+  details?: string;
+  recordedDate: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type ClinicalAttachmentRecord = {
+  id: string;
+  organizationId: string;
+  patientUserId: string;
+  familyMemberId?: string;
+  medicalRecordId?: string;
+  label: string;
+  fileName: string;
+  contentType: "application/pdf" | "image/png" | "image/jpeg";
+  fileSize: number;
+  contentBase64?: string;
+  uploadedByUserId: string;
+  uploadedByName: string;
+  createdAt: string;
+};
+
+export type TelemedicineSessionStatus = "Scheduled" | "Live" | "Ended";
+
+export type TelemedicineSessionRecord = {
+  id: string;
+  organizationId: string;
+  appointmentId: string;
+  patientUserId: string;
+  doctorUserId: string;
+  familyMemberId?: string;
+  status: TelemedicineSessionStatus;
+  startedAt?: string;
+  endedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TelemedicineMessageRecord = {
+  id: string;
+  sessionId: string;
+  organizationId: string;
+  senderUserId: string;
+  senderName: string;
+  message: string;
   createdAt: string;
 };
 
@@ -603,22 +730,29 @@ export type HospitalState = {
   invoices: InvoiceRecord[];
   inventoryItems: InventoryItemRecord[];
   notifications: NotificationRecord[];
+  familyMembers?: FamilyMemberRecord[];
+  medicalHistoryEntries?: MedicalHistoryEntryRecord[];
+  clinicalAttachments?: ClinicalAttachmentRecord[];
+  telemedicineSessions?: TelemedicineSessionRecord[];
   bookingCapacity: BookingCapacityRecord;
   configuredSupportLines: number;
 };
 
 export type AppointmentDraft = {
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
+  consultationMode?: "In Person" | "Online";
 };
 
 export type LabRequestDraft = {
   testId: string;
   requestedDate: string;
   requestedTime: string;
+  familyMemberId?: string;
 };
 
 export type LabReportDraft = {
@@ -634,6 +768,7 @@ export type MedicalRecordDraft = {
   diagnosis: string;
   clinicalNotes: string;
   treatmentAdvice: string;
+  familyMemberId?: string;
 };
 
 export type PrescriptionMedicineDraft = {
@@ -654,8 +789,10 @@ export type PrescriptionMedicineDraft = {
 export type PrescriptionDraft = {
   patientId: string;
   appointmentId?: string;
+  familyMemberId?: string;
   medicines: PrescriptionMedicineDraft[];
   instructions: string;
+  followUpDate?: string;
 };
 
 export type PaymentDraft = {
@@ -674,6 +811,38 @@ export type InventoryItemDraft = {
   expiryDate: string;
   reorderLevel: number;
   manufacturer?: string;
+};
+
+export type FamilyMemberDraft = {
+  fullName: string;
+  relationship: string;
+  dateOfBirth?: string;
+  gender?: string;
+  bloodGroup?: string;
+  phoneNumber?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  allergies?: string;
+  medicalConditions?: string;
+  preferredLanguage?: string;
+};
+
+export type MedicalHistoryEntryDraft = {
+  category: MedicalHistoryEntryCategory;
+  title: string;
+  details?: string;
+  recordedDate: string;
+  familyMemberId?: string;
+};
+
+export type ClinicalAttachmentDraft = {
+  label: string;
+  fileName: string;
+  contentType: "application/pdf" | "image/png" | "image/jpeg";
+  fileSize: number;
+  contentBase64: string;
+  familyMemberId?: string;
+  medicalRecordId?: string;
 };
 
 export type HospitalSettingsDraft = {
@@ -881,6 +1050,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "09:30",
     reasonForAppointment: "Stable hypertension follow-up",
+    consultationMode: "In Person",
     status: "Checked in",
   },
   {
@@ -891,6 +1061,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:00",
     reasonForAppointment: "Diagnostic imaging review",
+    consultationMode: "In Person",
     status: "In consultation",
   },
   {
@@ -901,6 +1072,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "10:45",
     reasonForAppointment: "General fever follow-up",
+    consultationMode: "In Person",
     status: "Completed",
   },
   {
@@ -912,6 +1084,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "11:15",
     reasonForAppointment: "Persistent fever",
+    consultationMode: "Online",
     status: "Scheduled",
   },
   {
@@ -922,6 +1095,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: DEMO_REFERENCE_DATE,
     appointmentTime: "12:10",
     reasonForAppointment: "Knee pain review",
+    consultationMode: "In Person",
     status: "Scheduled",
   },
   {
@@ -932,6 +1106,7 @@ const appointmentsSeed: AppointmentRecord[] = [
     appointmentDate: "2026-08-10",
     appointmentTime: "14:00",
     reasonForAppointment: "Headache and dizziness",
+    consultationMode: "In Person",
     status: "Scheduled",
   },
 ];
@@ -1115,12 +1290,20 @@ export const defaultBookingCapacity: BookingCapacityRecord = {
 export function normalizeHospitalState(state: HospitalState): HospitalState {
   return {
     ...state,
+    appointments: (state.appointments ?? appointmentsSeed).map((appointment) => ({
+      ...appointment,
+      consultationMode: appointment.consultationMode ?? "In Person",
+    })),
     medicineCatalog: state.medicineCatalog ?? [],
     medicalRecords: state.medicalRecords ?? medicalRecordsSeed,
     prescriptions: state.prescriptions ?? prescriptionsSeed,
     invoices: state.invoices ?? [],
     inventoryItems: state.inventoryItems ?? [],
     notifications: state.notifications ?? [],
+    familyMembers: state.familyMembers ?? [],
+    medicalHistoryEntries: state.medicalHistoryEntries ?? [],
+    clinicalAttachments: state.clinicalAttachments ?? [],
+    telemedicineSessions: state.telemedicineSessions ?? [],
     bookingCapacity: state.bookingCapacity ?? defaultBookingCapacity,
   };
 }
@@ -1145,6 +1328,10 @@ export function createInitialHospitalState(): HospitalState {
     invoices: [],
     inventoryItems: [],
     notifications: [],
+    familyMembers: [],
+    medicalHistoryEntries: [],
+    clinicalAttachments: [],
+    telemedicineSessions: [],
     bookingCapacity: structuredClone(defaultBookingCapacity),
     configuredSupportLines: 9,
   };

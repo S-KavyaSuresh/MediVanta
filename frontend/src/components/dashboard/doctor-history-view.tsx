@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { PrescriptionViewModal } from "@/components/dashboard/prescription-view-modal";
+import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { apiRequest } from "@/lib/api";
 import {
   formatPrescriptionDose,
@@ -50,6 +52,7 @@ function formatVisitDate(value: string) {
 }
 
 export function DoctorHistoryView() {
+  const { state } = useHospitalData();
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab");
   const initialTab: HistoryTab =
@@ -75,6 +78,7 @@ export function DoctorHistoryView() {
     totalItems: 0,
     totalPages: 1,
   });
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +119,8 @@ export function DoctorHistoryView() {
     () => (activeTab === "medical-records" ? records : prescriptions),
     [activeTab, prescriptions, records],
   );
+  const selectedPrescription =
+    prescriptions.items.find((prescription) => prescription.id === selectedPrescriptionId) ?? null;
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -219,6 +225,15 @@ export function DoctorHistoryView() {
                         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                           {record.diagnosis} - {formatVisitDate(record.visitDate)}
                         </p>
+                        {record.familyMemberId ? (
+                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                            Family member visit
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                            Primary patient visit
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
                           Created {formatDateTime(record.createdAt)}
                         </p>
@@ -240,8 +255,27 @@ export function DoctorHistoryView() {
                         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                           {formatDateTime(prescription.createdAt)}
                         </p>
+                        {prescription.followUpDate ? (
+                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                            Follow-up {prescription.followUpDate}
+                          </p>
+                        ) : null}
+                        {prescription.familyMemberId ? (
+                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                            Family member: {state.familyMembers?.find((member) => member.id === prescription.familyMemberId)?.fullName ?? prescription.patientName}
+                          </p>
+                        ) : null}
                       </div>
                       <StatusBadge status={prescription.status} />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setSelectedPrescriptionId(prescription.id)}
+                      >
+                        View Prescription
+                      </Button>
                     </div>
                     <div className="mt-3 space-y-2">
                       {prescription.medicines.map((medicine, index) => (
@@ -292,6 +326,15 @@ export function DoctorHistoryView() {
           </div>
         </div>
       </Card>
+
+      <PrescriptionViewModal
+        open={Boolean(selectedPrescription)}
+        prescription={selectedPrescription}
+        organizationName={state.organization.name}
+        familyMembers={state.familyMembers}
+        doctors={state.doctors}
+        onClose={() => setSelectedPrescriptionId(null)}
+      />
     </div>
   );
 }

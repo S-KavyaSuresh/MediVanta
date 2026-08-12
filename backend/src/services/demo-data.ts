@@ -320,6 +320,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "09:30",
         reasonForAppointment: "Stable hypertension follow-up",
+        consultationMode: "In Person",
         status: "Checked in",
       },
       {
@@ -331,6 +332,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:00",
         reasonForAppointment: "Diagnostic imaging review",
+        consultationMode: "In Person",
         status: "In consultation",
       },
       {
@@ -342,6 +344,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "10:45",
         reasonForAppointment: "General fever follow-up",
+        consultationMode: "In Person",
         status: "Completed",
       },
       {
@@ -354,6 +357,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "11:15",
         reasonForAppointment: "Persistent fever",
+        consultationMode: "Online",
         status: "Scheduled",
       },
       {
@@ -365,6 +369,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: DEMO_REFERENCE_DATE,
         appointmentTime: "12:10",
         reasonForAppointment: "Knee pain review",
+        consultationMode: "In Person",
         status: "Scheduled",
       },
       {
@@ -376,6 +381,7 @@ export function createDemoHospitalState(): HospitalState {
         appointmentDate: "2026-08-10",
         appointmentTime: "14:00",
         reasonForAppointment: "Headache and dizziness",
+        consultationMode: "In Person",
         status: "Scheduled",
       },
     ],
@@ -699,6 +705,10 @@ export function createDemoHospitalState(): HospitalState {
         createdAt: "2026-08-09T12:30:00.000Z",
       },
     ],
+    familyMembers: [],
+    medicalHistoryEntries: [],
+    clinicalAttachments: [],
+    telemedicineSessions: [],
     bookingCapacity: { ...demoBookingCapacity, sessions: [...demoBookingCapacity.sessions] },
     configuredSupportLines: 9,
   };

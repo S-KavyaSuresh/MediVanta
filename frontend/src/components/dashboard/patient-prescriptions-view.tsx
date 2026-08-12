@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
+import { PrescriptionViewModal } from "@/components/dashboard/prescription-view-modal";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -25,6 +27,7 @@ function formatDateTime(value: string) {
 
 export function PatientPrescriptionsView() {
   const { state } = useHospitalData();
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState<string | null>(null);
   const prescriptions = useMemo(
     () =>
       [...state.prescriptions].sort(
@@ -32,6 +35,8 @@ export function PatientPrescriptionsView() {
       ),
     [state.prescriptions],
   );
+  const selectedPrescription =
+    prescriptions.find((prescription) => prescription.id === selectedPrescriptionId) ?? null;
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -51,8 +56,30 @@ export function PatientPrescriptionsView() {
                   <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                     Issued {formatDateTime(prescription.createdAt)}
                   </p>
+                  {prescription.followUpDate ? (
+                    <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                      Follow-up {prescription.followUpDate}
+                    </p>
+                  ) : null}
+                  {prescription.familyMemberId ? (
+                    <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                      For{" "}
+                      {state.familyMembers?.find((member) => member.id === prescription.familyMemberId)
+                        ?.fullName ?? prescription.patientName}
+                    </p>
+                  ) : null}
                 </div>
                 <StatusBadge status={prescription.status} />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setSelectedPrescriptionId(prescription.id)}
+                >
+                  View Prescription
+                </Button>
               </div>
 
               <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
@@ -99,6 +126,15 @@ export function PatientPrescriptionsView() {
           description="Prescriptions issued to your account will appear here after your doctor creates them."
         />
       )}
+
+      <PrescriptionViewModal
+        open={Boolean(selectedPrescription)}
+        prescription={selectedPrescription}
+        organizationName={state.organization.name}
+        familyMembers={state.familyMembers}
+        doctors={state.doctors}
+        onClose={() => setSelectedPrescriptionId(null)}
+      />
     </div>
   );
 }

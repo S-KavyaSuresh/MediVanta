@@ -33,7 +33,11 @@ export function AuthProvider({
         setSession(normalizeAuthSession(nextSession));
       },
       logout: async () => {
-        await apiRequest("/api/auth/logout", { method: "POST" });
+        try {
+          await apiRequest("/api/auth/logout", { method: "POST" });
+        } catch {
+          // Clear local auth state even when the backend is temporarily unavailable.
+        }
         setSession((current) => ({
           ...current,
           permissions: [],

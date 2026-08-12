@@ -129,6 +129,11 @@ export function DoctorRecordsView() {
           new Date(right.report.uploadedAt).getTime() - new Date(left.report.uploadedAt).getTime(),
       );
   }, [state.labReports, state.labRequests]);
+  const familyMemberNameById = useMemo(
+    () =>
+      new Map((state.familyMembers ?? []).map((member) => [member.id, member.fullName] as const)),
+    [state.familyMembers],
+  );
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -340,6 +345,11 @@ export function DoctorRecordsView() {
                         <div className="min-w-0">
                           <p className="text-base font-semibold">{record.patientName}</p>
                           <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                            {record.familyMemberId
+                              ? `Family member: ${familyMemberNameById.get(record.familyMemberId) ?? record.patientName}`
+                              : "Primary patient record"}
+                          </p>
+                          <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                             {record.diagnosis} · {formatVisitDate(record.visitDate)}
                           </p>
                           <p className="mt-1 text-xs text-[color:var(--muted-foreground)]">
@@ -512,6 +522,12 @@ export function DoctorRecordsView() {
                     className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
                   >
                     <p className="font-semibold">{report.testName}</p>
+                    {report.familyMemberId ? (
+                      <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                        Family member:{" "}
+                        {familyMemberNameById.get(report.familyMemberId) ?? request?.patientName}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                       {request?.patientName ?? "Linked patient"} ·{" "}
                       {new Intl.DateTimeFormat("en-GB", {

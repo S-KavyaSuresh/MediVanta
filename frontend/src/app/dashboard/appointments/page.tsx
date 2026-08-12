@@ -63,8 +63,16 @@ export default function AppointmentsPage() {
           const leftKey = `${left.appointmentDate}T${left.appointmentTime}`;
           const rightKey = `${right.appointmentDate}T${right.appointmentTime}`;
           const today = getCurrentLocalDateIso();
-          const leftIsUpcoming = left.appointmentDate >= today && left.status !== "Completed" && left.status !== "Cancelled";
-          const rightIsUpcoming = right.appointmentDate >= today && right.status !== "Completed" && right.status !== "Cancelled";
+          const leftIsUpcoming =
+            left.appointmentDate >= today &&
+            left.status !== "Completed" &&
+            left.status !== "Cancelled" &&
+            left.status !== "No Show";
+          const rightIsUpcoming =
+            right.appointmentDate >= today &&
+            right.status !== "Completed" &&
+            right.status !== "Cancelled" &&
+            right.status !== "No Show";
 
           if (leftIsUpcoming !== rightIsUpcoming) {
             return leftIsUpcoming ? -1 : 1;
@@ -233,7 +241,7 @@ export default function AppointmentsPage() {
       <div className="max-w-xs">
         <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
           <option value="all">All statuses</option>
-          {["Scheduled", "Checked in", "In consultation", "Completed", "Cancelled"].map((status) => (
+          {["Scheduled", "Checked in", "In consultation", "Completed", "Cancelled", "No Show"].map((status) => (
             <option key={status} value={status}>
               {status}
             </option>

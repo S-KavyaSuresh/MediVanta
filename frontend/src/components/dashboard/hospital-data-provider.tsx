@@ -12,7 +12,10 @@ import { apiRequest } from "@/lib/api";
 import {
   type AppointmentSlotLoadRecord,
   type LabSlotLoadRecord,
+  type FamilyMemberDraft,
   type MedicalRecordDraft,
+  type MedicalHistoryEntryDraft,
+  type ClinicalAttachmentDraft,
   type InventoryItemDraft,
   type PrescriptionDraft,
   type PaymentDraft,
@@ -47,6 +50,7 @@ type HospitalMeta = {
   userCounts?: Record<UserRole, number>;
   users?: SafeUser[];
   patientProfiles?: SafeUser[];
+  doctorProfiles?: SafeUser[];
   appointmentSlotLoads?: AppointmentSlotLoadRecord[];
   labSlotLoads?: LabSlotLoadRecord[];
 };
@@ -64,6 +68,10 @@ type HospitalMutationPatch = {
   invoices?: HospitalState["invoices"];
   inventoryItems?: HospitalState["inventoryItems"];
   notifications?: HospitalState["notifications"];
+  familyMembers?: HospitalState["familyMembers"];
+  medicalHistoryEntries?: HospitalState["medicalHistoryEntries"];
+  clinicalAttachments?: HospitalState["clinicalAttachments"];
+  telemedicineSessions?: HospitalState["telemedicineSessions"];
   meta?: HospitalMeta;
 };
 
@@ -131,7 +139,36 @@ type HospitalContextValue = {
     message?: string;
     fieldErrors?: Record<string, string>;
   }>;
+  createFamilyMember: (draft: FamilyMemberDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  updateFamilyMember: (familyMemberId: string, draft: FamilyMemberDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  unlinkFamilyMember: (familyMemberId: string) => Promise<{ ok: boolean; message?: string }>;
+  createMedicalHistoryEntry: (draft: MedicalHistoryEntryDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  createClinicalAttachment: (draft: ClinicalAttachmentDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
   createPrescription: (draft: PrescriptionDraft) => Promise<{
+    ok: boolean;
+    message?: string;
+    fieldErrors?: Record<string, string>;
+  }>;
+  updatePrescription: (
+    prescriptionId: string,
+    draft: PrescriptionDraft,
+  ) => Promise<{
     ok: boolean;
     message?: string;
     fieldErrors?: Record<string, string>;
@@ -246,6 +283,19 @@ export function HospitalDataProvider({
           invoices: mergeById(current.invoices, response.patch?.invoices),
           inventoryItems: mergeById(current.inventoryItems, response.patch?.inventoryItems),
           notifications: mergeById(current.notifications, response.patch?.notifications),
+          familyMembers: mergeById(current.familyMembers ?? [], response.patch?.familyMembers),
+          medicalHistoryEntries: mergeById(
+            current.medicalHistoryEntries ?? [],
+            response.patch?.medicalHistoryEntries,
+          ),
+          clinicalAttachments: mergeById(
+            current.clinicalAttachments ?? [],
+            response.patch?.clinicalAttachments,
+          ),
+          telemedicineSessions: mergeById(
+            current.telemedicineSessions ?? [],
+            response.patch?.telemedicineSessions,
+          ),
         }),
       );
     }
@@ -462,6 +512,98 @@ export function HospitalDataProvider({
     [updateFromResponse],
   );
 
+  const createFamilyMember = useCallback(
+    async (draft: FamilyMemberDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/family-members", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateFamilyMember = useCallback(
+    async (familyMemberId: string, draft: FamilyMemberDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/family-members/${familyMemberId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const unlinkFamilyMember = useCallback(
+    async (familyMemberId: string) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/family-members/${familyMemberId}`,
+          {
+            method: "DELETE",
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : "Unable to update this family member.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createMedicalHistoryEntry = useCallback(
+    async (draft: MedicalHistoryEntryDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/medical-history", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createClinicalAttachment = useCallback(
+    async (draft: ClinicalAttachmentDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/clinical-attachments", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
   const createPrescription = useCallback(
     async (draft: PrescriptionDraft) => {
       try {
@@ -469,6 +611,30 @@ export function HospitalDataProvider({
           method: "POST",
           body: JSON.stringify(draft),
         });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updatePrescription = useCallback(
+    async (prescriptionId: string, draft: PrescriptionDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/prescriptions/${prescriptionId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
         updateFromResponse(response);
         return { ok: true };
       } catch (error) {
@@ -804,7 +970,13 @@ export function HospitalDataProvider({
       createMedicalRecord,
       updateMedicalRecord,
       createPatientProfile,
+      createFamilyMember,
+      updateFamilyMember,
+      unlinkFamilyMember,
+      createMedicalHistoryEntry,
+      createClinicalAttachment,
       createPrescription,
+      updatePrescription,
       updateHospitalSettings,
       dispensePrescription,
       recordInvoicePayment,
@@ -834,7 +1006,13 @@ export function HospitalDataProvider({
       createMedicalRecord,
       updateMedicalRecord,
       createPatientProfile,
+      createFamilyMember,
+      updateFamilyMember,
+      unlinkFamilyMember,
+      createMedicalHistoryEntry,
+      createClinicalAttachment,
       createPrescription,
+      updatePrescription,
       updateHospitalSettings,
       dispensePrescription,
       recordInvoicePayment,

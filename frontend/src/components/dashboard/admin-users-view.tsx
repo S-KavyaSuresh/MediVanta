@@ -55,7 +55,28 @@ export function AdminUsersView() {
   const { pushToast } = useToast();
   const [modalOpen, setModalOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [selectedRole, setSelectedRole] =
+    useState<(typeof supportedRoles)[number]>("doctor");
   const users = (meta?.users ?? []).filter((user) => user.role !== "patient");
+  const departmentOptions = state.departments.filter((department) => {
+    if (selectedRole === "doctor") {
+      return department.id !== "dept-laboratory";
+    }
+
+    if (selectedRole === "laboratory") {
+      return department.id === "dept-laboratory";
+    }
+
+    return true;
+  });
+  const departmentLabel =
+    selectedRole === "doctor"
+      ? "Department"
+      : selectedRole === "receptionist"
+        ? "Department / Desk"
+        : selectedRole === "laboratory"
+          ? "Laboratory / Department"
+          : "Pharmacy / Department";
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -167,6 +188,7 @@ export function AdminUsersView() {
         onClose={() => {
           setModalOpen(false);
           setFieldErrors({});
+          setSelectedRole("doctor");
         }}
         title="Add staff"
         description="Create a hospital staff account with the appropriate role and department."
@@ -209,7 +231,13 @@ export function AdminUsersView() {
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium">Role</label>
-            <Select name="role" defaultValue="doctor">
+            <Select
+              name="role"
+              value={selectedRole}
+              onChange={(event) =>
+                setSelectedRole(event.target.value as (typeof supportedRoles)[number])
+              }
+            >
               <option value="doctor">Doctor</option>
               <option value="receptionist">Receptionist</option>
               <option value="laboratory">Laboratory Staff</option>
@@ -217,10 +245,16 @@ export function AdminUsersView() {
             </Select>
           </div>
           <div>
-            <label className="mb-2 block text-sm font-medium">Department</label>
+            <label className="mb-2 block text-sm font-medium">{departmentLabel}</label>
             <Select name="departmentId" defaultValue="">
-              <option value="">Select department where applicable</option>
-              {state.departments.map((department) => (
+              <option value="">
+                {selectedRole === "receptionist"
+                  ? "Select reception or operational unit"
+                  : selectedRole === "pharmacist"
+                    ? "Select pharmacy unit where applicable"
+                    : "Select department where applicable"}
+              </option>
+              {departmentOptions.map((department) => (
                 <option key={department.id} value={department.id}>
                   {department.name}
                 </option>
@@ -228,11 +262,13 @@ export function AdminUsersView() {
             </Select>
             {fieldErrors.departmentId ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.departmentId}</p> : null}
           </div>
-          <div>
-            <label className="mb-2 block text-sm font-medium">Specialization</label>
-            <Input name="specialization" placeholder="Required for doctors" />
-            {fieldErrors.specialization ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.specialization}</p> : null}
-          </div>
+          {selectedRole === "doctor" ? (
+            <div>
+              <label className="mb-2 block text-sm font-medium">Specialization</label>
+              <Input name="specialization" placeholder="Cardiology, Pediatrics, General Medicine" />
+              {fieldErrors.specialization ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.specialization}</p> : null}
+            </div>
+          ) : null}
           <div>
             <label className="mb-2 block text-sm font-medium">Status</label>
             <Select name="status" defaultValue="Active">

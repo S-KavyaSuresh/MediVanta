@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { SafeUser } from "@/lib/auth";
 import {
   type AppointmentSlotLoadRecord,
   type BookingCapacityRecord,
@@ -25,6 +26,7 @@ import {
   type AppointmentRecord,
   type DepartmentRecord,
   type DoctorRecord,
+  type FamilyMemberRecord,
 } from "@/lib/hospital-data";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +40,8 @@ type AppointmentFormModalProps = {
   appointments: AppointmentRecord[];
   initialAppointment?: AppointmentRecord | null;
   patientName?: string;
+  familyMembers?: FamilyMemberRecord[];
+  doctorProfiles?: SafeUser[];
   patientMode?: boolean;
   onClose: () => void;
   onSubmit: (
@@ -55,6 +59,7 @@ const emptyDraft: AppointmentDraft = {
   appointmentDate: "",
   appointmentTime: "",
   reasonForAppointment: "",
+  consultationMode: "In Person",
 };
 
 const weekdayLabels = [
@@ -98,10 +103,12 @@ function getDraftFromAppointment(initialAppointment?: AppointmentRecord | null):
 
   return {
     patientName: initialAppointment.patientName,
+    familyMemberId: initialAppointment.familyMemberId,
     doctorId: initialAppointment.doctorId,
     appointmentDate: initialAppointment.appointmentDate,
     appointmentTime: initialAppointment.appointmentTime,
     reasonForAppointment: initialAppointment.reasonForAppointment,
+    consultationMode: initialAppointment.consultationMode ?? "In Person",
   };
 }
 
@@ -459,6 +466,8 @@ export function AppointmentFormModal({
   appointments,
   initialAppointment,
   patientName,
+  familyMembers = [],
+  doctorProfiles = [],
   patientMode = false,
   onClose,
   onSubmit,
@@ -477,16 +486,67 @@ export function AppointmentFormModal({
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(
     initialAppointment?.departmentId ?? "",
   );
+  const [languageFilter, setLanguageFilter] = useState("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState("all");
+
+  const doctorProfileMap = useMemo(
+    () =>
+      new Map(
+        doctorProfiles
+          .filter((profile) => profile.role === "doctor")
+          .map((profile) => [profile.doctorId ?? "", profile] as const),
+      ),
+    [doctorProfiles],
+  );
+
+  const availableLanguages = useMemo(
+    () =>
+      [...new Set(
+        doctorProfiles
+          .flatMap((profile) =>
+            (profile.languages ?? "")
+              .split(",")
+              .map((language) => language.trim())
+              .filter(Boolean),
+          ),
+      )].sort((left, right) => left.localeCompare(right)),
+    [doctorProfiles],
+  );
 
   const visibleDoctors = useMemo(
-    () =>
-      patientMode && selectedDepartmentId
-        ? doctors.filter((doctor) => doctor.departmentId === selectedDepartmentId)
-        : doctors,
-    [doctors, patientMode, selectedDepartmentId],
+    () => {
+      return doctors.filter((doctor) => {
+        const profile = doctorProfileMap.get(doctor.id);
+        const matchesDepartment = patientMode ? !selectedDepartmentId || doctor.departmentId === selectedDepartmentId : true;
+        const matchesLanguage =
+          languageFilter === "all" ||
+          (profile?.languages ?? "")
+            .toLowerCase()
+            .split(",")
+            .map((language) => language.trim())
+            .includes(languageFilter.toLowerCase());
+        const matchesAvailability =
+          availabilityFilter === "all" ||
+          (availabilityFilter === "on-duty"
+            ? doctor.status !== "Off duty"
+            : profile?.consultationMode?.toLowerCase().includes("video") ||
+              profile?.consultationMode?.toLowerCase().includes("online"));
+
+        return matchesDepartment && matchesLanguage && matchesAvailability;
+      });
+    },
+    [
+      availabilityFilter,
+      doctorProfileMap,
+      doctors,
+      languageFilter,
+      patientMode,
+      selectedDepartmentId,
+    ],
   );
 
   const selectedDoctor = doctors.find((doctor) => doctor.id === draft.doctorId);
+  const selectedDoctorProfile = selectedDoctor ? doctorProfileMap.get(selectedDoctor.id) : undefined;
   const unavailableTimeSlots = useMemo(() => {
     if (!draft.doctorId || !draft.appointmentDate) {
       return new Set<string>();
@@ -600,7 +660,10 @@ export function AppointmentFormModal({
         onSubmit={async (event) => {
           event.preventDefault();
           setSubmitting(true);
-          const result = await onSubmit(draft);
+          const result = await onSubmit({
+            ...draft,
+            consultationMode: draft.consultationMode ?? "In Person",
+          });
           setSubmitting(false);
           setErrors(result.errors);
           setSubmitError(result.message ?? null);
@@ -613,6 +676,34 @@ export function AppointmentFormModal({
       >
         {patientMode ? (
           <>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+                Appointment for
+              </label>
+              <Select
+                aria-label="Appointment for"
+                value={draft.familyMemberId ?? "self"}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  const nextFamilyMember =
+                    nextValue === "self"
+                      ? undefined
+                      : familyMembers.find((member) => member.id === nextValue);
+                  setDraft((current) => ({
+                    ...current,
+                    familyMemberId: nextValue === "self" ? undefined : nextValue,
+                    patientName: nextFamilyMember?.fullName ?? (patientName ?? current.patientName),
+                  }));
+                }}
+              >
+                <option value="self">Self</option>
+                {familyMembers.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.fullName} - {member.relationship}
+                  </option>
+                ))}
+              </Select>
+            </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
                 Hospital
@@ -640,6 +731,29 @@ export function AppointmentFormModal({
                     {department.name}
                   </option>
                 ))}
+              </Select>
+            </div>
+            <div className="grid gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4 md:grid-cols-2">
+              <Select
+                aria-label="Filter by language"
+                value={languageFilter}
+                onChange={(event) => setLanguageFilter(event.target.value)}
+              >
+                <option value="all">All languages</option>
+                {availableLanguages.map((language) => (
+                  <option key={language} value={language}>
+                    {language}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label="Filter by availability"
+                value={availabilityFilter}
+                onChange={(event) => setAvailabilityFilter(event.target.value)}
+              >
+                <option value="all">All availability</option>
+                <option value="on-duty">Available / on duty</option>
+                <option value="online">Online consultations</option>
               </Select>
             </div>
           </>
@@ -681,12 +795,47 @@ export function AppointmentFormModal({
             ))}
           </Select>
           {selectedDoctor ? (
-            <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
-              Department: {selectedDoctor.departmentId.replace("dept-", "").replaceAll("-", " ")}
-            </p>
+            <div className="mt-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4 text-sm">
+              <p className="font-semibold text-[color:var(--foreground)]">{selectedDoctor.name}</p>
+              <div className="mt-2 space-y-1 text-[color:var(--muted-foreground)]">
+                <p>Department: {selectedDoctor.departmentId.replace("dept-", "").replaceAll("-", " ")}</p>
+                <p>Specialization: {selectedDoctor.specialization}</p>
+                <p>Availability: {selectedDoctor.availability}</p>
+                <p>Shift: {selectedDoctor.shiftLabel}</p>
+                {selectedDoctorProfile?.qualifications ? <p>Qualifications: {selectedDoctorProfile.qualifications}</p> : null}
+                {selectedDoctorProfile?.experience ? <p>Experience: {selectedDoctorProfile.experience}</p> : null}
+                {selectedDoctorProfile?.languages ? <p>Languages: {selectedDoctorProfile.languages}</p> : null}
+                {selectedDoctorProfile?.consultationFee ? <p>Consultation fee: {selectedDoctorProfile.consultationFee}</p> : null}
+                <p>
+                  Verification: {selectedDoctorProfile?.profileVerificationStatus?.trim() || "Verified doctor profile"}
+                </p>
+              </div>
+            </div>
           ) : null}
           {errors.doctorId ? (
             <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.doctorId}</p>
+          ) : null}
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+            Consultation mode
+          </label>
+          <Select
+            aria-label="Consultation mode"
+            value={draft.consultationMode ?? "In Person"}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                consultationMode: event.target.value as AppointmentDraft["consultationMode"],
+              }))
+            }
+          >
+            <option value="In Person">In Person</option>
+            <option value="Online">Online</option>
+          </Select>
+          {errors.consultationMode ? (
+            <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.consultationMode}</p>
           ) : null}
         </div>
 

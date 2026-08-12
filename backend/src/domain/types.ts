@@ -43,7 +43,11 @@ export type Capability =
   | "billing:manage"
   | "payment:record"
   | "inventory:view"
-  | "inventory:manage";
+  | "inventory:manage"
+  | "family-member:manage"
+  | "medical-history:create"
+  | "clinical-attachment:create"
+  | "telemedicine:join";
 
 export type OrganizationRecord = {
   id: string;
@@ -80,7 +84,8 @@ export type AppointmentStatus =
   | "Checked in"
   | "In consultation"
   | "Completed"
-  | "Cancelled";
+  | "Cancelled"
+  | "No Show";
 
 export type QueueStatus = "Waiting" | "Called" | "In consultation" | "Completed";
 
@@ -138,11 +143,13 @@ export type AppointmentRecord = {
   organizationId: string;
   patientId?: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   departmentId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
+  consultationMode?: "In Person" | "Online";
   status: AppointmentStatus;
 };
 
@@ -183,6 +190,7 @@ export type LabRequestRecord = {
   hospitalId: string;
   organizationId: string;
   patientName: string;
+  familyMemberId?: string;
   testId: string;
   testName: string;
   departmentId: string;
@@ -205,6 +213,7 @@ export type LabReportRecord = {
   patientId: string;
   hospitalId: string;
   organizationId: string;
+  familyMemberId?: string;
   testName: string;
   reportTitle: string;
   resultSummary: string;
@@ -220,6 +229,7 @@ export type MedicalRecordRecord = {
   id: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   doctorName: string;
   appointmentId?: string;
@@ -252,6 +262,7 @@ export type PrescriptionRecord = {
   id: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   doctorName: string;
   hospitalId: string;
@@ -259,6 +270,7 @@ export type PrescriptionRecord = {
   appointmentId?: string;
   medicines: PrescriptionMedicineRecord[];
   instructions: string;
+  followUpDate?: string;
   status: PrescriptionStatus;
   createdAt: string;
   dispensedAt?: string;
@@ -301,6 +313,7 @@ export type InvoiceRecord = {
   invoiceNumber: string;
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   organizationId: string;
   hospitalId: string;
   sourceType?: "appointment" | "lab-request" | "prescription";
@@ -343,6 +356,95 @@ export type NotificationRecord = {
   relatedEntityType?: string;
   relatedEntityId?: string;
   read: boolean;
+  createdAt: string;
+};
+
+export type FamilyMemberRecord = {
+  id: string;
+  organizationId: string;
+  primaryPatientUserId: string;
+  fullName: string;
+  relationship: string;
+  dateOfBirth?: string;
+  gender?: string;
+  bloodGroup?: string;
+  phoneNumber?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  allergies?: string;
+  medicalConditions?: string;
+  preferredLanguage?: string;
+  status: "Active" | "Inactive";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MedicalHistoryEntryCategory = "Vaccination" | "Surgery";
+
+export type MedicalHistoryEntryRecord = {
+  id: string;
+  organizationId: string;
+  patientUserId: string;
+  familyMemberId?: string;
+  category: MedicalHistoryEntryCategory;
+  title: string;
+  details?: string;
+  recordedDate: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type ClinicalAttachmentRecord = {
+  id: string;
+  organizationId: string;
+  patientUserId: string;
+  familyMemberId?: string;
+  medicalRecordId?: string;
+  label: string;
+  fileName: string;
+  contentType: "application/pdf" | "image/png" | "image/jpeg";
+  fileSize: number;
+  contentBase64?: string;
+  uploadedByUserId: string;
+  uploadedByName: string;
+  createdAt: string;
+};
+
+export type TelemedicineSessionStatus = "Scheduled" | "Live" | "Ended";
+
+export type TelemedicineSessionRecord = {
+  id: string;
+  organizationId: string;
+  appointmentId: string;
+  patientUserId: string;
+  doctorUserId: string;
+  familyMemberId?: string;
+  status: TelemedicineSessionStatus;
+  startedAt?: string;
+  endedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TelemedicineMessageRecord = {
+  id: string;
+  sessionId: string;
+  organizationId: string;
+  senderUserId: string;
+  senderName: string;
+  message: string;
+  createdAt: string;
+};
+
+export type TelemedicineSignalRecord = {
+  id: string;
+  sessionId: string;
+  organizationId: string;
+  senderUserId: string;
+  recipientUserId: string;
+  signalType: "offer" | "answer" | "candidate";
+  payloadJson: string;
   createdAt: string;
 };
 
@@ -389,6 +491,10 @@ export type HospitalState = {
   invoices: InvoiceRecord[];
   inventoryItems: InventoryItemRecord[];
   notifications: NotificationRecord[];
+  familyMembers?: FamilyMemberRecord[];
+  medicalHistoryEntries?: MedicalHistoryEntryRecord[];
+  clinicalAttachments?: ClinicalAttachmentRecord[];
+  telemedicineSessions?: TelemedicineSessionRecord[];
   bookingCapacity: BookingCapacityRecord;
   configuredSupportLines: number;
 };
@@ -497,6 +603,7 @@ export type HospitalStateResponse = {
     userCounts?: Record<UserRole, number>;
     users?: SafeUser[];
     patientProfiles?: SafeUser[];
+    doctorProfiles?: SafeUser[];
     appointmentSlotLoads?: AppointmentSlotLoadRecord[];
     labSlotLoads?: LabSlotLoadRecord[];
   };
@@ -504,16 +611,19 @@ export type HospitalStateResponse = {
 
 export type AppointmentDraft = {
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
+  consultationMode?: "In Person" | "Online";
 };
 
 export type LabRequestDraft = {
   testId: string;
   requestedDate: string;
   requestedTime: string;
+  familyMemberId?: string;
 };
 
 export type LabReportDraft = {
@@ -529,6 +639,7 @@ export type MedicalRecordDraft = {
   diagnosis: string;
   clinicalNotes: string;
   treatmentAdvice: string;
+  familyMemberId?: string;
 };
 
 export type PrescriptionMedicineDraft = {
@@ -549,8 +660,10 @@ export type PrescriptionMedicineDraft = {
 export type PrescriptionDraft = {
   patientId: string;
   appointmentId?: string;
+  familyMemberId?: string;
   medicines: PrescriptionMedicineDraft[];
   instructions: string;
+  followUpDate?: string;
 };
 
 export type PaymentDraft = {
@@ -569,4 +682,36 @@ export type InventoryItemDraft = {
   expiryDate: string;
   reorderLevel: number;
   manufacturer?: string;
+};
+
+export type FamilyMemberDraft = {
+  fullName: string;
+  relationship: string;
+  dateOfBirth?: string;
+  gender?: string;
+  bloodGroup?: string;
+  phoneNumber?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  allergies?: string;
+  medicalConditions?: string;
+  preferredLanguage?: string;
+};
+
+export type MedicalHistoryEntryDraft = {
+  category: MedicalHistoryEntryCategory;
+  title: string;
+  details?: string;
+  recordedDate: string;
+  familyMemberId?: string;
+};
+
+export type ClinicalAttachmentDraft = {
+  label: string;
+  fileName: string;
+  contentType: "application/pdf" | "image/png" | "image/jpeg";
+  fileSize: number;
+  contentBase64: string;
+  familyMemberId?: string;
+  medicalRecordId?: string;
 };

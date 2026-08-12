@@ -15,12 +15,26 @@ export function DoctorOverview() {
   const { session } = useAuth();
   const { activeQueueEntries, state } = useHospitalData();
   const doctor = state.doctors.find((item) => item.id === session.user.doctorId);
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const todaysAppointments = state.appointments.filter(
-    (appointment) => appointment.appointmentDate === getCurrentLocalDateIso(),
+    (appointment) =>
+      appointment.doctorId === session.user.doctorId &&
+      appointment.appointmentDate === getCurrentLocalDateIso(),
   );
-  const nextPatient = [...todaysAppointments].sort((left, right) =>
-    left.appointmentTime.localeCompare(right.appointmentTime),
-  )[0];
+  const nextPatient = [...todaysAppointments]
+    .filter((appointment) =>
+      appointment.status === "In consultation" ||
+      appointment.status === "Checked in" ||
+      (appointment.status === "Scheduled" &&
+        (() => {
+          const [hours, minutes] = appointment.appointmentTime.split(":").map(Number);
+          return hours * 60 + minutes >= currentMinutes;
+        })()),
+    )
+    .sort((left, right) =>
+      left.appointmentTime.localeCompare(right.appointmentTime),
+    )[0];
 
   return (
     <div className="space-y-6 md:space-y-8">

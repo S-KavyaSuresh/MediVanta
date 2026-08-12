@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
+import { PrescriptionViewModal } from "@/components/dashboard/prescription-view-modal";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,11 @@ import {
   formatPrescriptionDose,
   formatPrescriptionDuration,
   formatPrescriptionMedicineName,
+  getCurrentLocalDateIso,
   type AppointmentRecord,
   type MedicineCatalogRecord,
   type PrescriptionDraft,
+  type PrescriptionRecord,
 } from "@/lib/hospital-data";
 
 const frequencyOptions = [
@@ -31,6 +34,7 @@ const frequencyOptions = [
 ] as const;
 
 const durationUnits = ["days", "weeks", "months"] as const;
+const commonDoseUnits = ["tablet", "capsule", "ml", "mg", "drops", "patch", "puff"] as const;
 
 const emptyMedicine = {
   medicineId: "",
@@ -62,6 +66,52 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function getLocalIsoDate(value: string) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function canEditPrescriptionRecord(createdAt: string, status: string, now = Date.now()) {
+  if (status === "Dispensed") {
+    return false;
+  }
+
+  const createdTime = new Date(createdAt).getTime();
+  if (Number.isNaN(createdTime)) {
+    return false;
+  }
+
+  return now - createdTime <= 3 * 60 * 60 * 1000;
+}
+
+function buildDraftFromPrescription(prescription: PrescriptionRecord) {
+  return {
+    patientId: prescription.patientId,
+    appointmentId: prescription.appointmentId ?? "",
+    instructions: prescription.instructions,
+    followUpDate: prescription.followUpDate,
+    medicines: prescription.medicines.map((medicine) =>
+      buildDisplayMedicine({
+        medicineId: medicine.medicineId ?? "",
+        medicineName: medicine.medicineName,
+        strength: medicine.strength ?? "",
+        doseQuantity: medicine.doseQuantity ?? 1,
+        doseUnit: medicine.doseUnit ?? "",
+        dosage: medicine.dosage,
+        frequency: medicine.frequency,
+        durationValue: medicine.durationValue ?? 1,
+        durationUnit: medicine.durationUnit ?? "days",
+        duration: medicine.duration,
+        totalQuantity: medicine.totalQuantity ?? 1,
+        instructions: medicine.instructions ?? "",
+      }),
+    ),
+  } satisfies PrescriptionDraft;
 }
 
 function getAdministrationsPerDay(frequency: string) {
@@ -214,11 +264,13 @@ function validatePrescriptionDraft(draft: PrescriptionDraft, patientId: string) 
 }
 
 export function DoctorPrescriptionsView() {
-  const { createPrescription, meta, state } = useHospitalData();
+  const { createPrescription, meta, state, updatePrescription } = useHospitalData();
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [openMedicineIndex, setOpenMedicineIndex] = useState<number | null>(null);
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState<string | null>(null);
+  const [editingPrescriptionId, setEditingPrescriptionId] = useState<string | null>(null);
   const patientOptions = useMemo(() => {
     const grouped = new Map<
       string,
@@ -306,6 +358,7 @@ export function DoctorPrescriptionsView() {
     appointmentId: "",
     medicines: [emptyMedicine],
     instructions: "",
+    followUpDate: undefined,
   });
   const [medicineSearch, setMedicineSearch] = useState<string[]>([""]);
 
@@ -327,7 +380,22 @@ export function DoctorPrescriptionsView() {
       ),
     [state.prescriptions],
   );
-  const recentPrescriptions = prescriptions.slice(0, 5);
+  const recentPrescriptions = prescriptions
+    .filter((prescription) => getLocalIsoDate(prescription.createdAt) === getCurrentLocalDateIso())
+    .slice(0, 5);
+  const selectedPrescription =
+    prescriptions.find((prescription) => prescription.id === selectedPrescriptionId) ?? null;
+  const editingPrescription =
+    prescriptions.find((prescription) => prescription.id === editingPrescriptionId) ?? null;
+
+  useEffect(() => {
+    if (!message) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setMessage(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -337,6 +405,7 @@ export function DoctorPrescriptionsView() {
 
     setSubmitting(true);
     setMessage(null);
+    setFieldErrors({});
 
     const normalizedMedicines = draft.medicines.map((medicine) =>
       buildDisplayMedicine(medicine),
@@ -356,15 +425,21 @@ export function DoctorPrescriptionsView() {
       return;
     }
 
-    setFieldErrors({});
-
-    const result = await createPrescription({
-      ...draft,
-      patientId: activePatientId,
-      appointmentId: activeAppointmentId || undefined,
-      medicines: normalizedMedicines,
-      instructions: draft.instructions.trim(),
-    });
+    const result = editingPrescriptionId
+      ? await updatePrescription(editingPrescriptionId, {
+          ...draft,
+          patientId: activePatientId,
+          appointmentId: activeAppointmentId || undefined,
+          medicines: normalizedMedicines,
+          instructions: draft.instructions.trim(),
+        })
+      : await createPrescription({
+          ...draft,
+          patientId: activePatientId,
+          appointmentId: activeAppointmentId || undefined,
+          medicines: normalizedMedicines,
+          instructions: draft.instructions.trim(),
+        });
     setSubmitting(false);
 
     if (!result.ok) {
@@ -374,12 +449,14 @@ export function DoctorPrescriptionsView() {
     }
 
     setFieldErrors({});
-    setMessage("Prescription issued.");
+    setMessage(editingPrescriptionId ? "Prescription updated." : "Prescription issued.");
+    setEditingPrescriptionId(null);
     setDraft({
       patientId: activePatientId,
       appointmentId: activeAppointmentId,
       medicines: [emptyMedicine],
       instructions: "",
+      followUpDate: undefined,
     });
     setMedicineSearch([""]);
     setOpenMedicineIndex(null);
@@ -389,14 +466,16 @@ export function DoctorPrescriptionsView() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         eyebrow="Doctor Workspace"
-        title="Prescriptions"
-        description="Issue prescriptions for patients already within your scoped consultation list and keep recent medication orders easy to review."
+      title="Prescriptions"
+      description="Issue prescriptions for patients already within your scoped consultation list and keep recent medication orders easy to review."
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.35fr)]">
         <Card className="space-y-4">
           <div>
-            <h2 className="text-xl font-semibold">New prescription</h2>
+            <h2 className="text-xl font-semibold">
+              {editingPrescriptionId ? "Edit prescription" : "New prescription"}
+            </h2>
           </div>
 
           <form className="space-y-4" onSubmit={onSubmit}>
@@ -449,6 +528,29 @@ export function DoctorPrescriptionsView() {
                   </option>
                 ))}
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="prescription-follow-up">
+                Follow-up date
+              </label>
+              <Input
+                id="prescription-follow-up"
+                type="date"
+                min={getCurrentLocalDateIso()}
+                value={draft.followUpDate ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    followUpDate: event.target.value || undefined,
+                  }))
+                }
+              />
+              {fieldErrors.followUpDate ? (
+                <p className="text-sm text-rose-600 dark:text-rose-300">
+                  {fieldErrors.followUpDate}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-3">
@@ -674,7 +776,39 @@ export function DoctorPrescriptionsView() {
 
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Unit</label>
-                        <Input value={medicine.doseUnit ?? ""} disabled />
+                        <Select
+                          value={medicine.doseUnit ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      doseUnit: event.target.value,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        >
+                          {[
+                            ...new Set(
+                              [selectedOption?.medicine.unit, medicine.doseUnit, ...commonDoseUnits].filter(
+                                Boolean,
+                              ) as string[],
+                            ),
+                          ].map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </Select>
+                        {fieldErrors[`medicines.${index}.doseUnit`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.doseUnit`]}
+                          </p>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -861,9 +995,39 @@ export function DoctorPrescriptionsView() {
               <p className="text-sm text-[color:var(--muted-foreground)]">{message}</p>
             ) : null}
 
-            <Button type="submit" disabled={!patientOptions.length || submitting}>
-              {submitting ? "Issuing..." : "Issue Prescription"}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-3">
+              {editingPrescriptionId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setEditingPrescriptionId(null);
+                    setFieldErrors({});
+                    setMessage(null);
+                    setDraft({
+                      patientId: activePatientId,
+                      appointmentId: activeAppointmentId,
+                      medicines: [emptyMedicine],
+                      instructions: "",
+                      followUpDate: undefined,
+                    });
+                    setMedicineSearch([""]);
+                    setOpenMedicineIndex(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+              <Button type="submit" disabled={!patientOptions.length || submitting}>
+                {submitting
+                  ? editingPrescriptionId
+                    ? "Saving..."
+                    : "Issuing..."
+                  : editingPrescriptionId
+                    ? "Save Changes"
+                    : "Issue Prescription"}
+              </Button>
+            </div>
           </form>
         </Card>
 
@@ -872,7 +1036,7 @@ export function DoctorPrescriptionsView() {
             <div>
               <h2 className="text-xl font-semibold">Recent prescriptions</h2>
               <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                Latest medication orders from your workspace.
+                Today&apos;s medication orders from your workspace.
               </p>
             </div>
             <Link
@@ -896,8 +1060,42 @@ export function DoctorPrescriptionsView() {
                       <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
                         {formatDateTime(prescription.createdAt)}
                       </p>
+                      {prescription.followUpDate ? (
+                        <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                          Follow-up {prescription.followUpDate}
+                        </p>
+                      ) : null}
                     </div>
                     <StatusBadge status={prescription.status} />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setSelectedPrescriptionId(prescription.id)}
+                    >
+                      View Prescription
+                    </Button>
+                    {canEditPrescriptionRecord(prescription.createdAt, prescription.status) ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingPrescriptionId(prescription.id);
+                          setFieldErrors({});
+                          setMessage(null);
+                          setDraft(buildDraftFromPrescription(prescription));
+                          setMedicineSearch(
+                            prescription.medicines.map((medicine) =>
+                              formatPrescriptionMedicineName(medicine),
+                            ),
+                          );
+                          setOpenMedicineIndex(null);
+                        }}
+                      >
+                        Edit Prescription
+                      </Button>
+                    ) : null}
                   </div>
                   <div className="mt-3 space-y-3">
                     {prescription.medicines.map((medicine, index) => (
@@ -928,12 +1126,21 @@ export function DoctorPrescriptionsView() {
             </div>
           ) : (
             <EmptyState
-              title="No prescriptions yet"
-              description="Recently issued prescriptions will appear here."
+              title="No prescriptions issued today"
+              description="Today&apos;s prescriptions will appear here after they are issued."
             />
           )}
         </Card>
       </div>
+
+      <PrescriptionViewModal
+        open={Boolean(selectedPrescription)}
+        prescription={selectedPrescription}
+        organizationName={state.organization.name}
+        familyMembers={state.familyMembers}
+        doctors={state.doctors}
+        onClose={() => setSelectedPrescriptionId(null)}
+      />
     </div>
   );
 }

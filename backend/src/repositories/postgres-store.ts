@@ -3,8 +3,10 @@ import type {
   AppointmentStatus,
   BookingCapacityRecord,
   BookingSessionCapacityRecord,
+  ClinicalAttachmentRecord,
   DepartmentRecord,
   DoctorRecord,
+  FamilyMemberRecord,
   HospitalState,
   InventoryItemRecord,
   InvoiceItemRecord,
@@ -16,6 +18,7 @@ import type {
   LabTestRecord,
   MedicineCatalogRecord,
   MedicalRecordRecord,
+  MedicalHistoryEntryRecord,
   NotificationRecord,
   OrganizationRecord,
   PaymentMethod,
@@ -25,6 +28,7 @@ import type {
   QueueEntryRecord,
   QueueStatus,
   SessionRecord,
+  TelemedicineSessionRecord,
   UserRecord,
 } from "../domain/types.js";
 import { query, withTransaction } from "../db/client.js";
@@ -814,15 +818,16 @@ export async function loadOrganizationById(organizationId: string) {
 export async function insertLabRequest(request: LabRequestRecord) {
   await query(
     `insert into lab_requests (
-      id, organization_id, patient_id, hospital_id, patient_name, test_id,
+      id, organization_id, patient_id, hospital_id, patient_name, family_member_id, test_id,
       test_name, department_id, requested_date, requested_time, status, created_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       request.id,
       request.organizationId,
       request.patientId,
       request.hospitalId,
       request.patientName,
+      request.familyMemberId ?? null,
       request.testId,
       request.testName,
       request.departmentId,
@@ -850,16 +855,17 @@ export async function updateLabRequestStatusById(input: {
 export async function insertLabReport(report: LabReportRecord) {
   await query(
     `insert into lab_reports (
-      id, organization_id, lab_request_id, patient_id, hospital_id, test_name,
+      id, organization_id, lab_request_id, patient_id, hospital_id, family_member_id, test_name,
       report_title, result_summary, uploaded_at, uploaded_by_id, uploaded_by_name,
       attachment_file_name, attachment_file_size, attachment_content_base64
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       report.id,
       report.organizationId,
       report.labRequestId,
       report.patientId,
       report.hospitalId,
+      report.familyMemberId ?? null,
       report.testName,
       report.reportTitle,
       report.resultSummary,
@@ -1017,15 +1023,16 @@ export async function upsertHospitalSettings(input: {
 export async function insertMedicalRecord(record: MedicalRecordRecord) {
   await query(
     `insert into medical_records (
-      id, organization_id, patient_id, patient_name, doctor_id, doctor_name,
+      id, organization_id, patient_id, patient_name, family_member_id, doctor_id, doctor_name,
       appointment_id, hospital_id, visit_date, diagnosis, clinical_notes,
       treatment_advice, created_at, updated_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       record.id,
       record.organizationId,
       record.patientId,
       record.patientName,
+      record.familyMemberId ?? null,
       record.doctorId,
       record.doctorName,
       record.appointmentId ?? null,
@@ -1043,19 +1050,21 @@ export async function insertMedicalRecord(record: MedicalRecordRecord) {
 export async function insertAppointment(appointment: AppointmentRecord) {
   await query(
     `insert into appointments (
-      id, organization_id, patient_id, patient_name, doctor_id, department_id,
-      appointment_date, appointment_time, reason_for_appointment, status
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      id, organization_id, patient_id, patient_name, family_member_id, doctor_id, department_id,
+      appointment_date, appointment_time, reason_for_appointment, consultation_mode, status
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       appointment.id,
       appointment.organizationId,
       appointment.patientId ?? null,
       appointment.patientName,
+      appointment.familyMemberId ?? null,
       appointment.doctorId,
       appointment.departmentId,
       appointment.appointmentDate,
       appointment.appointmentTime,
       appointment.reasonForAppointment,
+      appointment.consultationMode,
       appointment.status,
     ],
   );
@@ -1065,30 +1074,36 @@ export async function updateAppointmentRecord(input: {
   appointmentId: string;
   organizationId: string;
   patientName: string;
+  familyMemberId?: string;
   doctorId: string;
   departmentId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
+  consultationMode?: "In Person" | "Online";
 }) {
   await query(
     `update appointments
      set patient_name = $3,
-         doctor_id = $4,
-         department_id = $5,
-         appointment_date = $6,
-         appointment_time = $7,
-         reason_for_appointment = $8
+         family_member_id = $4,
+         doctor_id = $5,
+         department_id = $6,
+         appointment_date = $7,
+         appointment_time = $8,
+         reason_for_appointment = $9,
+         consultation_mode = $10
      where id = $1 and organization_id = $2`,
     [
       input.appointmentId,
       input.organizationId,
       input.patientName,
+      input.familyMemberId ?? null,
       input.doctorId,
       input.departmentId,
       input.appointmentDate,
       input.appointmentTime,
       input.reasonForAppointment,
+      input.consultationMode ?? "In Person",
     ],
   );
 }
@@ -1259,20 +1274,22 @@ export async function insertPrescription(prescription: PrescriptionRecord) {
   await withTransaction(async (client) => {
     await client.query(
       `insert into prescriptions (
-        id, organization_id, patient_id, patient_name, doctor_id, doctor_name,
-        hospital_id, appointment_id, instructions, status, created_at,
+        id, organization_id, patient_id, patient_name, family_member_id, doctor_id, doctor_name,
+        hospital_id, appointment_id, instructions, follow_up_date, status, created_at,
         dispensed_at, dispensed_by_id, dispensed_by_name
-      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         prescription.id,
         prescription.organizationId,
         prescription.patientId,
         prescription.patientName,
+        prescription.familyMemberId ?? null,
         prescription.doctorId,
         prescription.doctorName,
         prescription.hospitalId,
         prescription.appointmentId ?? null,
         prescription.instructions,
+        prescription.followUpDate ?? null,
         prescription.status,
         prescription.createdAt,
         prescription.dispensedAt ?? null,
@@ -1320,6 +1337,71 @@ export async function insertPrescription(prescription: PrescriptionRecord) {
   });
 }
 
+export async function updatePrescriptionRecord(input: {
+  prescriptionId: string;
+  organizationId: string;
+  instructions: string;
+  followUpDate?: string;
+  medicines: PrescriptionRecord["medicines"];
+}) {
+  await withTransaction(async (client) => {
+    await client.query(
+      `update prescriptions
+       set instructions = $3,
+           follow_up_date = $4
+       where id = $1 and organization_id = $2`,
+      [
+        input.prescriptionId,
+        input.organizationId,
+        input.instructions,
+        input.followUpDate ?? null,
+      ],
+    );
+
+    await client.query(
+      `delete from prescription_medicines where prescription_id = $1`,
+      [input.prescriptionId],
+    );
+
+    await insertRows(
+      client,
+      "prescription_medicines",
+      [
+        "prescription_id",
+        "display_order",
+        "medicine_id",
+        "medicine_name",
+        "strength",
+        "dose_quantity",
+        "dose_unit",
+        "dosage",
+        "frequency",
+        "duration_value",
+        "duration_unit",
+        "duration",
+        "total_quantity",
+        "instructions_notes",
+      ],
+      input.medicines.map((medicine, index) => [
+        input.prescriptionId,
+        index,
+        medicine.medicineId ?? null,
+        medicine.medicineName,
+        medicine.strength ?? null,
+        medicine.doseQuantity ?? null,
+        medicine.doseUnit ?? null,
+        medicine.dosage,
+        medicine.frequency,
+        medicine.durationValue ?? null,
+        medicine.durationUnit ?? null,
+        medicine.duration,
+        medicine.totalQuantity ?? null,
+        medicine.instructions ?? null,
+      ]),
+    );
+  });
+}
+
 export async function markPrescriptionDispensed(input: {
   prescriptionId: string;
   organizationId: string;
@@ -1347,10 +1429,10 @@ export async function markPrescriptionDispensed(input: {
 export async function insertInvoice(invoice: InvoiceRecord) {
   await query(
     `insert into invoices (
-      id, invoice_number, organization_id, hospital_id, patient_id, patient_name, source_type,
+      id, invoice_number, organization_id, hospital_id, patient_id, patient_name, family_member_id, source_type,
       source_id, due_date, subtotal_cents, total_cents, amount_paid_cents, amount_due_cents,
       payment_status, created_at, updated_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     on conflict do nothing`,
     [
       invoice.id,
@@ -1359,6 +1441,7 @@ export async function insertInvoice(invoice: InvoiceRecord) {
       invoice.hospitalId,
       invoice.patientId,
       invoice.patientName,
+      invoice.familyMemberId ?? null,
       invoice.sourceType ?? null,
       invoice.sourceId ?? null,
       invoice.dueDate ?? null,
@@ -1798,6 +1881,10 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
     paymentsResult,
     inventoryItemsResult,
     notificationsResult,
+    familyMembersResult,
+    medicalHistoryEntriesResult,
+    clinicalAttachmentsResult,
+    telemedicineSessionsResult,
   ] =
     await Promise.all([
       query("select * from hospital_settings where organization_id = $1 limit 1", [organizationId]),
@@ -1836,6 +1923,10 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       ),
       query("select * from inventory_items where organization_id = $1 order by medicine_name asc, expiry_date asc", [organizationId]),
       query("select * from notifications where organization_id = $1 order by created_at desc", [organizationId]),
+      query("select * from family_members where organization_id = $1 order by full_name asc", [organizationId]),
+      query("select * from medical_history_entries where organization_id = $1 order by recorded_date desc, created_at desc", [organizationId]),
+      query("select * from clinical_attachments where organization_id = $1 order by created_at desc", [organizationId]),
+      query("select * from telemedicine_sessions where organization_id = $1 order by created_at desc", [organizationId]),
     ]);
 
   const settingsRow = settingsResult.rows[0];
@@ -1948,11 +2039,14 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       organizationId,
       patientId: asString(row.patient_id),
       patientName: String(row.patient_name),
+      familyMemberId: asString(row.family_member_id),
       doctorId: String(row.doctor_id),
       departmentId: String(row.department_id),
       appointmentDate: String(row.appointment_date),
       appointmentTime: String(row.appointment_time),
       reasonForAppointment: asString(row.reason_for_appointment) ?? "",
+      consultationMode:
+        (asString(row.consultation_mode) as AppointmentRecord["consultationMode"]) ?? "In Person",
       status: row.status as AppointmentRecord["status"],
     })),
     queueEntries: queueResult.rows.map((row): QueueEntryRecord => ({
@@ -1970,6 +2064,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       id: String(row.id),
       patientId: String(row.patient_id),
       patientName: String(row.patient_name),
+      familyMemberId: asString(row.family_member_id),
       doctorId: String(row.doctor_id),
       doctorName: String(row.doctor_name),
       appointmentId: asString(row.appointment_id),
@@ -1988,6 +2083,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       id: String(row.id),
       patientId: String(row.patient_id),
       patientName: String(row.patient_name),
+      familyMemberId: asString(row.family_member_id),
       doctorId: String(row.doctor_id),
       doctorName: String(row.doctor_name),
       hospitalId: String(row.hospital_id),
@@ -1995,6 +2091,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       appointmentId: asString(row.appointment_id),
       medicines: medicinesByPrescriptionId.get(String(row.id)) ?? [],
       instructions: String(row.instructions),
+      followUpDate: asString(row.follow_up_date),
       status: row.status as PrescriptionRecord["status"],
       createdAt: new Date(String(row.created_at)).toISOString(),
       dispensedAt: asString(row.dispensed_at)
@@ -2019,6 +2116,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       hospitalId: String(row.hospital_id),
       organizationId,
       patientName: String(row.patient_name),
+      familyMemberId: asString(row.family_member_id),
       testId: String(row.test_id),
       testName: String(row.test_name),
       departmentId: String(row.department_id),
@@ -2033,6 +2131,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       patientId: String(row.patient_id),
       hospitalId: String(row.hospital_id),
       organizationId,
+      familyMemberId: asString(row.family_member_id),
       testName: String(row.test_name),
       reportTitle: String(row.report_title),
       resultSummary: String(row.result_summary),
@@ -2057,6 +2156,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       invoiceNumber: String(row.invoice_number),
       patientId: String(row.patient_id),
       patientName: String(row.patient_name),
+      familyMemberId: asString(row.family_member_id),
       organizationId: String(row.organization_id),
       hospitalId: String(row.hospital_id),
       sourceType: asString(row.source_type) as InvoiceRecord["sourceType"],
@@ -2098,6 +2198,66 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       relatedEntityId: asString(row.related_entity_id),
       read: asBoolean(row.read),
       createdAt: new Date(String(row.created_at)).toISOString(),
+    })),
+    familyMembers: familyMembersResult.rows.map((row): FamilyMemberRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      primaryPatientUserId: String(row.primary_patient_user_id),
+      fullName: String(row.full_name),
+      relationship: String(row.relationship),
+      dateOfBirth: asString(row.date_of_birth),
+      gender: asString(row.gender),
+      bloodGroup: asString(row.blood_group),
+      phoneNumber: asString(row.phone_number),
+      emergencyContactName: asString(row.emergency_contact_name),
+      emergencyContactPhone: asString(row.emergency_contact_phone),
+      allergies: asString(row.allergies),
+      medicalConditions: asString(row.medical_conditions),
+      preferredLanguage: asString(row.preferred_language),
+      status: (asString(row.status) as FamilyMemberRecord["status"]) ?? "Active",
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
+    })),
+    medicalHistoryEntries: medicalHistoryEntriesResult.rows.map((row): MedicalHistoryEntryRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      patientUserId: String(row.patient_user_id),
+      familyMemberId: asString(row.family_member_id),
+      category: String(row.category) as MedicalHistoryEntryRecord["category"],
+      title: String(row.title),
+      details: asString(row.details),
+      recordedDate: String(row.recorded_date),
+      createdByUserId: String(row.created_by_user_id),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: asString(row.updated_at) ? new Date(String(row.updated_at)).toISOString() : undefined,
+    })),
+    clinicalAttachments: clinicalAttachmentsResult.rows.map((row): ClinicalAttachmentRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      patientUserId: String(row.patient_user_id),
+      familyMemberId: asString(row.family_member_id),
+      medicalRecordId: asString(row.medical_record_id),
+      label: String(row.label),
+      fileName: String(row.file_name),
+      contentType: String(row.content_type) as ClinicalAttachmentRecord["contentType"],
+      fileSize: asNumber(row.file_size),
+      contentBase64: String(row.content_base64),
+      uploadedByUserId: String(row.uploaded_by_user_id),
+      uploadedByName: String(row.uploaded_by_name),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+    })),
+    telemedicineSessions: telemedicineSessionsResult.rows.map((row): TelemedicineSessionRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      appointmentId: String(row.appointment_id),
+      patientUserId: String(row.patient_user_id),
+      doctorUserId: String(row.doctor_user_id),
+      familyMemberId: asString(row.family_member_id),
+      status: String(row.status) as TelemedicineSessionRecord["status"],
+      startedAt: asString(row.started_at) ? new Date(String(row.started_at)).toISOString() : undefined,
+      endedAt: asString(row.ended_at) ? new Date(String(row.ended_at)).toISOString() : undefined,
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
     })),
     bookingCapacity: mapBookingCapacity(settingsRow, sessionsResult.rows),
     configuredSupportLines: settingsRow ? asNumber(settingsRow.configured_support_lines) : 0,

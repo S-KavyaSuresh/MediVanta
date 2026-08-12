@@ -43,7 +43,11 @@ export type Capability =
   | "billing:manage"
   | "payment:record"
   | "inventory:view"
-  | "inventory:manage";
+  | "inventory:manage"
+  | "family-member:manage"
+  | "medical-history:create"
+  | "clinical-attachment:create"
+  | "telemedicine:join";
 
 export type Organization = {
   id: string;
@@ -136,7 +140,7 @@ export function getSafeLandingPath(role: UserRole, candidate?: string | null) {
   if (
     nextPath === allowedRoot ||
     nextPath.startsWith(`${allowedRoot}/`) ||
-    (nextPath === "/dashboard/search" && role !== "patient")
+    nextPath === "/dashboard/search"
   ) {
     return nextPath;
   }
@@ -147,8 +151,10 @@ export function getSafeLandingPath(role: UserRole, candidate?: string | null) {
 export const capabilitiesByRole: Record<UserRole, Capability[]> = {
   patient: [
     "appointment:create",
+    "appointment:update",
     "appointment:cancel",
     "appointment:view",
+    "search:view",
     "lab-request:create",
     "health-records:view",
     "prescriptions:view",
@@ -158,9 +164,14 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "payment:record",
     "profile:view",
     "profile:update",
+    "family-member:manage",
+    "medical-history:create",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
   doctor: [
     "appointment:view",
+    "search:view",
     "queue:view",
     "doctor:view",
     "department:view",
@@ -174,6 +185,8 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "notifications:view",
     "profile:view",
     "profile:update",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
   receptionist: [
     "appointment:create",
@@ -194,6 +207,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "profile:view",
     "profile:update",
     "operations:view",
+    "family-member:manage",
   ],
   laboratory: [
     "laboratory:view",
@@ -237,6 +251,10 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "profile:view",
     "profile:update",
     "operations:view",
+    "family-member:manage",
+    "medical-history:create",
+    "clinical-attachment:create",
+    "telemedicine:join",
   ],
 };
 
@@ -244,6 +262,7 @@ export function normalizeAuthSession(
   session: Partial<AuthSession> & Pick<AuthSession, "user">,
 ): AuthSession {
   const role = session.user.role;
+  const roleCapabilities = capabilitiesByRole[role];
   const organization =
     session.organization?.id && session.organization?.name && session.organization?.slug
       ? session.organization
@@ -256,9 +275,11 @@ export function normalizeAuthSession(
       organizationId: session.user.organizationId ?? defaultOrganization.id,
     },
     organization,
-    permissions: Array.isArray(session.permissions)
-      ? session.permissions
-      : capabilitiesByRole[role],
+    permissions: [
+      ...new Set(
+        (Array.isArray(session.permissions) ? session.permissions : []).concat(roleCapabilities),
+      ),
+    ],
     landingPath: getSafeLandingPath(role, session.landingPath),
   };
 }
@@ -319,6 +340,11 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       id: "patient-prescriptions",
       label: "Prescriptions",
       href: "/dashboard/patient/prescriptions",
+    },
+    {
+      id: "patient-family-members",
+      label: "Family Members",
+      href: "/dashboard/patient/family-members",
     },
     {
       id: "patient-lab-tests",
