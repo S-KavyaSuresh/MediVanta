@@ -7,6 +7,11 @@ import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  formatPrescriptionDose,
+  formatPrescriptionDuration,
+  formatPrescriptionMedicineName,
+} from "@/lib/hospital-data";
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -37,7 +42,7 @@ export function PharmacyDispensingView() {
       <PageHeader
         eyebrow="Pharmacy Workspace"
         title="Dispensing history"
-        description="Review prescriptions already dispensed through the shared pharmacy workflow without creating a duplicate queue."
+        description="Review prescriptions already dispensed through the shared pharmacy workflow."
       />
 
       {dispensed.length > 0 ? (
@@ -48,7 +53,7 @@ export function PharmacyDispensingView() {
                 <div className="min-w-0">
                   <p className="text-lg font-semibold">{prescription.patientName}</p>
                   <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                    {prescription.doctorName} · Dispensed{" "}
+                    {prescription.doctorName} - Dispensed{" "}
                     {formatDateTime(prescription.dispensedAt ?? prescription.createdAt)}
                   </p>
                 </div>
@@ -58,8 +63,9 @@ export function PharmacyDispensingView() {
               <div className="space-y-2">
                 {prescription.medicines.map((medicine, index) => (
                   <p key={`${prescription.id}-${index}`} className="text-sm">
-                    <span className="font-medium">{medicine.medicineName}</span>: {medicine.dosage} ·{" "}
-                    {medicine.frequency} · {medicine.duration}
+                    <span className="font-medium">{formatPrescriptionMedicineName(medicine)}</span>:{" "}
+                    {formatPrescriptionDose(medicine)} - {medicine.frequency} -{" "}
+                    {formatPrescriptionDuration(medicine)}
                   </p>
                 ))}
               </div>

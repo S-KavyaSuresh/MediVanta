@@ -1,13 +1,12 @@
-import { RolePlaceholderPage } from "@/components/dashboard/role-placeholder-page";
+import { BillingView } from "@/components/dashboard/billing-view";
 
 export default function PatientBillingPage() {
   return (
-    <RolePlaceholderPage
+    <BillingView
       eyebrow="Patient Dashboard"
       title="Billing"
-      description="Billing information will appear here when available."
-      emptyTitle="Billing coming soon"
-      emptyDescription="Billing statements and payment tracking are not active yet."
+      description="Review invoices, itemized charges, and payment progress connected to your care."
+      canManagePayments={false}
     />
   );
 }

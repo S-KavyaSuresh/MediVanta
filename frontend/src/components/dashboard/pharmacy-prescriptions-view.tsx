@@ -8,6 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  formatPrescriptionDose,
+  formatPrescriptionDuration,
+  formatPrescriptionMedicineName,
+} from "@/lib/hospital-data";
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -35,7 +40,7 @@ export function PharmacyPrescriptionsView() {
       <PageHeader
         eyebrow="Pharmacy Workspace"
         title="Prescriptions"
-        description="Review organization prescriptions and mark issued medication orders as dispensed when handoff is complete."
+        description="Review prescriptions ready for handoff and confirm dispensing when medicines are issued."
       />
 
       {message ? <p className="text-sm text-[color:var(--muted-foreground)]">{message}</p> : null}
@@ -48,7 +53,7 @@ export function PharmacyPrescriptionsView() {
                 <div className="min-w-0">
                   <p className="text-lg font-semibold">{prescription.patientName}</p>
                   <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                    {prescription.doctorName} · Issued {formatDateTime(prescription.createdAt)}
+                    {prescription.doctorName} - Issued {formatDateTime(prescription.createdAt)}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -74,10 +79,19 @@ export function PharmacyPrescriptionsView() {
               <div className="space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
                 {prescription.medicines.map((medicine, index) => (
                   <div key={`${prescription.id}-${index}`}>
-                    <p className="font-medium">{medicine.medicineName}</p>
+                    <p className="font-medium">{formatPrescriptionMedicineName(medicine)}</p>
                     <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                      {medicine.dosage} · {medicine.frequency} · {medicine.duration}
+                      {formatPrescriptionDose(medicine)} - {medicine.frequency} -{" "}
+                      {formatPrescriptionDuration(medicine)}
                     </p>
+                    <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                      Total quantity: {medicine.totalQuantity ?? "-"}
+                    </p>
+                    {medicine.instructions ? (
+                      <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                        {medicine.instructions}
+                      </p>
+                    ) : null}
                   </div>
                 ))}
               </div>

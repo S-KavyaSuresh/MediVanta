@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   advanceQueue,
   createAppointment,
+  createInventoryBatch,
   createDepartment,
   createLabReport,
   createLabRequest,
@@ -12,12 +13,17 @@ import {
   createPrescription,
   createStaffMember,
   dispensePrescription,
+  getDoctorHistory,
   getLabReportForUser,
   getLabRequestsForUser,
   getScopedHospitalStateForUser,
+  markAllUserNotificationsRead,
+  markNotificationAsRead,
+  recordInvoicePayment,
   setAppointmentStatus,
   updateUserAccountStatus,
   updateHospitalSettings,
+  updateInventoryBatch,
   updateMedicalRecord,
   updatePatientProfile,
   updateLabRequestStatus,
@@ -110,16 +116,42 @@ const prescriptionDraftSchema = z.object({
   instructions: z.string(),
   medicines: z.array(
     z.object({
+      medicineId: z.string().optional(),
       medicineName: z.string(),
+      strength: z.string().optional(),
+      doseQuantity: z.number().positive().optional(),
+      doseUnit: z.string().optional(),
       dosage: z.string(),
       frequency: z.string(),
+      durationValue: z.number().int().positive().optional(),
+      durationUnit: z.string().optional(),
       duration: z.string(),
+      totalQuantity: z.number().int().positive().optional(),
+      instructions: z.string().optional(),
     }),
   ),
 });
 
 const prescriptionStatusSchema = z.object({
   status: z.enum(["Issued", "Dispensed"]),
+});
+
+const paymentDraftSchema = z.object({
+  amount: z.number().positive(),
+  method: z.enum(["Cash", "Card", "UPI", "Bank Transfer", "Demo Payment"]),
+  referenceNumber: z.string().optional(),
+});
+
+const inventoryDraftSchema = z.object({
+  medicineName: z.string(),
+  genericName: z.string().optional(),
+  batchNumber: z.string(),
+  quantityInStock: z.number().int(),
+  unit: z.string(),
+  unitPrice: z.number().nonnegative(),
+  expiryDate: z.string(),
+  reorderLevel: z.number().int().nonnegative(),
+  manufacturer: z.string().optional(),
 });
 
 const patientProfileDraftSchema = z.object({
@@ -194,6 +226,17 @@ const accountStatusSchema = z.object({
   status: z.enum(["Active", "Deactivated"]),
 });
 
+const doctorHistoryQuerySchema = z.object({
+  kind: z.enum(["medical-records", "prescriptions"]),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(20).default(10),
+  sort: z.enum(["newest", "oldest"]).default("newest"),
+  patient: z.string().optional(),
+  datePreset: z.enum(["today", "24h", "7d", "30d", "all"]).default("all"),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
 function getRouteParam(param: string | string[]) {
   return Array.isArray(param) ? param[0] : param;
 }
@@ -217,6 +260,23 @@ hospitalRouter.get("/state", async (request, response, next) => {
     next(error);
   }
 });
+
+hospitalRouter.get(
+  "/doctor-history",
+  requireCapabilities("health-records:create"),
+  requireVerifiedEmail,
+  async (request, response, next) => {
+    try {
+      const queryParams = doctorHistoryQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await getDoctorHistory(request.authUser!, queryParams)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 hospitalRouter.post(
   "/appointments",
@@ -344,6 +404,88 @@ hospitalRouter.patch(
       response.json({
         success: true,
         ...(await dispensePrescription(request.authUser!, prescriptionId, status)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/invoices/:invoiceId/payments",
+  async (request, response, next) => {
+    try {
+      const draft = paymentDraftSchema.parse(request.body);
+      const invoiceId = getRouteParam(request.params.invoiceId);
+      response.status(201).json({
+        success: true,
+        ...(await recordInvoicePayment(request.authUser!, invoiceId, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/inventory-items",
+  requireCapabilities("inventory:manage"),
+  requireVerifiedEmail,
+  async (request, response, next) => {
+    try {
+      const draft = inventoryDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createInventoryBatch(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/inventory-items/:inventoryItemId",
+  requireCapabilities("inventory:manage"),
+  requireVerifiedEmail,
+  async (request, response, next) => {
+    try {
+      const draft = inventoryDraftSchema.parse(request.body);
+      const inventoryItemId = getRouteParam(request.params.inventoryItemId);
+      response.json({
+        success: true,
+        ...(await updateInventoryBatch(request.authUser!, inventoryItemId, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/notifications/:notificationId/read",
+  requireCapabilities("notifications:view"),
+  async (request, response, next) => {
+    try {
+      const notificationId = getRouteParam(request.params.notificationId);
+      response.json({
+        success: true,
+        ...(await markNotificationAsRead(request.authUser!, notificationId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/notifications/read-all",
+  requireCapabilities("notifications:view"),
+  async (request, response, next) => {
+    try {
+      response.json({
+        success: true,
+        ...(await markAllUserNotificationsRead(request.authUser!)),
       });
     } catch (error) {
       next(error);

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -11,60 +12,195 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { AppointmentRecord, PrescriptionDraft } from "@/lib/hospital-data";
+import {
+  formatPrescriptionDose,
+  formatPrescriptionDuration,
+  formatPrescriptionMedicineName,
+  type AppointmentRecord,
+  type MedicineCatalogRecord,
+  type PrescriptionDraft,
+} from "@/lib/hospital-data";
+
+const frequencyOptions = [
+  "Once daily",
+  "Twice daily",
+  "Three times daily",
+  "Four times daily",
+  "Weekly",
+  "As needed",
+] as const;
+
+const durationUnits = ["days", "weeks", "months"] as const;
 
 const emptyMedicine = {
+  medicineId: "",
   medicineName: "",
+  strength: "",
+  doseQuantity: 1,
+  doseUnit: "",
   dosage: "",
-  frequency: "",
+  frequency: "Once daily",
+  durationValue: 1,
+  durationUnit: "days",
   duration: "",
+  totalQuantity: 1,
+  instructions: "",
+} satisfies PrescriptionDraft["medicines"][number];
+
+type CatalogOption = {
+  medicine: MedicineCatalogRecord;
+  stockQuantity: number;
+  stockLabel: string;
+  stockToneClassName: string;
 };
 
-function validatePrescriptionDraft(
-  draft: PrescriptionDraft,
-  patientId: string,
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function getAdministrationsPerDay(frequency: string) {
+  const normalized = frequency.trim().toLowerCase();
+
+  if (normalized.includes("once")) {
+    return 1;
+  }
+
+  if (normalized.includes("twice")) {
+    return 2;
+  }
+
+  if (normalized.includes("three")) {
+    return 3;
+  }
+
+  if (normalized.includes("four")) {
+    return 4;
+  }
+
+  return 1;
+}
+
+function requiresManualTotalQuantity(
+  frequency: string,
+  durationUnit?: string,
 ) {
+  const normalizedFrequency = frequency.trim().toLowerCase();
+  const normalizedDurationUnit = durationUnit?.trim().toLowerCase() ?? "";
+
+  return (
+    normalizedFrequency.includes("as needed") ||
+    normalizedDurationUnit.startsWith("month")
+  );
+}
+
+function calculateTotalQuantity(
+  medicine: PrescriptionDraft["medicines"][number],
+) {
+  const doseQuantity =
+    medicine.doseQuantity && medicine.doseQuantity > 0
+      ? Math.max(1, Math.round(medicine.doseQuantity))
+      : undefined;
+  const durationValue =
+    medicine.durationValue && medicine.durationValue > 0
+      ? Math.max(1, Math.round(medicine.durationValue))
+      : undefined;
+  const normalizedFrequency = medicine.frequency.trim().toLowerCase();
+  const normalizedDurationUnit = medicine.durationUnit?.trim().toLowerCase() ?? "";
+
+  if (!doseQuantity || !durationValue) {
+    return undefined;
+  }
+
+  if (requiresManualTotalQuantity(medicine.frequency, medicine.durationUnit)) {
+    return medicine.totalQuantity && medicine.totalQuantity > 0
+      ? Math.max(1, Math.round(medicine.totalQuantity))
+      : undefined;
+  }
+
+  if (normalizedFrequency.includes("weekly")) {
+    if (normalizedDurationUnit.startsWith("week")) {
+      return doseQuantity * durationValue;
+    }
+
+    if (normalizedDurationUnit.startsWith("day")) {
+      return doseQuantity * Math.max(1, Math.ceil(durationValue / 7));
+    }
+  }
+
+  const durationDays = normalizedDurationUnit.startsWith("week")
+    ? durationValue * 7
+    : durationValue;
+  return doseQuantity * getAdministrationsPerDay(medicine.frequency) * durationDays;
+}
+
+function buildDisplayMedicine(
+  medicine: PrescriptionDraft["medicines"][number],
+): PrescriptionDraft["medicines"][number] {
+  const totalQuantity = calculateTotalQuantity(medicine);
+
+  return {
+    ...medicine,
+    dosage: `${medicine.doseQuantity ?? 1} ${medicine.doseUnit ?? ""}`.trim(),
+    duration: `${medicine.durationValue ?? 1} ${medicine.durationUnit ?? ""}`.trim(),
+    totalQuantity:
+      requiresManualTotalQuantity(medicine.frequency, medicine.durationUnit)
+        ? medicine.totalQuantity
+        : totalQuantity,
+  };
+}
+
+function validatePrescriptionDraft(draft: PrescriptionDraft, patientId: string) {
   const errors: Record<string, string> = {};
 
   if (!patientId) {
     errors.patientId = "Select a valid patient.";
   }
 
-  let activeMedicineRows = 0;
-
-  for (const [index, medicine] of draft.medicines.entries()) {
-    const normalizedMedicine = {
-      medicineName: medicine.medicineName.trim(),
-      dosage: medicine.dosage.trim(),
-      frequency: medicine.frequency.trim(),
-      duration: medicine.duration.trim(),
-    };
-
-    if (!Object.values(normalizedMedicine).some((value) => value.length > 0)) {
-      continue;
-    }
-
-    activeMedicineRows += 1;
-
-    if (!normalizedMedicine.medicineName) {
-      errors[`medicines.${index}.medicineName`] = "Enter the medicine name.";
-    }
-
-    if (!normalizedMedicine.dosage) {
-      errors[`medicines.${index}.dosage`] = "Enter the dosage.";
-    }
-
-    if (!normalizedMedicine.frequency) {
-      errors[`medicines.${index}.frequency`] = "Enter the frequency.";
-    }
-
-    if (!normalizedMedicine.duration) {
-      errors[`medicines.${index}.duration`] = "Enter the duration.";
-    }
+  if (draft.medicines.length === 0) {
+    errors.medicines = "Add at least one medicine to continue.";
   }
 
-  if (activeMedicineRows === 0) {
-    errors.medicines = "Add at least one medicine to continue.";
+  for (const [index, medicine] of draft.medicines.entries()) {
+    if (!medicine.medicineId?.trim()) {
+      errors[`medicines.${index}.medicineId`] =
+        "Select a medicine from the hospital catalog.";
+    }
+
+    if (!medicine.doseQuantity || medicine.doseQuantity <= 0) {
+      errors[`medicines.${index}.doseQuantity`] = "Enter the dose quantity.";
+    }
+
+    if (!medicine.doseUnit?.trim()) {
+      errors[`medicines.${index}.doseUnit`] = "Select a valid catalog medicine.";
+    }
+
+    if (!medicine.frequency.trim()) {
+      errors[`medicines.${index}.frequency`] = "Select the frequency.";
+    }
+
+    if (!medicine.durationValue || medicine.durationValue <= 0) {
+      errors[`medicines.${index}.durationValue`] = "Enter the duration.";
+    }
+
+    if (!medicine.durationUnit?.trim()) {
+      errors[`medicines.${index}.durationUnit`] = "Select the duration unit.";
+    }
+
+    if (requiresManualTotalQuantity(medicine.frequency, medicine.durationUnit)) {
+      if (!medicine.totalQuantity || medicine.totalQuantity <= 0) {
+        errors[`medicines.${index}.totalQuantity`] =
+          "Enter the total quantity for this medicine.";
+      }
+    } else if (!calculateTotalQuantity(medicine)) {
+      errors[`medicines.${index}.totalQuantity`] =
+        "The total quantity could not be calculated.";
+    }
   }
 
   if (draft.instructions.trim().length < 6) {
@@ -77,27 +213,22 @@ function validatePrescriptionDraft(
   };
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
 export function DoctorPrescriptionsView() {
   const { createPrescription, meta, state } = useHospitalData();
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [openMedicineIndex, setOpenMedicineIndex] = useState<number | null>(null);
   const patientOptions = useMemo(() => {
-    const grouped = new Map<string, { patientId: string; patientName: string; appointments: AppointmentRecord[] }>();
+    const grouped = new Map<
+      string,
+      { patientId: string; patientName: string; appointments: AppointmentRecord[] }
+    >();
 
     for (const appointment of state.appointments) {
       const patientId =
-        appointment.patientId ?? `external:${appointment.patientName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+        appointment.patientId ??
+        `external:${appointment.patientName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
       const existing = grouped.get(patientId);
 
       if (existing) {
@@ -113,19 +244,12 @@ export function DoctorPrescriptionsView() {
     }
 
     for (const profile of meta?.patientProfiles ?? []) {
-      if (profile.role !== "patient") {
+      if (profile.role !== "patient" || grouped.has(profile.id)) {
         continue;
       }
 
-      const patientId = profile.id;
-      const existing = grouped.get(patientId);
-
-      if (existing) {
-        continue;
-      }
-
-      grouped.set(patientId, {
-        patientId,
+      grouped.set(profile.id, {
+        patientId: profile.id,
         patientName: profile.patientName ?? profile.displayName,
         appointments: [],
       });
@@ -134,12 +258,57 @@ export function DoctorPrescriptionsView() {
     return [...grouped.values()];
   }, [meta?.patientProfiles, state.appointments]);
 
+  const catalogOptions = useMemo(() => {
+    const stockByMedicineId = new Map<string, number>();
+
+    for (const item of state.inventoryItems) {
+      if (!item.medicineId) {
+        continue;
+      }
+
+      stockByMedicineId.set(
+        item.medicineId,
+        (stockByMedicineId.get(item.medicineId) ?? 0) + item.quantityInStock,
+      );
+    }
+
+    return [...state.medicineCatalog]
+      .filter((medicine) => medicine.active)
+      .map((medicine) => {
+        const stockQuantity = stockByMedicineId.get(medicine.id) ?? 0;
+
+        return {
+          medicine,
+          stockQuantity,
+          stockLabel:
+            stockQuantity <= 0
+              ? "Out of Stock"
+              : stockQuantity <= 12
+                ? `Low Stock: ${stockQuantity}`
+                : `In Stock: ${stockQuantity}`,
+          stockToneClassName:
+            stockQuantity <= 0
+              ? "text-rose-600 dark:text-rose-300"
+              : stockQuantity <= 12
+                ? "text-amber-600 dark:text-amber-300"
+                : "text-emerald-600 dark:text-emerald-300",
+        } satisfies CatalogOption;
+      })
+      .sort((left, right) =>
+        `${left.medicine.name} ${left.medicine.strength ?? ""}`.localeCompare(
+          `${right.medicine.name} ${right.medicine.strength ?? ""}`,
+        ),
+      );
+  }, [state.inventoryItems, state.medicineCatalog]);
+
   const [draft, setDraft] = useState<PrescriptionDraft>({
     patientId: "",
     appointmentId: "",
     medicines: [emptyMedicine],
     instructions: "",
   });
+  const [medicineSearch, setMedicineSearch] = useState<string[]>([""]);
+
   const activePatientId =
     draft.patientId && patientOptions.some((patient) => patient.patientId === draft.patientId)
       ? draft.patientId
@@ -150,6 +319,7 @@ export function DoctorPrescriptionsView() {
     selectedPatient?.appointments.some((appointment) => appointment.id === draft.appointmentId)
       ? draft.appointmentId
       : (selectedPatient?.appointments[0]?.id ?? "");
+
   const prescriptions = useMemo(
     () =>
       [...state.prescriptions].sort(
@@ -157,6 +327,7 @@ export function DoctorPrescriptionsView() {
       ),
     [state.prescriptions],
   );
+  const recentPrescriptions = prescriptions.slice(0, 5);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -167,24 +338,23 @@ export function DoctorPrescriptionsView() {
     setSubmitting(true);
     setMessage(null);
 
-    const validation = validatePrescriptionDraft(draft, activePatientId);
+    const normalizedMedicines = draft.medicines.map((medicine) =>
+      buildDisplayMedicine(medicine),
+    );
+    const validation = validatePrescriptionDraft(
+      {
+        ...draft,
+        medicines: normalizedMedicines,
+      },
+      activePatientId,
+    );
+
     if (!validation.isValid) {
       setFieldErrors(validation.errors);
       setMessage("Please correct the highlighted prescription fields.");
       setSubmitting(false);
       return;
     }
-
-    const normalizedMedicines = draft.medicines
-      .map((medicine) => ({
-        medicineName: medicine.medicineName.trim(),
-        dosage: medicine.dosage.trim(),
-        frequency: medicine.frequency.trim(),
-        duration: medicine.duration.trim(),
-      }))
-      .filter((medicine) =>
-        Object.values(medicine).some((value) => value.length > 0),
-      );
 
     setFieldErrors({});
 
@@ -205,11 +375,14 @@ export function DoctorPrescriptionsView() {
 
     setFieldErrors({});
     setMessage("Prescription issued.");
-    setDraft((current) => ({
-      ...current,
+    setDraft({
+      patientId: activePatientId,
+      appointmentId: activeAppointmentId,
       medicines: [emptyMedicine],
       instructions: "",
-    }));
+    });
+    setMedicineSearch([""]);
+    setOpenMedicineIndex(null);
   }
 
   return (
@@ -217,13 +390,13 @@ export function DoctorPrescriptionsView() {
       <PageHeader
         eyebrow="Doctor Workspace"
         title="Prescriptions"
-        description="Issue prescriptions for patients already within your scoped consultation list and review the prescriptions you have issued."
+        description="Issue prescriptions for patients already within your scoped consultation list and keep recent medication orders easy to review."
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.35fr)]">
         <Card className="space-y-4">
           <div>
-            <h2 className="text-xl font-semibold">Create prescription</h2>
+            <h2 className="text-xl font-semibold">New prescription</h2>
           </div>
 
           <form className="space-y-4" onSubmit={onSubmit}>
@@ -252,7 +425,9 @@ export function DoctorPrescriptionsView() {
                 ))}
               </Select>
               {fieldErrors.patientId ? (
-                <p className="text-sm text-rose-600 dark:text-rose-300">{fieldErrors.patientId}</p>
+                <p className="text-sm text-rose-600 dark:text-rose-300">
+                  {fieldErrors.patientId}
+                </p>
               ) : null}
             </div>
 
@@ -270,7 +445,7 @@ export function DoctorPrescriptionsView() {
                 <option value="">No linked appointment</option>
                 {selectedPatient?.appointments.map((appointment) => (
                   <option key={appointment.id} value={appointment.id}>
-                    {appointment.id} · {appointment.appointmentDate} {appointment.appointmentTime}
+                    {appointment.id} - {appointment.appointmentDate} {appointment.appointmentTime}
                   </option>
                 ))}
               </Select>
@@ -282,113 +457,381 @@ export function DoctorPrescriptionsView() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() =>
+                  onClick={() => {
                     setDraft((current) => ({
                       ...current,
                       medicines: [...current.medicines, emptyMedicine],
-                    }))
-                  }
+                    }));
+                    setMedicineSearch((current) => [...current, ""]);
+                  }}
                 >
                   Add medicine
                 </Button>
               </div>
 
-              {draft.medicines.map((medicine, index) => (
-                <div
-                  key={`medicine-${index}`}
-                  className="space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold">Medicine {index + 1}</p>
-                    {draft.medicines.length > 1 ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() =>
+              {draft.medicines.map((medicine, index) => {
+                const searchValue = medicineSearch[index] ?? "";
+                const filteredOptions = catalogOptions.filter((option) =>
+                  [
+                    option.medicine.name,
+                    option.medicine.strength ?? "",
+                    option.medicine.genericName ?? "",
+                    option.medicine.unit,
+                  ]
+                    .join(" ")
+                    .toLowerCase()
+                    .includes(searchValue.trim().toLowerCase()),
+                );
+                const selectedOption = medicine.medicineId
+                  ? catalogOptions.find((option) => option.medicine.id === medicine.medicineId)
+                  : undefined;
+                const autoQuantity = calculateTotalQuantity(medicine);
+                const manualQuantity = requiresManualTotalQuantity(
+                  medicine.frequency,
+                  medicine.durationUnit,
+                );
+
+                return (
+                  <div
+                    key={`medicine-${index}`}
+                    className="space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">Medicine {index + 1}</p>
+                      {draft.medicines.length > 1 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.filter(
+                                (_, itemIndex) => itemIndex !== index,
+                              ),
+                            }));
+                            setMedicineSearch((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index),
+                            );
+                            setOpenMedicineIndex((current) =>
+                              current === index ? null : current,
+                            );
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Medicine</label>
+                      <div className="relative">
+                        <Input
+                          placeholder="Search hospital medicines"
+                          value={searchValue}
+                          onFocus={() => setOpenMedicineIndex(index)}
+                          onBlur={() => {
+                            window.setTimeout(() => {
+                              setOpenMedicineIndex((current) =>
+                                current === index ? null : current,
+                              );
+                            }, 120);
+                          }}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setMedicineSearch((current) => {
+                              const next = [...current];
+                              next[index] = nextValue;
+                              return next;
+                            });
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? {
+                                      ...item,
+                                      medicineId: "",
+                                      medicineName: "",
+                                      strength: "",
+                                      doseUnit: "",
+                                    }
+                                  : item,
+                              ),
+                            }));
+                            setOpenMedicineIndex(index);
+                          }}
+                        />
+                        {openMedicineIndex === index ? (
+                          <div className="absolute z-20 mt-2 max-h-64 w-full overflow-y-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-2 shadow-2xl">
+                            {filteredOptions.length > 0 ? (
+                              filteredOptions.map((option) => (
+                                <button
+                                  key={option.medicine.id}
+                                  type="button"
+                                  className="w-full rounded-xl px-3 py-3 text-left transition hover:bg-[color:var(--surface-muted)]"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setDraft((current) => ({
+                                      ...current,
+                                      medicines: current.medicines.map((item, itemIndex) =>
+                                        itemIndex === index
+                                          ? buildDisplayMedicine({
+                                              ...item,
+                                              medicineId: option.medicine.id,
+                                              medicineName: option.medicine.name,
+                                              strength: option.medicine.strength ?? "",
+                                              doseUnit: option.medicine.unit,
+                                            })
+                                          : item,
+                                      ),
+                                    }));
+                                    setMedicineSearch((current) => {
+                                      const next = [...current];
+                                      next[index] = formatPrescriptionMedicineName({
+                                        medicineName: option.medicine.name,
+                                        strength: option.medicine.strength,
+                                      });
+                                      return next;
+                                    });
+                                    setOpenMedicineIndex(null);
+                                  }}
+                                >
+                                  <p className="font-medium">
+                                    {formatPrescriptionMedicineName({
+                                      medicineName: option.medicine.name,
+                                      strength: option.medicine.strength,
+                                    })}
+                                  </p>
+                                  <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                                    {option.medicine.unit}
+                                    {option.medicine.genericName
+                                      ? ` · ${option.medicine.genericName}`
+                                      : ""}
+                                  </p>
+                                  <p className={`mt-1 text-xs font-medium ${option.stockToneClassName}`}>
+                                    {option.stockLabel}
+                                  </p>
+                                </button>
+                              ))
+                            ) : (
+                              <p className="px-3 py-2 text-sm text-[color:var(--muted-foreground)]">
+                                No matching medicines found.
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                      {selectedOption ? (
+                        <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-3 text-sm">
+                          <p className="font-medium">
+                            {formatPrescriptionMedicineName({
+                              medicineName: selectedOption.medicine.name,
+                              strength: selectedOption.medicine.strength,
+                            })}
+                          </p>
+                          <p className="mt-1 text-[color:var(--muted-foreground)]">
+                            Unit: {selectedOption.medicine.unit}
+                          </p>
+                          <p className={`mt-1 text-xs font-medium ${selectedOption.stockToneClassName}`}>
+                            {selectedOption.stockLabel}
+                          </p>
+                        </div>
+                      ) : null}
+                      {fieldErrors[`medicines.${index}.medicineId`] ? (
+                        <p className="text-sm text-rose-600 dark:text-rose-300">
+                          {fieldErrors[`medicines.${index}.medicineId`]}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Dose quantity</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={medicine.doseQuantity ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      doseQuantity: Number(event.target.value) || 0,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        />
+                        {fieldErrors[`medicines.${index}.doseQuantity`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.doseQuantity`]}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Unit</label>
+                        <Input value={medicine.doseUnit ?? ""} disabled />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Frequency</label>
+                        <Select
+                          value={medicine.frequency}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      frequency: event.target.value,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        >
+                          {frequencyOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </Select>
+                        {fieldErrors[`medicines.${index}.frequency`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.frequency`]}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Duration</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={medicine.durationValue ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      durationValue: Number(event.target.value) || 0,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        />
+                        {fieldErrors[`medicines.${index}.durationValue`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.durationValue`]}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Duration unit</label>
+                        <Select
+                          value={medicine.durationUnit ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      durationUnit: event.target.value,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        >
+                          {durationUnits.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </Select>
+                        {fieldErrors[`medicines.${index}.durationUnit`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.durationUnit`]}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Total quantity</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={manualQuantity ? (medicine.totalQuantity ?? "") : (autoQuantity ?? "")}
+                          disabled={!manualQuantity}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              medicines: current.medicines.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? buildDisplayMedicine({
+                                      ...item,
+                                      totalQuantity: Number(event.target.value) || 0,
+                                    })
+                                  : item,
+                              ),
+                            }))
+                          }
+                        />
+                        <p className="text-xs text-[color:var(--muted-foreground)]">
+                          {manualQuantity
+                            ? "Enter the total quantity to issue."
+                            : "Calculated automatically from dose, frequency, and duration."}
+                        </p>
+                        {fieldErrors[`medicines.${index}.totalQuantity`] ? (
+                          <p className="text-sm text-rose-600 dark:text-rose-300">
+                            {fieldErrors[`medicines.${index}.totalQuantity`]}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Medicine notes</label>
+                      <Textarea
+                        placeholder="Optional notes for this medicine"
+                        value={medicine.instructions ?? ""}
+                        onChange={(event) =>
                           setDraft((current) => ({
                             ...current,
-                            medicines: current.medicines.filter((_, itemIndex) => itemIndex !== index),
+                            medicines: current.medicines.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    instructions: event.target.value,
+                                  }
+                                : item,
+                            ),
                           }))
                         }
-                      >
-                        Remove
-                      </Button>
-                    ) : null}
+                      />
+                    </div>
                   </div>
-                  <Input
-                    placeholder="Medicine name (e.g. Aspirin)"
-                    value={medicine.medicineName}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        medicines: current.medicines.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, medicineName: event.target.value } : item,
-                        ),
-                      }))
-                    }
-                  />
-                  {fieldErrors[`medicines.${index}.medicineName`] ? (
-                    <p className="text-sm text-rose-600 dark:text-rose-300">
-                      {fieldErrors[`medicines.${index}.medicineName`]}
-                    </p>
-                  ) : null}
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Input
-                      placeholder="Dosage (e.g. 1 tab)"
-                      value={medicine.dosage}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          medicines: current.medicines.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, dosage: event.target.value } : item,
-                          ),
-                        }))
-                      }
-                    />
-                    {fieldErrors[`medicines.${index}.dosage`] ? (
-                      <p className="text-sm text-rose-600 dark:text-rose-300 sm:col-span-3">
-                        {fieldErrors[`medicines.${index}.dosage`]}
-                      </p>
-                    ) : null}
-                    <Input
-                      placeholder="Frequency (e.g. 2x daily)"
-                      value={medicine.frequency}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          medicines: current.medicines.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, frequency: event.target.value } : item,
-                          ),
-                        }))
-                      }
-                    />
-                    {fieldErrors[`medicines.${index}.frequency`] ? (
-                      <p className="text-sm text-rose-600 dark:text-rose-300 sm:col-span-3">
-                        {fieldErrors[`medicines.${index}.frequency`]}
-                      </p>
-                    ) : null}
-                    <Input
-                      placeholder="Duration (e.g. 3 days)"
-                      value={medicine.duration}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          medicines: current.medicines.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, duration: event.target.value } : item,
-                          ),
-                        }))
-                      }
-                    />
-                    {fieldErrors[`medicines.${index}.duration`] ? (
-                      <p className="text-sm text-rose-600 dark:text-rose-300 sm:col-span-3">
-                        {fieldErrors[`medicines.${index}.duration`]}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
+
               {fieldErrors.medicines ? (
-                <p className="text-sm text-rose-600 dark:text-rose-300">{fieldErrors.medicines}</p>
+                <p className="text-sm text-rose-600 dark:text-rose-300">
+                  {fieldErrors.medicines}
+                </p>
               ) : null}
             </div>
 
@@ -401,7 +844,10 @@ export function DoctorPrescriptionsView() {
                 placeholder="Instructions (e.g. Take after meals)"
                 value={draft.instructions}
                 onChange={(event) =>
-                  setDraft((current) => ({ ...current, instructions: event.target.value }))
+                  setDraft((current) => ({
+                    ...current,
+                    instructions: event.target.value,
+                  }))
                 }
               />
               {fieldErrors.instructions ? (
@@ -423,15 +869,23 @@ export function DoctorPrescriptionsView() {
 
         <Card className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold">Issued prescriptions</h2>
-            <p className="text-sm text-[color:var(--muted-foreground)]">
-              {prescriptions.length} prescription{prescriptions.length === 1 ? "" : "s"}
-            </p>
+            <div>
+              <h2 className="text-xl font-semibold">Recent prescriptions</h2>
+              <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                Latest medication orders from your workspace.
+              </p>
+            </div>
+            <Link
+              href="/dashboard/doctor/history?tab=prescriptions"
+              className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-2.5 text-sm font-semibold text-[color:var(--foreground)] transition hover:bg-[color:var(--surface-muted)]"
+            >
+              View All History
+            </Link>
           </div>
 
-          {prescriptions.length > 0 ? (
+          {recentPrescriptions.length > 0 ? (
             <div className="space-y-3">
-              {prescriptions.map((prescription) => (
+              {recentPrescriptions.map((prescription) => (
                 <div
                   key={prescription.id}
                   className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4"
@@ -445,24 +899,37 @@ export function DoctorPrescriptionsView() {
                     </div>
                     <StatusBadge status={prescription.status} />
                   </div>
-                  <div className="mt-3 space-y-2">
+                  <div className="mt-3 space-y-3">
                     {prescription.medicines.map((medicine, index) => (
-                      <p key={`${prescription.id}-${index}`} className="text-sm">
-                        <span className="font-medium">{medicine.medicineName}</span>: {medicine.dosage} ·{" "}
-                        {medicine.frequency} · {medicine.duration}
-                      </p>
+                      <div
+                        key={`${prescription.id}-${index}`}
+                        className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-3 text-sm"
+                      >
+                        <p className="font-medium">
+                          {formatPrescriptionMedicineName(medicine)}
+                        </p>
+                        <p className="mt-1 text-[color:var(--muted-foreground)]">
+                          {formatPrescriptionDose(medicine)} - {medicine.frequency} -{" "}
+                          {formatPrescriptionDuration(medicine)}
+                        </p>
+                        <p className="mt-1 text-[color:var(--muted-foreground)]">
+                          Total quantity: {medicine.totalQuantity ?? "-"}
+                        </p>
+                        {medicine.instructions ? (
+                          <p className="mt-1 text-[color:var(--muted-foreground)]">
+                            {medicine.instructions}
+                          </p>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[color:var(--muted-foreground)]">
-                    {prescription.instructions}
-                  </p>
                 </div>
               ))}
             </div>
           ) : (
             <EmptyState
               title="No prescriptions yet"
-              description="New prescriptions you issue for patients in your current scope will appear here."
+              description="Recently issued prescriptions will appear here."
             />
           )}
         </Card>

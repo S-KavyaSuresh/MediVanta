@@ -11,6 +11,11 @@ import type {
   DoctorStatus,
   HospitalState,
   HospitalStateResponse,
+  InventoryItemDraft,
+  InventoryItemRecord,
+  InvoiceItemRecord,
+  InvoiceRecord,
+  InvoiceStatus,
   MedicalRecordDraft,
   MedicalRecordRecord,
   LabReportDraft,
@@ -18,6 +23,9 @@ import type {
   LabSlotLoadRecord,
   LabRequestDraft,
   LabRequestRecord,
+  NotificationRecord,
+  PaymentDraft,
+  PaymentRecord,
   PrescriptionDraft,
   PrescriptionRecord,
   PrescriptionStatus,
@@ -28,6 +36,7 @@ import type {
   UserRecord,
 } from "../domain/types.js";
 import { getPasswordPolicyErrors, hashPassword } from "../auth/password.js";
+import { query, withTransaction } from "../db/client.js";
 import { loadHospitalState, loadUsers, saveHospitalState, saveUsers } from "./seed-service.js";
 import { writeAuditLog } from "./audit-service.js";
 import { DEMO_ACCOUNT_PASSWORD } from "./demo-data.js";
@@ -35,23 +44,33 @@ import { getCurrentLocalDateIso } from "../utils/date.js";
 import { measurePerfStep } from "../utils/perf-trace.js";
 import {
   insertAppointment,
+  insertInvoice,
+  insertInvoiceItems,
+  insertInventoryItem,
   insertLabReport,
   insertLabRequest,
   insertMedicalRecord,
+  insertNotifications,
   insertPrescription,
   insertQueueEntry,
   loadLabReportById,
-  markPrescriptionDispensed,
+  markAllNotificationsRead,
+  markNotificationReadById,
   revokeSessionsForUser,
   upsertHospitalSettings,
   updateAppointmentRecord,
   updateAppointmentStatusById,
+  updateInventoryItemRecord,
   updateLabRequestStatusById,
   updateMedicalRecordDetails,
   updateQueueEntryById,
   updateQueueEntriesForAppointment,
   updateQueueStatusesByAppointment,
 } from "../repositories/postgres-store.js";
+
+function asString(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
 
 function getCurrentLocalTimeValue(now = new Date()) {
   return now.getHours() * 60 + now.getMinutes();
@@ -536,6 +555,560 @@ function createPrescriptionId() {
   return `RX-${Date.now()}-${randomBytes(3).toString("hex")}`;
 }
 
+function createInvoiceId() {
+  return `INV-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function createInvoiceNumber() {
+  return `MV-INV-${Date.now().toString().slice(-8)}`;
+}
+
+function createPaymentId() {
+  return `PAY-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function createInventoryItemId() {
+  return `INVSTOCK-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function createNotificationId() {
+  return `NOTIFY-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function parseCurrencyTextToCents(value?: string) {
+  const match = value?.match(/(\d+(?:\.\d+)?)/);
+  if (!match) {
+    return 90000;
+  }
+
+  return Math.round(Number(match[1]) * 100);
+}
+
+function buildPrescriptionMedicineLabel(
+  medicine: Pick<PrescriptionRecord["medicines"][number], "medicineName" | "strength">,
+) {
+  return [medicine.medicineName.trim(), medicine.strength?.trim() ?? ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function normalizePrescriptionMedicine(
+  medicine: PrescriptionRecord["medicines"][number],
+) {
+  const normalizedMedicineName = medicine.medicineName.trim();
+  const normalizedStrength =
+    medicine.strength?.trim() && !["-", "--"].includes(medicine.strength.trim())
+      ? medicine.strength.trim()
+      : undefined;
+  const normalizedDoseQuantity = medicine.doseQuantity ? Math.max(1, Math.round(medicine.doseQuantity)) : undefined;
+  const normalizedDoseUnit = medicine.doseUnit?.trim() || undefined;
+  const normalizedFrequency = medicine.frequency.trim();
+  const normalizedDurationValue = medicine.durationValue ? Math.max(1, Math.round(medicine.durationValue)) : undefined;
+  const normalizedDurationUnit = medicine.durationUnit?.trim() || undefined;
+  const normalizedTotalQuantity = medicine.totalQuantity ? Math.max(1, Math.round(medicine.totalQuantity)) : undefined;
+  const normalizedInstructions = medicine.instructions?.trim() || undefined;
+  const dosage =
+    normalizedDoseQuantity && normalizedDoseUnit
+      ? `${normalizedDoseQuantity} ${normalizedDoseUnit}`
+      : medicine.dosage.trim();
+  const duration =
+    normalizedDurationValue && normalizedDurationUnit
+      ? `${normalizedDurationValue} ${normalizedDurationUnit}`
+      : medicine.duration.trim();
+
+  return {
+    medicineId: medicine.medicineId?.trim() || undefined,
+    medicineName: normalizedMedicineName,
+    strength: normalizedStrength,
+    doseQuantity: normalizedDoseQuantity,
+    doseUnit: normalizedDoseUnit,
+    dosage,
+    frequency: normalizedFrequency,
+    durationValue: normalizedDurationValue,
+    durationUnit: normalizedDurationUnit,
+    duration,
+    totalQuantity: normalizedTotalQuantity,
+    instructions: normalizedInstructions,
+  } satisfies PrescriptionRecord["medicines"][number];
+}
+
+function getAdministrationsPerDay(frequency: string) {
+  const normalizedFrequency = frequency.trim().toLowerCase();
+
+  if (normalizedFrequency.includes("once")) {
+    return 1;
+  }
+
+  if (normalizedFrequency.includes("twice")) {
+    return 2;
+  }
+
+  if (normalizedFrequency.includes("three")) {
+    return 3;
+  }
+
+  if (normalizedFrequency.includes("four")) {
+    return 4;
+  }
+
+  const match = normalizedFrequency.match(/\d+/);
+  if (match) {
+    return Math.max(1, Number(match[0]));
+  }
+
+  return 1;
+}
+
+function resolveMedicineTotalQuantity(
+  medicine: PrescriptionRecord["medicines"][number],
+) {
+  const explicitTotalQuantity =
+    medicine.totalQuantity && medicine.totalQuantity > 0
+      ? Math.max(1, Math.round(medicine.totalQuantity))
+      : undefined;
+  const doseQuantity =
+    medicine.doseQuantity && medicine.doseQuantity > 0
+      ? Math.max(1, Math.round(medicine.doseQuantity))
+      : undefined;
+  const durationValue =
+    medicine.durationValue && medicine.durationValue > 0
+      ? Math.max(1, Math.round(medicine.durationValue))
+      : undefined;
+  const normalizedFrequency = medicine.frequency.trim().toLowerCase();
+  const normalizedDurationUnit = medicine.durationUnit?.trim().toLowerCase() ?? "";
+
+  if (normalizedFrequency.includes("as needed")) {
+    return explicitTotalQuantity;
+  }
+
+  if (normalizedDurationUnit.startsWith("month")) {
+    return explicitTotalQuantity;
+  }
+
+  if (doseQuantity && durationValue) {
+    if (normalizedFrequency.includes("weekly")) {
+      if (normalizedDurationUnit.startsWith("week")) {
+        return Math.max(1, doseQuantity * durationValue);
+      }
+
+      if (normalizedDurationUnit.startsWith("day")) {
+        return Math.max(1, doseQuantity * Math.ceil(durationValue / 7));
+      }
+    }
+
+    const durationDays = normalizedDurationUnit.startsWith("week") ? durationValue * 7 : durationValue;
+    const calculatedQuantity = doseQuantity * getAdministrationsPerDay(medicine.frequency) * durationDays;
+    return Math.max(1, calculatedQuantity);
+  }
+
+  return explicitTotalQuantity;
+}
+
+function getMedicineRequiredQuantity(medicine: PrescriptionRecord["medicines"][number]) {
+  return resolveMedicineTotalQuantity(medicine) ?? 1;
+}
+
+function requiresManualPrescriptionQuantity(
+  medicine: Pick<PrescriptionRecord["medicines"][number], "frequency" | "durationUnit">,
+) {
+  const normalizedFrequency = medicine.frequency.trim().toLowerCase();
+  const normalizedDurationUnit = medicine.durationUnit?.trim().toLowerCase() ?? "";
+
+  return normalizedFrequency.includes("as needed") || normalizedDurationUnit.startsWith("month");
+}
+
+function getMedicineInventoryKey(
+  medicine: Pick<PrescriptionRecord["medicines"][number], "medicineId" | "medicineName" | "strength" | "doseUnit">,
+) {
+  if (medicine.medicineId?.trim()) {
+    return `id:${medicine.medicineId.trim()}`;
+  }
+
+  return `${buildPrescriptionMedicineLabel(medicine).trim().toLowerCase()}|${medicine.doseUnit?.trim().toLowerCase() ?? ""}`;
+}
+
+function getInventoryItemKey(item: InventoryItemRecord) {
+  if (item.medicineId?.trim()) {
+    return `id:${item.medicineId.trim()}`;
+  }
+
+  return `${item.medicineName.trim().toLowerCase()}|${item.unit.trim().toLowerCase()}`;
+}
+
+function getMedicineUnitPriceCents(
+  medicine: PrescriptionRecord["medicines"][number],
+  inventoryItems: InventoryItemRecord[],
+) {
+  const matchingItem = inventoryItems.find((item) => getInventoryItemKey(item) === getMedicineInventoryKey(medicine));
+
+  if (matchingItem) {
+    return matchingItem.unitPriceCents;
+  }
+
+  return 2500;
+}
+
+function normalizeCatalogText(value?: string) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+async function ensureMedicineCatalogEntry(input: {
+  organizationId: string;
+  medicineName: string;
+  strength?: string;
+  unit: string;
+  genericName?: string;
+}) {
+  const normalizedName = normalizeCatalogText(input.medicineName);
+  const normalizedStrength = normalizeCatalogText(input.strength);
+  const normalizedUnit = normalizeCatalogText(input.unit);
+  const existingResult = await query<{
+    id: string;
+    organization_id: string;
+    name: string;
+    strength: string | null;
+    unit: string;
+    generic_name: string | null;
+    active: boolean;
+    created_at: string | Date;
+    updated_at: string | Date;
+  }>(
+    `select * from medicine_catalog
+     where organization_id = $1
+       and normalized_name = $2
+       and normalized_strength = $3
+       and normalized_unit = $4
+     limit 1`,
+    [input.organizationId, normalizedName, normalizedStrength, normalizedUnit],
+  );
+
+  if (existingResult.rows[0]) {
+    const row = existingResult.rows[0];
+    return {
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      name: String(row.name),
+      strength: row.strength ? String(row.strength) : undefined,
+      unit: String(row.unit),
+      genericName: row.generic_name ? String(row.generic_name) : undefined,
+      active: Boolean(row.active),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
+    };
+  }
+
+  const createdAt = new Date().toISOString();
+  const id = `MEDCAT-${randomBytes(6).toString("hex")}`;
+  await query(
+    `insert into medicine_catalog (
+      id, organization_id, name, strength, unit, generic_name, active,
+      normalized_name, normalized_strength, normalized_unit, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, true, $7, $8, $9, $10, $10)`,
+    [
+      id,
+      input.organizationId,
+      input.medicineName.trim(),
+      input.strength?.trim() || null,
+      input.unit.trim(),
+      input.genericName?.trim() || null,
+      normalizedName,
+      normalizedStrength,
+      normalizedUnit,
+      createdAt,
+    ],
+  );
+
+  return {
+    id,
+    organizationId: input.organizationId,
+    name: input.medicineName.trim(),
+    strength: input.strength?.trim() || undefined,
+    unit: input.unit.trim(),
+    genericName: input.genericName?.trim() || undefined,
+    active: true,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+async function reconcileMissingInvoices(state: HospitalState) {
+  const createdInvoices: InvoiceRecord[] = [];
+
+  for (const request of state.labRequests) {
+    const hasInvoice = state.invoices.some(
+      (invoice) =>
+        invoice.organizationId === request.organizationId &&
+        invoice.sourceType === "lab-request" &&
+        invoice.sourceId === request.id,
+    );
+
+    if (hasInvoice) {
+      continue;
+    }
+
+    const labTest = state.labTests.find((test) => test.id === request.testId);
+    if (!labTest) {
+      continue;
+    }
+
+    const invoice = buildInvoiceRecord({
+      patientId: request.patientId,
+      patientName: request.patientName,
+      organizationId: request.organizationId,
+      hospitalId: request.hospitalId,
+      sourceType: "lab-request",
+      sourceId: request.id,
+      dueDate: request.requestedDate,
+      items: [
+        {
+          description: request.testName,
+          category: "Laboratory",
+          quantity: 1,
+          unitAmountCents: labTest.priceCents ?? 0,
+        },
+      ],
+    });
+
+    await insertInvoice(invoice);
+    await insertInvoiceItems(invoice.items);
+    createdInvoices.push(invoice);
+  }
+
+  return createdInvoices;
+}
+
+function buildInvoiceStatus(totalCents: number, amountPaidCents: number): InvoiceStatus {
+  if (amountPaidCents <= 0) {
+    return "Pending";
+  }
+
+  if (amountPaidCents >= totalCents) {
+    return "Paid";
+  }
+
+  return "Partially Paid";
+}
+
+function getScopedInvoicesForUser(user: SafeUser, state: HospitalState) {
+  if (user.role === "patient") {
+    return state.invoices.filter((invoice) => invoice.patientId === user.id);
+  }
+
+  if (user.role === "administrator" || user.role === "receptionist") {
+    return state.invoices.filter((invoice) => invoice.organizationId === user.organizationId);
+  }
+
+  return [];
+}
+
+function getScopedNotificationsForUser(user: SafeUser, state: HospitalState) {
+  return state.notifications.filter(
+    (notification) =>
+      notification.organizationId === user.organizationId && notification.userId === user.id,
+  );
+}
+
+function buildInvoiceStateWithUpdates(
+  state: HospitalState,
+  updatedInvoices: InvoiceRecord[],
+) {
+  if (updatedInvoices.length === 0) {
+    return state;
+  }
+
+  const updatedInvoiceIds = new Set(updatedInvoices.map((invoice) => invoice.id));
+  return {
+    ...state,
+    invoices: [
+      ...updatedInvoices,
+      ...state.invoices.filter((invoice) => !updatedInvoiceIds.has(invoice.id)),
+    ],
+  };
+}
+
+async function repairBrokenZeroValueInvoices(state: HospitalState) {
+  const repairedInvoices: InvoiceRecord[] = [];
+
+  for (const invoice of state.invoices) {
+    if (
+      invoice.sourceType !== "lab-request" ||
+      invoice.paymentStatus === "Paid" ||
+      invoice.totalCents > 0 ||
+      invoice.amountDueCents > 0 ||
+      invoice.items.length === 0
+    ) {
+      continue;
+    }
+
+    const linkedRequest = state.labRequests.find(
+      (request) =>
+        request.id === invoice.sourceId &&
+        request.organizationId === invoice.organizationId,
+    );
+    const linkedTest = linkedRequest
+      ? state.labTests.find(
+          (test) =>
+            test.id === linkedRequest.testId &&
+            test.organizationId === invoice.organizationId,
+        )
+      : null;
+    const configuredPriceCents = linkedTest?.priceCents ?? 0;
+
+    if (configuredPriceCents <= 0) {
+      continue;
+    }
+
+    const updatedItems = invoice.items.map((item) => ({
+      ...item,
+      unitAmountCents: configuredPriceCents,
+      totalAmountCents: item.quantity * configuredPriceCents,
+    }));
+    const subtotalCents = updatedItems.reduce(
+      (sum, item) => sum + item.totalAmountCents,
+      0,
+    );
+    const amountDueCents = Math.max(0, subtotalCents - invoice.amountPaidCents);
+    const paymentStatus = buildInvoiceStatus(subtotalCents, invoice.amountPaidCents);
+    const updatedInvoice: InvoiceRecord = {
+      ...invoice,
+      subtotalCents,
+      totalCents: subtotalCents,
+      amountDueCents,
+      paymentStatus,
+      items: updatedItems,
+    };
+
+    await withTransaction(async (client) => {
+      for (const item of updatedItems) {
+        await client.query(
+          `update invoice_items
+           set unit_amount_cents = $3,
+               total_amount_cents = $4
+           where id = $1 and invoice_id = $2`,
+          [item.id, item.invoiceId, item.unitAmountCents, item.totalAmountCents],
+        );
+      }
+
+      await client.query(
+        `update invoices
+         set subtotal_cents = $3,
+             total_cents = $4,
+             amount_due_cents = $5,
+             payment_status = $6,
+             updated_at = now()
+         where id = $1 and organization_id = $2`,
+        [
+          updatedInvoice.id,
+          updatedInvoice.organizationId,
+          updatedInvoice.subtotalCents,
+          updatedInvoice.totalCents,
+          updatedInvoice.amountDueCents,
+          updatedInvoice.paymentStatus,
+        ],
+      );
+    });
+
+    repairedInvoices.push(updatedInvoice);
+  }
+
+  return repairedInvoices;
+}
+
+async function notifyUsers(input: {
+  organizationId: string;
+  userIds: string[];
+  title: string;
+  message: string;
+  category: NotificationRecord["category"];
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+}) {
+  const createdAt = new Date().toISOString();
+  const requestedUserIds = [...new Set(input.userIds.filter(Boolean))];
+
+  if (requestedUserIds.length === 0) {
+    return [] as NotificationRecord[];
+  }
+
+  const existingUsersResult = await query<{ id: string }>(
+    `select id from users where organization_id = $1 and id = any($2::text[])`,
+    [input.organizationId, requestedUserIds],
+  );
+  const validUserIds = new Set(existingUsersResult.rows.map((row) => String(row.id)));
+  const uniqueUserIds = requestedUserIds.filter((userId) => validUserIds.has(userId));
+
+  if (uniqueUserIds.length === 0) {
+    return [] as NotificationRecord[];
+  }
+
+  const notifications = uniqueUserIds.map((userId) => ({
+    id: createNotificationId(),
+    userId,
+    organizationId: input.organizationId,
+    title: input.title,
+    message: input.message,
+    category: input.category,
+    relatedEntityType: input.relatedEntityType,
+    relatedEntityId: input.relatedEntityId,
+    read: false,
+    createdAt,
+  })) satisfies NotificationRecord[];
+
+  await insertNotifications(notifications);
+  return notifications;
+}
+
+function buildInvoiceRecord(input: {
+  patientId: string;
+  patientName: string;
+  organizationId: string;
+  hospitalId: string;
+  sourceType: InvoiceRecord["sourceType"];
+  sourceId: string;
+  dueDate?: string;
+  items: Array<{
+    description: string;
+    category: InvoiceItemRecord["category"];
+    quantity: number;
+    unitAmountCents: number;
+  }>;
+}) {
+  const invoiceId = createInvoiceId();
+  const mappedItems: InvoiceItemRecord[] = input.items.map((item) => ({
+    id: `INVITEM-${randomBytes(4).toString("hex")}`,
+    invoiceId,
+    organizationId: input.organizationId,
+    description: item.description,
+    category: item.category,
+    quantity: item.quantity,
+    unitAmountCents: item.unitAmountCents,
+    totalAmountCents: item.quantity * item.unitAmountCents,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+  }));
+  const subtotalCents = mappedItems.reduce((sum, item) => sum + item.totalAmountCents, 0);
+
+  return {
+    id: invoiceId,
+    invoiceNumber: createInvoiceNumber(),
+    patientId: input.patientId,
+    patientName: input.patientName,
+    organizationId: input.organizationId,
+    hospitalId: input.hospitalId,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    createdAt: new Date().toISOString(),
+    dueDate: input.dueDate,
+    subtotalCents,
+    totalCents: subtotalCents,
+    amountPaidCents: 0,
+    amountDueCents: subtotalCents,
+    paymentStatus: "Pending" as InvoiceStatus,
+    items: mappedItems,
+    payments: [],
+  } satisfies InvoiceRecord;
+}
+
 function getAllowedLabRequestStatuses(status: LabRequestRecord["status"]): LabRequestRecord["status"][] {
   switch (status) {
     case "Requested":
@@ -784,20 +1357,43 @@ function validatePrescriptionDraft(draft: PrescriptionDraft) {
   }
 
   for (const [index, medicine] of draft.medicines.entries()) {
+    if (!medicine.medicineId?.trim()) {
+      errors[`medicines.${index}.medicineId`] = "Select a medicine from the hospital catalog.";
+    }
+
     if (!medicine.medicineName.trim()) {
       errors[`medicines.${index}.medicineName`] = "Medicine name is required.";
     }
 
-    if (!medicine.dosage.trim()) {
-      errors[`medicines.${index}.dosage`] = "Dosage is required.";
+    if (!medicine.doseQuantity || medicine.doseQuantity <= 0) {
+      errors[`medicines.${index}.doseQuantity`] = "Dose quantity is required.";
+    }
+
+    if (!medicine.doseUnit?.trim()) {
+      errors[`medicines.${index}.doseUnit`] = "Dose unit is required.";
     }
 
     if (!medicine.frequency.trim()) {
       errors[`medicines.${index}.frequency`] = "Frequency is required.";
     }
 
-    if (!medicine.duration.trim()) {
-      errors[`medicines.${index}.duration`] = "Duration is required.";
+    if (!medicine.durationValue || medicine.durationValue <= 0) {
+      errors[`medicines.${index}.durationValue`] = "Duration is required.";
+    }
+
+    if (!medicine.durationUnit?.trim()) {
+      errors[`medicines.${index}.durationUnit`] = "Duration unit is required.";
+    }
+
+    if (requiresManualPrescriptionQuantity(medicine)) {
+      if (!medicine.totalQuantity || medicine.totalQuantity <= 0) {
+        errors[`medicines.${index}.totalQuantity`] = "Total quantity is required.";
+      }
+    } else {
+      const resolvedQuantity = resolveMedicineTotalQuantity(normalizePrescriptionMedicine(medicine));
+      if (!resolvedQuantity || resolvedQuantity <= 0) {
+        errors[`medicines.${index}.totalQuantity`] = "Total quantity could not be calculated.";
+      }
     }
   }
 
@@ -815,12 +1411,15 @@ function normalizePrescriptionDraft(draft: PrescriptionDraft): PrescriptionDraft
   return {
     patientId: draft.patientId.trim(),
     appointmentId: draft.appointmentId?.trim() || undefined,
-    medicines: draft.medicines.map((medicine) => ({
-      medicineName: medicine.medicineName.trim(),
-      dosage: medicine.dosage.trim(),
-      frequency: medicine.frequency.trim(),
-      duration: medicine.duration.trim(),
-    })),
+    medicines: draft.medicines.map((medicine) => {
+      const normalizedMedicine = normalizePrescriptionMedicine(medicine);
+      const resolvedQuantity = resolveMedicineTotalQuantity(normalizedMedicine);
+
+      return {
+        ...normalizedMedicine,
+        totalQuantity: resolvedQuantity,
+      };
+    }),
     instructions: draft.instructions.trim(),
   };
 }
@@ -1184,6 +1783,12 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       labTests: state.labTests.filter((test) => test.organizationId === user.organizationId),
       labRequests: state.labRequests.filter((request) => request.organizationId === user.organizationId),
       labReports: state.labReports.filter((report) => report.organizationId === user.organizationId),
+      invoices: getScopedInvoicesForUser(user, state),
+      inventoryItems:
+        role === "administrator"
+          ? state.inventoryItems.filter((item) => item.organizationId === user.organizationId)
+          : [],
+      notifications: getScopedNotificationsForUser(user, state),
     };
   }
 
@@ -1218,6 +1823,9 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
         const linkedRequest = state.labRequests.find((request) => request.id === report.labRequestId);
         return linkedRequest ? patientNames.has(linkedRequest.patientName) : false;
       }),
+      invoices: [],
+      inventoryItems: state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
+      notifications: getScopedNotificationsForUser(user, state),
     };
   }
 
@@ -1235,6 +1843,9 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       labTests: state.labTests.filter((test) => test.organizationId === user.organizationId),
       labRequests: state.labRequests.filter((request) => request.organizationId === user.organizationId),
       labReports: state.labReports.filter((report) => report.organizationId === user.organizationId),
+      invoices: [],
+      inventoryItems: [],
+      notifications: getScopedNotificationsForUser(user, state),
     };
   }
 
@@ -1249,6 +1860,9 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       ),
       labRequests: [],
       labReports: [],
+      invoices: [],
+      inventoryItems: state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
+      notifications: getScopedNotificationsForUser(user, state),
     };
   }
 
@@ -1279,6 +1893,9 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
     labReports: emailVerified
       ? state.labReports.filter((report) => report.patientId === user.id)
       : [],
+    invoices: emailVerified ? getScopedInvoicesForUser(user, state) : [],
+    inventoryItems: [],
+    notifications: getScopedNotificationsForUser(user, state),
     queueEntries: state.queueEntries.filter(
       (entry) =>
         entry.patientName === user.patientName ||
@@ -1289,16 +1906,30 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
 
 export async function getScopedHospitalStateForUser(user: SafeUser): Promise<HospitalStateResponse> {
   const state = await measurePerfStep("scope.load-state", () => loadHospitalState());
-  const scopedState = withScopedState(user.role, user, state);
-  const organizationId = getUserOrganizationId(user, state);
+  const repairedInvoices = await measurePerfStep("scope.repair-zero-invoices", () =>
+    repairBrokenZeroValueInvoices(state),
+  );
+  const repairedState = buildInvoiceStateWithUpdates(state, repairedInvoices);
+  const reconciledInvoices = await measurePerfStep("scope.reconcile-invoices", () =>
+    reconcileMissingInvoices(repairedState),
+  );
+  const effectiveState =
+    reconciledInvoices.length > 0
+      ? {
+          ...repairedState,
+          invoices: [...reconciledInvoices, ...repairedState.invoices],
+        }
+      : repairedState;
+  const scopedState = withScopedState(user.role, user, effectiveState);
+  const organizationId = getUserOrganizationId(user, effectiveState);
   const sharedMeta = {
-    appointmentSlotLoads: getAppointmentSlotLoads(state, organizationId),
-    labSlotLoads: getLabSlotLoads(state, organizationId),
+    appointmentSlotLoads: getAppointmentSlotLoads(effectiveState, organizationId),
+    labSlotLoads: getLabSlotLoads(effectiveState, organizationId),
   };
 
   if (user.role === "doctor") {
     const users = await measurePerfStep("scope.load-users", () => loadUsers());
-    const scopedPatients = await getDoctorScopedPatients(state, user, users);
+    const scopedPatients = await getDoctorScopedPatients(effectiveState, user, users);
     const patientProfiles = users
       .filter(
         (currentUser) =>
@@ -1346,6 +1977,216 @@ export async function getLabRequestsForUser(user: SafeUser) {
 
   return {
     labRequests: getScopedLabRequestsForUser(user, state),
+  };
+}
+
+function buildHistoryDateRange(
+  preset: string,
+  dateFrom?: string,
+  dateTo?: string,
+) {
+  const now = new Date();
+
+  if (preset === "today") {
+    const today = getCurrentLocalDateIso(now);
+    return { dateFrom: today, dateTo: today };
+  }
+
+  if (preset === "24h") {
+    return { dateFrom: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString() };
+  }
+
+  if (preset === "7d") {
+    return { dateFrom: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString() };
+  }
+
+  if (preset === "30d") {
+    return { dateFrom: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString() };
+  }
+
+  return {
+    dateFrom: dateFrom?.trim() || undefined,
+    dateTo: dateTo?.trim() || undefined,
+  };
+}
+
+export async function getDoctorHistory(
+  user: SafeUser,
+  input: {
+    kind: "medical-records" | "prescriptions";
+    page: number;
+    pageSize: number;
+    sort: "newest" | "oldest";
+    patient?: string;
+    datePreset?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  },
+) {
+  if (user.role !== "doctor" || !user.doctorId) {
+    throw createHttpError(403, "You do not have access to this history.");
+  }
+
+  const page = Math.max(1, Math.round(input.page || 1));
+  const pageSize = Math.min(20, Math.max(1, Math.round(input.pageSize || 10)));
+  const offset = (page - 1) * pageSize;
+  const sortDirection = input.sort === "oldest" ? "asc" : "desc";
+  const patientFilter = input.patient?.trim() ? `%${input.patient.trim().toLowerCase()}%` : undefined;
+  const { dateFrom, dateTo } = buildHistoryDateRange(input.datePreset ?? "all", input.dateFrom, input.dateTo);
+
+  if (input.kind === "medical-records") {
+    const params: unknown[] = [user.organizationId, user.doctorId];
+    const conditions = ["organization_id = $1", "doctor_id = $2"];
+
+    if (patientFilter) {
+      params.push(patientFilter);
+      conditions.push(`lower(patient_name) like $${params.length}`);
+    }
+
+    if (dateFrom) {
+      params.push(dateFrom.slice(0, 10));
+      conditions.push(`visit_date >= $${params.length}`);
+    }
+
+    if (dateTo) {
+      params.push(dateTo.slice(0, 10));
+      conditions.push(`visit_date <= $${params.length}`);
+    }
+
+    const countResult = await query<{ total: string }>(
+      `select count(*)::text as total from medical_records where ${conditions.join(" and ")}`,
+      params,
+    );
+    params.push(pageSize, offset);
+    const itemsResult = await query(
+      `select * from medical_records
+       where ${conditions.join(" and ")}
+       order by visit_date ${sortDirection}, created_at ${sortDirection}
+       limit $${params.length - 1} offset $${params.length}`,
+      params,
+    );
+
+    const totalItems = Number(countResult.rows[0]?.total ?? 0);
+    return {
+      items: itemsResult.rows.map((row) => ({
+        id: String(row.id),
+        patientId: String(row.patient_id),
+        patientName: String(row.patient_name),
+        doctorId: String(row.doctor_id),
+        doctorName: String(row.doctor_name),
+        appointmentId: asString(row.appointment_id),
+        hospitalId: String(row.hospital_id),
+        organizationId: String(row.organization_id),
+        visitDate: String(row.visit_date),
+        diagnosis: String(row.diagnosis),
+        clinicalNotes: String(row.clinical_notes),
+        treatmentAdvice: String(row.treatment_advice),
+        createdAt: new Date(String(row.created_at)).toISOString(),
+        updatedAt: asString(row.updated_at)
+          ? new Date(String(row.updated_at)).toISOString()
+          : undefined,
+      })),
+      page,
+      pageSize,
+      totalItems,
+      totalPages: Math.max(1, Math.ceil(totalItems / pageSize)),
+    };
+  }
+
+  const params: unknown[] = [user.organizationId, user.doctorId];
+  const conditions = ["p.organization_id = $1", "p.doctor_id = $2"];
+
+  if (patientFilter) {
+    params.push(patientFilter);
+    conditions.push(`lower(p.patient_name) like $${params.length}`);
+  }
+
+  if (dateFrom) {
+    params.push(dateFrom);
+    conditions.push(`p.created_at >= $${params.length}`);
+  }
+
+  if (dateTo) {
+    params.push(dateTo.length === 10 ? `${dateTo}T23:59:59.999Z` : dateTo);
+    conditions.push(`p.created_at <= $${params.length}`);
+  }
+
+  const countResult = await query<{ total: string }>(
+    `select count(*)::text as total from prescriptions p where ${conditions.join(" and ")}`,
+    params,
+  );
+  params.push(pageSize, offset);
+  const itemsResult = await query(
+    `select p.* from prescriptions p
+     where ${conditions.join(" and ")}
+     order by p.created_at ${sortDirection}
+     limit $${params.length - 1} offset $${params.length}`,
+    params,
+  );
+
+  const prescriptionIds = itemsResult.rows.map((row) => String(row.id));
+  const medicinesResult =
+    prescriptionIds.length > 0
+      ? await query(
+          `select * from prescription_medicines
+           where prescription_id = any($1::text[])
+           order by prescription_id asc, display_order asc`,
+          [prescriptionIds],
+        )
+      : { rows: [] as Record<string, unknown>[] };
+  const medicinesByPrescriptionId = new Map<string, PrescriptionRecord["medicines"]>();
+  for (const row of medicinesResult.rows) {
+    const prescriptionId = String(row.prescription_id);
+    const current = medicinesByPrescriptionId.get(prescriptionId) ?? [];
+    current.push({
+      medicineId: asString(row.medicine_id),
+      medicineName: String(row.medicine_name),
+      strength: asString(row.strength),
+      doseQuantity:
+        row.dose_quantity === null || row.dose_quantity === undefined ? undefined : Number(row.dose_quantity),
+      doseUnit: asString(row.dose_unit),
+      dosage: String(row.dosage),
+      frequency: String(row.frequency),
+      durationValue:
+        row.duration_value === null || row.duration_value === undefined ? undefined : Number(row.duration_value),
+      durationUnit: asString(row.duration_unit),
+      duration: String(row.duration),
+      totalQuantity:
+        row.total_quantity === null || row.total_quantity === undefined ? undefined : Number(row.total_quantity),
+      instructions: asString(row.instructions_notes),
+    });
+    medicinesByPrescriptionId.set(prescriptionId, current);
+  }
+
+  const totalItems = Number(countResult.rows[0]?.total ?? 0);
+  return {
+    items: itemsResult.rows.map((row) => ({
+      id: String(row.id),
+      patientId: String(row.patient_id),
+      patientName: String(row.patient_name),
+      doctorId: String(row.doctor_id),
+      doctorName: String(row.doctor_name),
+      hospitalId: String(row.hospital_id),
+      organizationId: String(row.organization_id),
+      appointmentId: asString(row.appointment_id),
+      medicines: medicinesByPrescriptionId.get(String(row.id)) ?? [],
+      instructions: String(row.instructions),
+      status: row.status as PrescriptionRecord["status"],
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      dispensedAt: asString(row.dispensed_at)
+        ? new Date(String(row.dispensed_at)).toISOString()
+        : undefined,
+      dispensedBy: asString(row.dispensed_by_id)
+        ? {
+            id: String(row.dispensed_by_id),
+            name: String(row.dispensed_by_name),
+          }
+        : undefined,
+    })),
+    page,
+    pageSize,
+    totalItems,
+    totalPages: Math.max(1, Math.ceil(totalItems / pageSize)),
   };
 }
 
@@ -1410,10 +2251,20 @@ export async function updateLabRequestStatus(
       status,
     }),
   );
+  const createdNotifications = await notifyUsers({
+    organizationId: request.organizationId,
+    userIds: [request.patientId],
+    title: "Laboratory status updated",
+    message: `${request.testName} is now ${status}.`,
+    category: "Laboratory",
+    relatedEntityType: "lab-request",
+    relatedEntityId: request.id,
+  });
 
   return {
     patch: {
       labRequests: [updatedRequest],
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
       meta: {
         labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
       },
@@ -1494,6 +2345,15 @@ export async function createLabReport(
     });
     await insertLabReport(report);
   });
+  const createdNotifications = await notifyUsers({
+    organizationId: request.organizationId,
+    userIds: [request.patientId],
+    title: "Laboratory report ready",
+    message: `${request.testName} report is now available in your dashboard.`,
+    category: "Laboratory",
+    relatedEntityType: "lab-report",
+    relatedEntityId: report.id,
+  });
   await writeAuditLog({
     organizationId: request.organizationId,
     actorUserId: user.id,
@@ -1509,6 +2369,7 @@ export async function createLabReport(
     patch: {
       labRequests: [updatedRequest],
       labReports: [stripLabReportAttachmentContent(report)],
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
       meta: {
         labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
       },
@@ -1692,7 +2553,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     throw createHttpError(403, "You do not have access to create prescriptions.");
   }
 
-  const [state, users] = await measurePerfStep("prescription.load-context", () =>
+  const [state, loadedUsers] = await measurePerfStep("prescription.load-context", () =>
     Promise.all([loadHospitalState(), loadUsers()]),
   );
   const normalizedDraft = normalizePrescriptionDraft(draft);
@@ -1704,7 +2565,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     });
   }
 
-  const scopedPatients = await getDoctorScopedPatients(state, user, users);
+  const scopedPatients = await getDoctorScopedPatients(state, user, loadedUsers);
   const patient = scopedPatients.get(normalizedDraft.patientId);
 
   if (!patient) {
@@ -1740,6 +2601,38 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     throw createHttpError(400, "This doctor account is missing a valid staff profile.");
   }
 
+  const catalogById = new Map(
+    state.medicineCatalog
+      .filter((medicine) => medicine.organizationId === doctor.organizationId)
+      .map((medicine) => [medicine.id, medicine] as const),
+  );
+  const normalizedMedicines = normalizedDraft.medicines.map((medicine, index) => {
+    const catalogMedicine = medicine.medicineId ? catalogById.get(medicine.medicineId) : undefined;
+
+    if (!catalogMedicine) {
+      throw createHttpError(400, "Please review the prescription details provided.", {
+        errors: {
+          [`medicines.${index}.medicineId`]: "Medicine is not linked to the hospital catalog.",
+        },
+      });
+    }
+
+    return {
+      ...medicine,
+      medicineId: catalogMedicine.id,
+      medicineName: catalogMedicine.name,
+      strength: catalogMedicine.strength,
+      doseUnit: catalogMedicine.unit,
+      dosage: `${medicine.doseQuantity ?? 1} ${catalogMedicine.unit}`.trim(),
+      totalQuantity: getMedicineRequiredQuantity({
+        ...medicine,
+        medicineName: catalogMedicine.name,
+        strength: catalogMedicine.strength,
+        doseUnit: catalogMedicine.unit,
+      }),
+    };
+  });
+
   const prescription: PrescriptionRecord = {
     id: createPrescriptionId(),
     patientId: patient.patientId,
@@ -1749,13 +2642,29 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
     hospitalId: doctor.organizationId,
     organizationId: doctor.organizationId,
     appointmentId: normalizedDraft.appointmentId,
-    medicines: normalizedDraft.medicines,
+    medicines: normalizedMedicines,
     instructions: normalizedDraft.instructions,
     status: "Issued",
     createdAt: new Date().toISOString(),
   };
 
   await measurePerfStep("prescription.write", () => insertPrescription(prescription));
+  const pharmacistUserIds = loadedUsers
+      .filter(
+        (currentUser) =>
+          currentUser.role === "pharmacist" &&
+          currentUser.organizationId === doctor.organizationId,
+      )
+      .map((currentUser) => currentUser.id);
+  const createdNotifications = await notifyUsers({
+    organizationId: doctor.organizationId,
+    userIds: [patient.patientId, ...pharmacistUserIds],
+    title: "Prescription issued",
+    message: `${doctor.name} issued a prescription for ${patient.patientName}.`,
+    category: "Prescription",
+    relatedEntityType: "prescription",
+    relatedEntityId: prescription.id,
+  });
   await writeAuditLog({
     organizationId: doctor.organizationId,
     actorUserId: user.id,
@@ -1770,6 +2679,7 @@ export async function createPrescription(user: SafeUser, draft: PrescriptionDraf
   return {
     patch: {
       prescriptions: [prescription],
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
     },
   };
 }
@@ -1787,7 +2697,7 @@ export async function dispensePrescription(
     throw createHttpError(400, "Only dispensing updates are supported in this workflow.");
   }
 
-  const state = await measurePerfStep("appointment.create.load-state", () => loadHospitalState());
+  const state = await measurePerfStep("prescription.dispense.load-state", () => loadHospitalState());
   const prescription = state.prescriptions.find((item) => item.id === prescriptionId);
 
   if (!prescription) {
@@ -1802,9 +2712,66 @@ export async function dispensePrescription(
     throw createHttpError(400, "This prescription has already been dispensed.");
   }
 
+  const today = getCurrentLocalDateIso();
+  const normalizedMedicines = prescription.medicines.map((medicine) =>
+    normalizePrescriptionMedicine(medicine),
+  );
+  const inventoryByMedicine = new Map<string, InventoryItemRecord[]>();
+  for (const item of state.inventoryItems) {
+    if (
+      item.organizationId !== user.organizationId ||
+      item.quantityInStock <= 0 ||
+      item.expiryDate < today
+    ) {
+      continue;
+    }
+
+    const key = getInventoryItemKey(item);
+    const current = inventoryByMedicine.get(key) ?? [];
+    current.push(item);
+    inventoryByMedicine.set(key, current);
+  }
+
+  const updatedInventoryMap = new Map<string, InventoryItemRecord>();
+  for (const medicine of normalizedMedicines) {
+    const medicineKey = getMedicineInventoryKey(medicine);
+    const availableBatches = [...(inventoryByMedicine.get(medicineKey) ?? [])].sort((left, right) =>
+      left.expiryDate.localeCompare(right.expiryDate),
+    );
+    const requiredQuantity = getMedicineRequiredQuantity(medicine);
+    const availableQuantity = availableBatches.reduce(
+      (sum, item) => sum + item.quantityInStock,
+      0,
+    );
+
+    if (availableQuantity < requiredQuantity) {
+      throw createHttpError(
+        400,
+        `Insufficient stock for ${buildPrescriptionMedicineLabel(medicine)}. Available: ${availableQuantity}, required: ${requiredQuantity}.`,
+      );
+    }
+
+    let remaining = requiredQuantity;
+    for (const batch of availableBatches) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const consumed = Math.min(batch.quantityInStock, remaining);
+      const nextBatch: InventoryItemRecord = {
+        ...batch,
+        quantityInStock: batch.quantityInStock - consumed,
+        updatedAt: new Date().toISOString(),
+      };
+      updatedInventoryMap.set(nextBatch.id, nextBatch);
+      remaining -= consumed;
+    }
+  }
+
   const dispensedAt = new Date().toISOString();
   const updatedPrescription: PrescriptionRecord = {
     ...prescription,
+    medicines: normalizedMedicines,
     status: "Dispensed",
     dispensedAt,
     dispensedBy: {
@@ -1813,13 +2780,172 @@ export async function dispensePrescription(
     },
   };
 
-  await markPrescriptionDispensed({
-    prescriptionId,
-    organizationId: prescription.organizationId,
-    dispensedAt,
-    dispensedById: user.id,
-    dispensedByName: user.displayName,
+  const existingInvoice = state.invoices.find(
+    (invoice) =>
+      invoice.organizationId === prescription.organizationId &&
+      invoice.sourceType === "prescription" &&
+      invoice.sourceId === prescription.id,
+  );
+  const createdInvoice =
+    existingInvoice ??
+    buildInvoiceRecord({
+      patientId: prescription.patientId,
+      patientName: prescription.patientName,
+      organizationId: prescription.organizationId,
+      hospitalId: prescription.hospitalId,
+      sourceType: "prescription",
+      sourceId: prescription.id,
+      dueDate: today,
+      items: normalizedMedicines.map((medicine) => ({
+        description: buildPrescriptionMedicineLabel(medicine),
+        category: "Medicine",
+        quantity: getMedicineRequiredQuantity(medicine),
+        unitAmountCents: getMedicineUnitPriceCents(medicine, state.inventoryItems),
+      })),
+    });
+
+  await withTransaction(async (client) => {
+    for (const item of updatedInventoryMap.values()) {
+      await client.query(
+        `update inventory_items
+         set medicine_id = $3,
+             medicine_name = $4,
+             generic_name = $5,
+             batch_number = $6,
+             quantity_in_stock = $7,
+             unit = $8,
+             unit_price_cents = $9,
+             expiry_date = $10,
+             reorder_level = $11,
+             manufacturer = $12,
+             updated_at = $13
+         where id = $1 and organization_id = $2`,
+        [
+          item.id,
+          item.organizationId,
+          item.medicineId ?? null,
+          item.medicineName,
+          item.genericName ?? null,
+          item.batchNumber,
+          item.quantityInStock,
+          item.unit,
+          item.unitPriceCents,
+          item.expiryDate,
+          item.reorderLevel,
+          item.manufacturer ?? null,
+          item.updatedAt,
+        ],
+      );
+    }
+
+    await client.query(
+      `update prescriptions
+       set status = 'Dispensed',
+           dispensed_at = $3,
+           dispensed_by_id = $4,
+           dispensed_by_name = $5
+       where id = $1 and organization_id = $2 and status <> 'Dispensed'`,
+      [
+        prescriptionId,
+        prescription.organizationId,
+        dispensedAt,
+        user.id,
+        user.displayName,
+      ],
+    );
+
+    if (!existingInvoice) {
+      await client.query(
+        `insert into invoices (
+          id, invoice_number, organization_id, hospital_id, patient_id, patient_name, source_type,
+          source_id, due_date, subtotal_cents, total_cents, amount_paid_cents, amount_due_cents,
+          payment_status, created_at, updated_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        on conflict do nothing`,
+        [
+          createdInvoice.id,
+          createdInvoice.invoiceNumber,
+          createdInvoice.organizationId,
+          createdInvoice.hospitalId,
+          createdInvoice.patientId,
+          createdInvoice.patientName,
+          createdInvoice.sourceType ?? null,
+          createdInvoice.sourceId ?? null,
+          createdInvoice.dueDate ?? null,
+          createdInvoice.subtotalCents,
+          createdInvoice.totalCents,
+          createdInvoice.amountPaidCents,
+          createdInvoice.amountDueCents,
+          createdInvoice.paymentStatus,
+          createdInvoice.createdAt,
+          createdInvoice.createdAt,
+        ],
+      );
+
+      for (const item of createdInvoice.items) {
+        await client.query(
+          `insert into invoice_items (
+            id, invoice_id, organization_id, description, category, quantity, unit_amount_cents,
+            total_amount_cents, source_type, source_id
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            item.id,
+            item.invoiceId,
+            item.organizationId,
+            item.description,
+            item.category,
+            item.quantity,
+            item.unitAmountCents,
+            item.totalAmountCents,
+            item.sourceType ?? null,
+            item.sourceId ?? null,
+          ],
+        );
+      }
+    }
   });
+  const pharmacistUsers = (await loadUsers())
+    .filter(
+      (currentUser) =>
+        currentUser.role === "pharmacist" &&
+        currentUser.organizationId === prescription.organizationId,
+    )
+    .map((currentUser) => currentUser.id);
+  const createdNotifications = await notifyUsers({
+    organizationId: prescription.organizationId,
+    userIds: [prescription.patientId],
+    title: "Prescription dispensed",
+    message: `${prescription.patientName} prescription is ready from the pharmacy.`,
+    category: "Prescription",
+    relatedEntityType: "prescription",
+    relatedEntityId: prescription.id,
+  });
+  const billingNotifications = !existingInvoice
+    ? await notifyUsers({
+        organizationId: prescription.organizationId,
+        userIds: [prescription.patientId],
+        title: "Invoice generated",
+        message: `Invoice ${createdInvoice.invoiceNumber} was created for dispensed medicines.`,
+        category: "Billing",
+        relatedEntityType: "invoice",
+        relatedEntityId: createdInvoice.id,
+      })
+    : [];
+  const lowStockNotifications: NotificationRecord[] = [];
+  for (const item of updatedInventoryMap.values()) {
+    if (item.quantityInStock <= item.reorderLevel) {
+      const generated = await notifyUsers({
+        organizationId: item.organizationId,
+        userIds: pharmacistUsers,
+        title: item.quantityInStock <= 0 ? "Medicine out of stock" : "Low stock warning",
+        message: `${item.medicineName} batch ${item.batchNumber} has ${item.quantityInStock} ${item.unit}${item.quantityInStock === 1 ? "" : "s"} remaining.`,
+        category: "Inventory",
+        relatedEntityType: "inventory-item",
+        relatedEntityId: item.id,
+      });
+      lowStockNotifications.push(...generated);
+    }
+  }
   await writeAuditLog({
     organizationId: prescription.organizationId,
     actorUserId: user.id,
@@ -1831,6 +2957,11 @@ export async function dispensePrescription(
   return {
     patch: {
       prescriptions: [updatedPrescription],
+      invoices: !existingInvoice ? [createdInvoice] : [],
+      inventoryItems: [...updatedInventoryMap.values()],
+      notifications: [...createdNotifications, ...billingNotifications, ...lowStockNotifications].filter(
+        (notification) => notification.userId === user.id,
+      ),
     },
   };
 }
@@ -1887,11 +3018,30 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     status: "Scheduled",
   };
 
-  await measurePerfStep("appointment.create.write", () => insertAppointment(appointment));
-  await writeAuditLog({
-    organizationId: appointment.organizationId,
-    actorUserId: user.id,
-    action: "appointment.created",
+    await measurePerfStep("appointment.create.write", () => insertAppointment(appointment));
+    const users = await loadUsers();
+    const doctorUsers = users.filter(
+      (currentUser) =>
+        currentUser.role === "doctor" &&
+        currentUser.organizationId === appointment.organizationId &&
+        currentUser.doctorId === appointment.doctorId,
+    );
+    const createdNotifications = await notifyUsers({
+      organizationId: appointment.organizationId,
+      userIds: [
+        appointment.patientId ?? user.id,
+        ...doctorUsers.map((doctorUser) => doctorUser.id),
+      ],
+      title: "Appointment booked",
+      message: `${appointment.patientName} is scheduled for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`,
+      category: "Appointment",
+      relatedEntityType: "appointment",
+      relatedEntityId: appointment.id,
+    });
+    await writeAuditLog({
+      organizationId: appointment.organizationId,
+      actorUserId: user.id,
+      action: "appointment.created",
     entityType: "appointment",
     entityId: appointment.id,
     metadata: {
@@ -1904,13 +3054,14 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
   };
 
   return {
-    patch: {
-      appointments: [appointment],
-      meta: {
-        appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
+      patch: {
+        appointments: [appointment],
+        notifications: createdNotifications.filter((notification) => notification.userId === user.id),
+        meta: {
+          appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
+        },
       },
-    },
-  };
+    };
 }
 
 export async function updateAppointment(
@@ -2124,6 +3275,42 @@ export async function setAppointmentStatus(
 
   const updatedAppointment: AppointmentRecord = { ...appointment, status };
   const changedQueueEntries = nextQueueEntries.filter((entry) => entry.appointmentId === appointment.id);
+  let createdInvoice: InvoiceRecord | null = null;
+
+  if (
+    status === "Completed" &&
+    !state.invoices.some(
+      (invoice) =>
+        invoice.organizationId === appointment.organizationId &&
+        invoice.sourceType === "appointment" &&
+        invoice.sourceId === appointment.id,
+    )
+  ) {
+    const users = await loadUsers();
+    const doctorUser = users.find(
+      (currentUser) =>
+        currentUser.role === "doctor" &&
+        currentUser.organizationId === appointment.organizationId &&
+        currentUser.doctorId === appointment.doctorId,
+    );
+    createdInvoice = buildInvoiceRecord({
+      patientId: appointment.patientId ?? createExternalPatientId(appointment.patientName),
+      patientName: appointment.patientName,
+      organizationId: appointment.organizationId,
+      hospitalId: appointment.organizationId,
+      sourceType: "appointment",
+      sourceId: appointment.id,
+      dueDate: appointment.appointmentDate,
+      items: [
+        {
+          description: `Consultation with ${doctorUser?.displayName ?? "Assigned doctor"}`,
+          category: "Consultation",
+          quantity: 1,
+          unitAmountCents: parseCurrencyTextToCents(doctorUser?.consultationFee),
+        },
+      ],
+    });
+  }
 
   await measurePerfStep("appointment.status.write", async () => {
     await updateAppointmentStatusById({
@@ -2159,7 +3346,41 @@ export async function setAppointmentStatus(
         excludeCompleted: status !== "Completed",
       });
     }
+
+    if (createdInvoice) {
+      await insertInvoice(createdInvoice);
+      await insertInvoiceItems(createdInvoice.items);
+    }
   });
+  const patientNotificationTarget = appointment.patientId ?? user.id;
+  const createdNotifications = await notifyUsers({
+    organizationId: appointment.organizationId,
+    userIds: [patientNotificationTarget],
+    title:
+      status === "Completed"
+        ? "Appointment completed"
+        : status === "Cancelled"
+          ? "Appointment cancelled"
+          : status === "Checked in"
+            ? "Appointment checked in"
+            : "Consultation started",
+    message: `${appointment.patientName} appointment is now ${status}.`,
+    category: "Appointment",
+    relatedEntityType: "appointment",
+    relatedEntityId: appointment.id,
+  });
+  const billingNotifications =
+    createdInvoice && appointment.patientId
+      ? await notifyUsers({
+          organizationId: appointment.organizationId,
+          userIds: [appointment.patientId],
+          title: "Invoice generated",
+          message: `Invoice ${createdInvoice.invoiceNumber} was created after the consultation.`,
+          category: "Billing",
+          relatedEntityType: "invoice",
+          relatedEntityId: createdInvoice.id,
+        })
+      : [];
   if (status === "Cancelled" || status === "Checked in") {
     await writeAuditLog({
       organizationId: appointment.organizationId,
@@ -2176,6 +3397,10 @@ export async function setAppointmentStatus(
     patch: {
       appointments: [updatedAppointment],
       queueEntries: changedQueueEntries,
+      invoices: createdInvoice ? [createdInvoice] : [],
+      notifications: [...createdNotifications, ...billingNotifications].filter(
+        (notification) => notification.userId === user.id,
+      ),
       meta: {
         appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
       },
@@ -2573,6 +3798,295 @@ export async function updateHospitalSettings(user: SafeUser, draft: HospitalSett
   };
 }
 
+export async function recordInvoicePayment(
+  user: SafeUser,
+  invoiceId: string,
+  draft: PaymentDraft,
+) {
+  const state = await measurePerfStep("billing.load-state", () => loadHospitalState());
+  const invoice = state.invoices.find((currentInvoice) => currentInvoice.id === invoiceId);
+
+  if (!invoice) {
+    throw createHttpError(404, "Invoice not found.");
+  }
+
+  const canManageBilling = user.role === "administrator" || user.role === "receptionist";
+  const isPatientOwner = user.role === "patient" && invoice.patientId === user.id;
+
+  if (!canManageBilling && !isPatientOwner) {
+    throw createHttpError(403, "You do not have access to this invoice.");
+  }
+
+  if (invoice.amountDueCents <= 0 || invoice.paymentStatus === "Paid") {
+    throw createHttpError(400, "This invoice has already been paid.", {
+      errors: { amount: "This invoice has already been paid." },
+    });
+  }
+
+  if (draft.amount <= 0) {
+    throw createHttpError(400, "Payment amount must be greater than zero.", {
+      errors: { amount: "Payment amount must be greater than zero." },
+    });
+  }
+
+  const amountCents = Math.round(draft.amount * 100);
+  if (amountCents > invoice.amountDueCents) {
+    throw createHttpError(400, "Payment cannot exceed the outstanding balance.", {
+      errors: { amount: "Payment cannot exceed the outstanding balance." },
+    });
+  }
+
+  const payment: PaymentRecord = {
+    id: createPaymentId(),
+    invoiceId: invoice.id,
+    patientId: invoice.patientId,
+    organizationId: invoice.organizationId,
+    amountCents,
+    method: draft.method,
+    referenceNumber: draft.referenceNumber?.trim() || undefined,
+    paidAt: new Date().toISOString(),
+    recordedBy: {
+      id: user.id,
+      name: user.displayName,
+    },
+  };
+  const amountPaidCents = invoice.amountPaidCents + amountCents;
+  const amountDueCents = Math.max(0, invoice.totalCents - amountPaidCents);
+  const paymentStatus = buildInvoiceStatus(invoice.totalCents, amountPaidCents);
+  const updatedInvoice: InvoiceRecord = {
+    ...invoice,
+    amountPaidCents,
+    amountDueCents,
+    paymentStatus,
+    payments: [payment, ...invoice.payments],
+  };
+
+  await measurePerfStep("billing.write", () =>
+    withTransaction(async (client) => {
+      await client.query(
+        `insert into payments (
+          id, invoice_id, organization_id, patient_id, amount_cents, method, reference_number,
+          paid_at, recorded_by_id, recorded_by_name
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          payment.id,
+          payment.invoiceId,
+          payment.organizationId,
+          payment.patientId,
+          payment.amountCents,
+          payment.method,
+          payment.referenceNumber ?? null,
+          payment.paidAt,
+          payment.recordedBy?.id ?? null,
+          payment.recordedBy?.name ?? null,
+        ],
+      );
+      await client.query(
+        `update invoices
+         set amount_paid_cents = $3,
+             amount_due_cents = $4,
+             payment_status = $5,
+             updated_at = now()
+         where id = $1 and organization_id = $2`,
+        [
+          invoice.id,
+          invoice.organizationId,
+          amountPaidCents,
+          amountDueCents,
+          paymentStatus,
+        ],
+      );
+    }),
+  );
+  const createdNotifications = await notifyUsers({
+    organizationId: invoice.organizationId,
+    userIds: [invoice.patientId],
+    title: "Payment recorded",
+    message: `A payment was recorded for invoice ${invoice.invoiceNumber}.`,
+    category: "Billing",
+    relatedEntityType: "invoice",
+    relatedEntityId: invoice.id,
+  });
+  await writeAuditLog({
+    organizationId: invoice.organizationId,
+    actorUserId: user.id,
+    action: "billing.payment-recorded",
+    entityType: "invoice",
+    entityId: invoice.id,
+    metadata: {
+      paymentId: payment.id,
+    },
+  });
+
+  return {
+    patch: {
+      invoices: [updatedInvoice],
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
+    },
+  };
+}
+
+export async function createInventoryBatch(user: SafeUser, draft: InventoryItemDraft) {
+  if (user.role !== "pharmacist") {
+    throw createHttpError(403, "You do not have access to add inventory.");
+  }
+
+  if (!draft.medicineName.trim()) {
+    throw createHttpError(400, "Medicine name is required.", {
+      errors: { medicineName: "Medicine name is required." },
+    });
+  }
+
+  if (draft.quantityInStock <= 0) {
+    throw createHttpError(400, "Quantity must be greater than zero.", {
+      errors: { quantityInStock: "Quantity must be greater than zero." },
+    });
+  }
+
+  if (!draft.expiryDate) {
+    throw createHttpError(400, "Expiry date is required.", {
+      errors: { expiryDate: "Expiry date is required." },
+    });
+  }
+
+  const now = new Date().toISOString();
+  const catalogMedicine = await ensureMedicineCatalogEntry({
+    organizationId: user.organizationId,
+    medicineName: draft.medicineName,
+    unit: draft.unit,
+    genericName: draft.genericName,
+  });
+  const item: InventoryItemRecord = {
+    id: createInventoryItemId(),
+    organizationId: user.organizationId,
+    medicineId: catalogMedicine.id,
+    medicineName: draft.medicineName.trim(),
+    genericName: draft.genericName?.trim() || undefined,
+    batchNumber: draft.batchNumber.trim(),
+    quantityInStock: Math.round(draft.quantityInStock),
+    unit: draft.unit.trim(),
+    unitPriceCents: Math.round(draft.unitPrice * 100),
+    expiryDate: draft.expiryDate,
+    reorderLevel: Math.round(draft.reorderLevel),
+    manufacturer: draft.manufacturer?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await insertInventoryItem(item);
+  await writeAuditLog({
+    organizationId: item.organizationId,
+    actorUserId: user.id,
+    action: "inventory.batch-created",
+    entityType: "inventory-item",
+    entityId: item.id,
+  });
+
+  return {
+    patch: {
+      medicineCatalog: [catalogMedicine],
+      inventoryItems: [item],
+    },
+  };
+}
+
+export async function updateInventoryBatch(
+  user: SafeUser,
+  inventoryItemId: string,
+  draft: InventoryItemDraft,
+) {
+  if (user.role !== "pharmacist") {
+    throw createHttpError(403, "You do not have access to update inventory.");
+  }
+
+  const state = await loadHospitalState();
+  const existingItem = state.inventoryItems.find((item) => item.id === inventoryItemId);
+
+  if (!existingItem) {
+    throw createHttpError(404, "Inventory item not found.");
+  }
+
+  const updatedItem: InventoryItemRecord = {
+    medicineId: existingItem.medicineId,
+    ...existingItem,
+    medicineName: draft.medicineName.trim(),
+    genericName: draft.genericName?.trim() || undefined,
+    batchNumber: draft.batchNumber.trim(),
+    quantityInStock: Math.round(draft.quantityInStock),
+    unit: draft.unit.trim(),
+    unitPriceCents: Math.round(draft.unitPrice * 100),
+    expiryDate: draft.expiryDate,
+    reorderLevel: Math.round(draft.reorderLevel),
+    manufacturer: draft.manufacturer?.trim() || undefined,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const catalogMedicine = await ensureMedicineCatalogEntry({
+    organizationId: updatedItem.organizationId,
+    medicineName: updatedItem.medicineName,
+    unit: updatedItem.unit,
+    genericName: updatedItem.genericName,
+  });
+  updatedItem.medicineId = catalogMedicine.id;
+
+  await updateInventoryItemRecord(updatedItem);
+  await writeAuditLog({
+    organizationId: updatedItem.organizationId,
+    actorUserId: user.id,
+    action: "inventory.batch-updated",
+    entityType: "inventory-item",
+    entityId: updatedItem.id,
+  });
+
+  return {
+    patch: {
+      medicineCatalog: [catalogMedicine],
+      inventoryItems: [updatedItem],
+    },
+  };
+}
+
+export async function markNotificationAsRead(user: SafeUser, notificationId: string) {
+  const state = await loadHospitalState();
+  const notification = state.notifications.find((item) => item.id === notificationId);
+
+  if (!notification || notification.organizationId !== user.organizationId || notification.userId !== user.id) {
+    throw createHttpError(404, "Notification not found.");
+  }
+
+  if (!notification.read) {
+    await markNotificationReadById({
+      notificationId,
+      organizationId: user.organizationId,
+      userId: user.id,
+    });
+  }
+
+  return {
+    patch: {
+      notifications: [{ ...notification, read: true }],
+    },
+  };
+}
+
+export async function markAllUserNotificationsRead(user: SafeUser) {
+  const state = await loadHospitalState();
+  const updatedNotifications = state.notifications
+    .filter((notification) => notification.organizationId === user.organizationId && notification.userId === user.id)
+    .map((notification) => ({ ...notification, read: true }));
+
+  await markAllNotificationsRead({
+    organizationId: user.organizationId,
+    userId: user.id,
+  });
+
+  return {
+    patch: {
+      notifications: updatedNotifications,
+    },
+  };
+}
+
 export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
   if (user.role !== "patient") {
     throw createHttpError(403, "Only patients can create lab test requests.");
@@ -2592,7 +4106,13 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     throw createHttpError(400, "The selected lab test could not be found.");
   }
 
-  const request: LabRequestRecord = {
+  if ((selectedTest.priceCents ?? 0) <= 0) {
+    throw createHttpError(400, "Billing price is not configured for this service.", {
+      errors: { testId: "Billing price is not configured for this service." },
+    });
+  }
+
+    const request: LabRequestRecord = {
     id: createLabRequestId(state),
     patientId: user.id,
     hospitalId: user.organizationId,
@@ -2604,18 +4124,78 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     requestedDate: draft.requestedDate,
     requestedTime: draft.requestedTime,
     status: "Requested",
-    createdAt: new Date().toISOString(),
-  };
+      createdAt: new Date().toISOString(),
+    };
 
-  const nextState: HospitalState = {
-    ...state,
-    labRequests: [request, ...state.labRequests],
-  };
+    const invoice =
+      state.invoices.find(
+        (currentInvoice) =>
+          currentInvoice.organizationId === request.organizationId &&
+          currentInvoice.sourceType === "lab-request" &&
+          currentInvoice.sourceId === request.id,
+      ) ??
+      buildInvoiceRecord({
+        patientId: request.patientId,
+        patientName: request.patientName,
+        organizationId: request.organizationId,
+        hospitalId: request.hospitalId,
+        sourceType: "lab-request",
+        sourceId: request.id,
+        dueDate: request.requestedDate,
+        items: [
+          {
+            description: request.testName,
+            category: "Laboratory",
+            quantity: 1,
+            unitAmountCents: selectedTest.priceCents ?? 0,
+          },
+        ],
+      });
 
-  await measurePerfStep("lab-request.create.write", () => insertLabRequest(request));
-  await writeAuditLog({
-    organizationId: user.organizationId,
-    actorUserId: user.id,
+    const nextState: HospitalState = {
+      ...state,
+      labRequests: [request, ...state.labRequests],
+      invoices: state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+        ? state.invoices
+        : [invoice, ...state.invoices],
+    };
+
+    await measurePerfStep("lab-request.create.write", () => insertLabRequest(request));
+    if (!state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)) {
+      await insertInvoice(invoice);
+      await insertInvoiceItems(invoice.items);
+    }
+    const users = await loadUsers();
+    const labUserIds = users
+      .filter(
+        (currentUser) =>
+          currentUser.role === "laboratory" &&
+          currentUser.organizationId === request.organizationId,
+      )
+      .map((currentUser) => currentUser.id);
+    const createdNotifications = await notifyUsers({
+      organizationId: request.organizationId,
+      userIds: [user.id, ...labUserIds],
+      title: "Laboratory request booked",
+      message: `${request.testName} was requested for ${request.requestedDate} at ${request.requestedTime}.`,
+      category: "Laboratory",
+      relatedEntityType: "lab-request",
+      relatedEntityId: request.id,
+    });
+    const billingNotifications = !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+      ? await notifyUsers({
+          organizationId: request.organizationId,
+          userIds: [user.id],
+          title: "Invoice generated",
+          message: `Invoice ${invoice.invoiceNumber} was created for ${request.testName}.`,
+          category: "Billing",
+          relatedEntityType: "invoice",
+          relatedEntityId: invoice.id,
+        })
+      : [];
+    await writeAuditLog({
+      organizationId: user.organizationId,
+      actorUserId: user.id,
     action: "lab-request.created",
     entityType: "lab-request",
     entityId: request.id,
@@ -2624,11 +4204,17 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     },
   });
   return {
-    patch: {
-      labRequests: [request],
-      meta: {
-        labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
-      },
+      patch: {
+        labRequests: [request],
+        invoices: !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+          ? [invoice]
+          : [],
+        notifications: [...createdNotifications, ...billingNotifications].filter(
+          (notification) => notification.userId === user.id,
+        ),
+        meta: {
+          labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
+        },
     },
   };
 }

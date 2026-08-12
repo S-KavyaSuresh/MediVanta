@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useMemo, useState } from "react";
 
 import {
@@ -114,6 +115,7 @@ export function DoctorRecordsView() {
       ),
     [state.medicalRecords],
   );
+  const recentRecords = useMemo(() => records.slice(0, 5), [records]);
   const linkedLabReports = useMemo(() => {
     const requestsById = new Map(state.labRequests.map((request) => [request.id, request]));
 
@@ -171,7 +173,7 @@ export function DoctorRecordsView() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.35fr)]">
         <Card className="space-y-4">
           <div>
-            <h2 className="text-xl font-semibold">Create medical record</h2>
+            <h2 className="text-xl font-semibold">New record / current</h2>
             <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
               Only patients from your assigned consultation list can be selected here.
             </p>
@@ -309,15 +311,23 @@ export function DoctorRecordsView() {
         <div className="space-y-6">
           <Card className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">Recent records</h2>
-              <p className="text-sm text-[color:var(--muted-foreground)]">
-                {records.length} record{records.length === 1 ? "" : "s"}
-              </p>
+              <div>
+                <h2 className="text-xl font-semibold">Recent records</h2>
+                <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                  Latest records from your current workspace.
+                </p>
+              </div>
+              <Link
+                href="/dashboard/doctor/history?tab=medical-records"
+                className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-2.5 text-sm font-semibold text-[color:var(--foreground)] transition hover:bg-[color:var(--surface-muted)]"
+              >
+                View All History
+              </Link>
             </div>
 
-            {records.length > 0 ? (
+            {recentRecords.length > 0 ? (
               <div className="space-y-3">
-                {records.map((record) => {
+                {recentRecords.map((record) => {
                   const editable = canEditRecord(record);
                   const isEditing = editingRecordId === record.id;
 
@@ -480,8 +490,8 @@ export function DoctorRecordsView() {
               </div>
             ) : (
               <EmptyState
-                title="No medical records yet"
-                description="New records you create for patients in your scope will appear here."
+                title="No records yet"
+                description="Recently saved medical records will appear here."
               />
             )}
           </Card>

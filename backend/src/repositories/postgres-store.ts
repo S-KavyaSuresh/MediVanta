@@ -6,12 +6,20 @@ import type {
   DepartmentRecord,
   DoctorRecord,
   HospitalState,
+  InventoryItemRecord,
+  InvoiceItemRecord,
+  InvoiceRecord,
+  InvoiceStatus,
   LabReportRecord,
   LabRequestStatus,
   LabRequestRecord,
   LabTestRecord,
+  MedicineCatalogRecord,
   MedicalRecordRecord,
+  NotificationRecord,
   OrganizationRecord,
+  PaymentMethod,
+  PaymentRecord,
   PrescriptionMedicineRecord,
   PrescriptionRecord,
   QueueEntryRecord,
@@ -1276,14 +1284,37 @@ export async function insertPrescription(prescription: PrescriptionRecord) {
     await insertRows(
       client,
       "prescription_medicines",
-      ["prescription_id", "display_order", "medicine_name", "dosage", "frequency", "duration"],
+      [
+        "prescription_id",
+        "display_order",
+        "medicine_id",
+        "medicine_name",
+        "strength",
+        "dose_quantity",
+        "dose_unit",
+        "dosage",
+        "frequency",
+        "duration_value",
+        "duration_unit",
+        "duration",
+        "total_quantity",
+        "instructions_notes",
+      ],
       prescription.medicines.map((medicine, index) => [
         prescription.id,
         index,
+        medicine.medicineId ?? null,
         medicine.medicineName,
+        medicine.strength ?? null,
+        medicine.doseQuantity ?? null,
+        medicine.doseUnit ?? null,
         medicine.dosage,
         medicine.frequency,
+        medicine.durationValue ?? null,
+        medicine.durationUnit ?? null,
         medicine.duration,
+        medicine.totalQuantity ?? null,
+        medicine.instructions ?? null,
       ]),
     );
   });
@@ -1310,6 +1341,225 @@ export async function markPrescriptionDispensed(input: {
       input.dispensedById,
       input.dispensedByName,
     ],
+  );
+}
+
+export async function insertInvoice(invoice: InvoiceRecord) {
+  await query(
+    `insert into invoices (
+      id, invoice_number, organization_id, hospital_id, patient_id, patient_name, source_type,
+      source_id, due_date, subtotal_cents, total_cents, amount_paid_cents, amount_due_cents,
+      payment_status, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    on conflict do nothing`,
+    [
+      invoice.id,
+      invoice.invoiceNumber,
+      invoice.organizationId,
+      invoice.hospitalId,
+      invoice.patientId,
+      invoice.patientName,
+      invoice.sourceType ?? null,
+      invoice.sourceId ?? null,
+      invoice.dueDate ?? null,
+      invoice.subtotalCents,
+      invoice.totalCents,
+      invoice.amountPaidCents,
+      invoice.amountDueCents,
+      invoice.paymentStatus,
+      invoice.createdAt,
+      invoice.createdAt,
+    ],
+  );
+}
+
+export async function insertInvoiceItems(items: InvoiceItemRecord[]) {
+  await insertRows(
+    { query },
+    "invoice_items",
+    [
+      "id",
+      "invoice_id",
+      "organization_id",
+      "description",
+      "category",
+      "quantity",
+      "unit_amount_cents",
+      "total_amount_cents",
+      "source_type",
+      "source_id",
+    ],
+    items.map((item) => [
+      item.id,
+      item.invoiceId,
+      item.organizationId,
+      item.description,
+      item.category,
+      item.quantity,
+      item.unitAmountCents,
+      item.totalAmountCents,
+      item.sourceType ?? null,
+      item.sourceId ?? null,
+    ]),
+  );
+}
+
+export async function insertPayment(payment: PaymentRecord) {
+  await query(
+    `insert into payments (
+      id, invoice_id, organization_id, patient_id, amount_cents, method, reference_number,
+      paid_at, recorded_by_id, recorded_by_name
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      payment.id,
+      payment.invoiceId,
+      payment.organizationId,
+      payment.patientId,
+      payment.amountCents,
+      payment.method,
+      payment.referenceNumber ?? null,
+      payment.paidAt,
+      payment.recordedBy?.id ?? null,
+      payment.recordedBy?.name ?? null,
+    ],
+  );
+}
+
+export async function updateInvoicePaymentState(input: {
+  invoiceId: string;
+  organizationId: string;
+  amountPaidCents: number;
+  amountDueCents: number;
+  paymentStatus: InvoiceStatus;
+}) {
+  await query(
+    `update invoices
+     set amount_paid_cents = $3,
+         amount_due_cents = $4,
+         payment_status = $5,
+         updated_at = now()
+     where id = $1 and organization_id = $2`,
+    [
+      input.invoiceId,
+      input.organizationId,
+      input.amountPaidCents,
+      input.amountDueCents,
+      input.paymentStatus,
+    ],
+  );
+}
+
+export async function insertInventoryItem(item: InventoryItemRecord) {
+  await query(
+    `insert into inventory_items (
+      id, organization_id, medicine_id, medicine_name, generic_name, batch_number, quantity_in_stock, unit,
+      unit_price_cents, expiry_date, reorder_level, manufacturer, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [
+      item.id,
+      item.organizationId,
+      item.medicineId ?? null,
+      item.medicineName,
+      item.genericName ?? null,
+      item.batchNumber,
+      item.quantityInStock,
+      item.unit,
+      item.unitPriceCents,
+      item.expiryDate,
+      item.reorderLevel,
+      item.manufacturer ?? null,
+      item.createdAt,
+      item.updatedAt,
+    ],
+  );
+}
+
+export async function updateInventoryItemRecord(item: InventoryItemRecord) {
+  await query(
+    `update inventory_items
+     set medicine_id = $3,
+         medicine_name = $4,
+         generic_name = $5,
+         batch_number = $6,
+         quantity_in_stock = $7,
+         unit = $8,
+         unit_price_cents = $9,
+         expiry_date = $10,
+         reorder_level = $11,
+         manufacturer = $12,
+         updated_at = $13
+     where id = $1 and organization_id = $2`,
+    [
+      item.id,
+      item.organizationId,
+      item.medicineId ?? null,
+      item.medicineName,
+      item.genericName ?? null,
+      item.batchNumber,
+      item.quantityInStock,
+      item.unit,
+      item.unitPriceCents,
+      item.expiryDate,
+      item.reorderLevel,
+      item.manufacturer ?? null,
+      item.updatedAt,
+    ],
+  );
+}
+
+export async function insertNotifications(notifications: NotificationRecord[]) {
+  await insertRows(
+    { query },
+    "notifications",
+    [
+      "id",
+      "user_id",
+      "organization_id",
+      "title",
+      "message",
+      "category",
+      "related_entity_type",
+      "related_entity_id",
+      "read",
+      "created_at",
+    ],
+    notifications.map((notification) => [
+      notification.id,
+      notification.userId,
+      notification.organizationId,
+      notification.title,
+      notification.message,
+      notification.category,
+      notification.relatedEntityType ?? null,
+      notification.relatedEntityId ?? null,
+      notification.read,
+      notification.createdAt,
+    ]),
+  );
+}
+
+export async function markNotificationReadById(input: {
+  notificationId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  await query(
+    `update notifications
+     set read = true
+     where id = $1 and organization_id = $2 and user_id = $3`,
+    [input.notificationId, input.organizationId, input.userId],
+  );
+}
+
+export async function markAllNotificationsRead(input: {
+  organizationId: string;
+  userId: string;
+}) {
+  await query(
+    `update notifications
+     set read = true
+     where organization_id = $1 and user_id = $2 and read = false`,
+    [input.organizationId, input.userId],
   );
 }
 
@@ -1529,12 +1779,32 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
 
   const organizationRow = organizationResult.rows[0];
   const organizationId = String(organizationRow.id);
-  const [settingsResult, sessionsResult, departmentsResult, doctorsResult, appointmentsResult, queueResult, labTestsResult, labRequestsResult, labReportsResult, medicalRecordsResult, prescriptionsResult, prescriptionMedicinesResult] =
+  const [
+    settingsResult,
+    sessionsResult,
+    departmentsResult,
+    doctorsResult,
+    medicineCatalogResult,
+    appointmentsResult,
+    queueResult,
+    labTestsResult,
+    labRequestsResult,
+    labReportsResult,
+    medicalRecordsResult,
+    prescriptionsResult,
+    prescriptionMedicinesResult,
+    invoicesResult,
+    invoiceItemsResult,
+    paymentsResult,
+    inventoryItemsResult,
+    notificationsResult,
+  ] =
     await Promise.all([
       query("select * from hospital_settings where organization_id = $1 limit 1", [organizationId]),
       query("select * from booking_session_capacities where organization_id = $1 order by start_time asc", [organizationId]),
       query("select * from departments where organization_id = $1 order by name asc", [organizationId]),
       query("select * from doctors where organization_id = $1 order by name asc", [organizationId]),
+      query("select * from medicine_catalog where organization_id = $1 order by name asc, unit asc", [organizationId]),
       query("select * from appointments where organization_id = $1 order by appointment_date asc, appointment_time asc", [organizationId]),
       query("select * from queue_entries where organization_id = $1 order by created_at asc", [organizationId]),
       query("select * from lab_tests where organization_id = $1 order by name asc", [organizationId]),
@@ -1549,6 +1819,23 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
          order by pm.prescription_id asc, pm.display_order asc`,
         [organizationId],
       ),
+      query("select * from invoices where organization_id = $1 order by created_at desc", [organizationId]),
+      query(
+        `select ii.* from invoice_items ii
+         inner join invoices i on i.id = ii.invoice_id
+         where i.organization_id = $1
+         order by ii.invoice_id asc, ii.id asc`,
+        [organizationId],
+      ),
+      query(
+        `select p.* from payments p
+         inner join invoices i on i.id = p.invoice_id
+         where i.organization_id = $1
+         order by p.paid_at desc`,
+        [organizationId],
+      ),
+      query("select * from inventory_items where organization_id = $1 order by medicine_name asc, expiry_date asc", [organizationId]),
+      query("select * from notifications where organization_id = $1 order by created_at desc", [organizationId]),
     ]);
 
   const settingsRow = settingsResult.rows[0];
@@ -1557,12 +1844,71 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
     const prescriptionId = String(row.prescription_id);
     const current = medicinesByPrescriptionId.get(prescriptionId) ?? [];
     current.push({
+      medicineId: asString(row.medicine_id),
       medicineName: String(row.medicine_name),
+      strength: asString(row.strength),
+      doseQuantity:
+        row.dose_quantity === null || row.dose_quantity === undefined
+          ? undefined
+          : asNumber(row.dose_quantity),
+      doseUnit: asString(row.dose_unit),
       dosage: String(row.dosage),
       frequency: String(row.frequency),
+      durationValue:
+        row.duration_value === null || row.duration_value === undefined
+          ? undefined
+          : asNumber(row.duration_value),
+      durationUnit: asString(row.duration_unit),
       duration: String(row.duration),
+      totalQuantity:
+        row.total_quantity === null || row.total_quantity === undefined
+          ? undefined
+          : asNumber(row.total_quantity),
+      instructions: asString(row.instructions_notes),
     });
     medicinesByPrescriptionId.set(prescriptionId, current);
+  }
+
+  const invoiceItemsByInvoiceId = new Map<string, InvoiceItemRecord[]>();
+  for (const row of invoiceItemsResult.rows) {
+    const invoiceId = String(row.invoice_id);
+    const current = invoiceItemsByInvoiceId.get(invoiceId) ?? [];
+    current.push({
+      id: String(row.id),
+      invoiceId,
+      organizationId: String(row.organization_id),
+      description: String(row.description),
+      category: row.category as InvoiceItemRecord["category"],
+      quantity: asNumber(row.quantity),
+      unitAmountCents: asNumber(row.unit_amount_cents),
+      totalAmountCents: asNumber(row.total_amount_cents),
+      sourceType: asString(row.source_type) as InvoiceItemRecord["sourceType"],
+      sourceId: asString(row.source_id),
+    });
+    invoiceItemsByInvoiceId.set(invoiceId, current);
+  }
+
+  const paymentsByInvoiceId = new Map<string, PaymentRecord[]>();
+  for (const row of paymentsResult.rows) {
+    const invoiceId = String(row.invoice_id);
+    const current = paymentsByInvoiceId.get(invoiceId) ?? [];
+    current.push({
+      id: String(row.id),
+      invoiceId,
+      patientId: String(row.patient_id),
+      organizationId: String(row.organization_id),
+      amountCents: asNumber(row.amount_cents),
+      method: row.method as PaymentMethod,
+      referenceNumber: asString(row.reference_number),
+      paidAt: new Date(String(row.paid_at)).toISOString(),
+      recordedBy: asString(row.recorded_by_id)
+        ? {
+            id: String(row.recorded_by_id),
+            name: String(row.recorded_by_name),
+          }
+        : undefined,
+    });
+    paymentsByInvoiceId.set(invoiceId, current);
   }
 
   return {
@@ -1585,6 +1931,17 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       status: row.status as DoctorRecord["status"],
       availability: String(row.availability),
       shiftLabel: String(row.shift_label),
+    })),
+    medicineCatalog: medicineCatalogResult.rows.map((row): MedicineCatalogRecord => ({
+      id: String(row.id),
+      organizationId,
+      name: String(row.name),
+      strength: asString(row.strength),
+      unit: String(row.unit),
+      genericName: asString(row.generic_name),
+      active: asBoolean(row.active),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
     })),
     appointments: appointmentsResult.rows.map((row): AppointmentRecord => ({
       id: String(row.id),
@@ -1654,6 +2011,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       id: String(row.id),
       organizationId,
       name: String(row.name),
+      priceCents: asNumber(row.price_cents),
     })),
     labRequests: labRequestsResult.rows.map((row): LabRequestRecord => ({
       id: String(row.id),
@@ -1693,6 +2051,53 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
               : String(row.attachment_content_base64),
           }
         : undefined,
+    })),
+    invoices: invoicesResult.rows.map((row): InvoiceRecord => ({
+      id: String(row.id),
+      invoiceNumber: String(row.invoice_number),
+      patientId: String(row.patient_id),
+      patientName: String(row.patient_name),
+      organizationId: String(row.organization_id),
+      hospitalId: String(row.hospital_id),
+      sourceType: asString(row.source_type) as InvoiceRecord["sourceType"],
+      sourceId: asString(row.source_id),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      dueDate: asString(row.due_date),
+      subtotalCents: asNumber(row.subtotal_cents),
+      totalCents: asNumber(row.total_cents),
+      amountPaidCents: asNumber(row.amount_paid_cents),
+      amountDueCents: asNumber(row.amount_due_cents),
+      paymentStatus: row.payment_status as InvoiceStatus,
+      items: invoiceItemsByInvoiceId.get(String(row.id)) ?? [],
+      payments: paymentsByInvoiceId.get(String(row.id)) ?? [],
+    })),
+    inventoryItems: inventoryItemsResult.rows.map((row): InventoryItemRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      medicineId: asString(row.medicine_id),
+      medicineName: String(row.medicine_name),
+      genericName: asString(row.generic_name),
+      batchNumber: String(row.batch_number),
+      quantityInStock: asNumber(row.quantity_in_stock),
+      unit: String(row.unit),
+      unitPriceCents: asNumber(row.unit_price_cents),
+      expiryDate: String(row.expiry_date),
+      reorderLevel: asNumber(row.reorder_level),
+      manufacturer: asString(row.manufacturer),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
+    })),
+    notifications: notificationsResult.rows.map((row): NotificationRecord => ({
+      id: String(row.id),
+      userId: String(row.user_id),
+      organizationId: String(row.organization_id),
+      title: String(row.title),
+      message: String(row.message),
+      category: row.category as NotificationRecord["category"],
+      relatedEntityType: asString(row.related_entity_type),
+      relatedEntityId: asString(row.related_entity_id),
+      read: asBoolean(row.read),
+      createdAt: new Date(String(row.created_at)).toISOString(),
     })),
     bookingCapacity: mapBookingCapacity(settingsRow, sessionsResult.rows),
     configuredSupportLines: settingsRow ? asNumber(settingsRow.configured_support_lines) : 0,
@@ -1780,6 +2185,17 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
       "delete from prescription_medicines where prescription_id in (select id from prescriptions where organization_id = $1)",
       [state.organization.id],
     );
+  await client.query(
+      "delete from payments where invoice_id in (select id from invoices where organization_id = $1)",
+      [state.organization.id],
+    );
+  await client.query(
+      "delete from invoice_items where invoice_id in (select id from invoices where organization_id = $1)",
+      [state.organization.id],
+    );
+  await client.query("delete from invoices where organization_id = $1", [state.organization.id]);
+  await client.query("delete from notifications where organization_id = $1", [state.organization.id]);
+  await client.query("delete from inventory_items where organization_id = $1", [state.organization.id]);
   await client.query("delete from prescriptions where organization_id = $1", [state.organization.id]);
   await client.query("delete from lab_reports where organization_id = $1", [state.organization.id]);
   await client.query("delete from medical_records where organization_id = $1", [state.organization.id]);
@@ -1822,8 +2238,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
   await insertRows(
       client,
       "lab_tests",
-      ["id", "organization_id", "name"],
-      state.labTests.map((test) => [test.id, state.organization.id, test.name]),
+      ["id", "organization_id", "name", "price_cents"],
+      state.labTests.map((test) => [test.id, state.organization.id, test.name, test.priceCents ?? 0]),
     );
   await insertRows(
       client,
@@ -1951,6 +2367,38 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
     );
   await insertRows(
       client,
+      "medicine_catalog",
+      [
+        "id",
+        "organization_id",
+        "name",
+        "strength",
+        "unit",
+        "generic_name",
+        "active",
+        "normalized_name",
+        "normalized_strength",
+        "normalized_unit",
+        "created_at",
+        "updated_at",
+      ],
+      state.medicineCatalog.map((medicine) => [
+        medicine.id,
+        state.organization.id,
+        medicine.name,
+        medicine.strength ?? null,
+        medicine.unit,
+        medicine.genericName ?? null,
+        medicine.active,
+        medicine.name.trim().toLowerCase(),
+        medicine.strength?.trim().toLowerCase() ?? "",
+        medicine.unit.trim().toLowerCase(),
+        medicine.createdAt,
+        medicine.updatedAt,
+      ]),
+    );
+  await insertRows(
+      client,
       "prescriptions",
       [
         "id",
@@ -1988,17 +2436,204 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
   await insertRows(
       client,
       "prescription_medicines",
-      ["prescription_id", "display_order", "medicine_name", "dosage", "frequency", "duration"],
+      [
+        "prescription_id",
+        "display_order",
+        "medicine_id",
+        "medicine_name",
+        "strength",
+        "dose_quantity",
+        "dose_unit",
+        "dosage",
+        "frequency",
+        "duration_value",
+        "duration_unit",
+        "duration",
+        "total_quantity",
+        "instructions_notes",
+      ],
       state.prescriptions.flatMap((prescription) =>
         prescription.medicines.map((medicine, index) => [
           prescription.id,
           index,
+          medicine.medicineId ?? null,
           medicine.medicineName,
+          medicine.strength ?? null,
+          medicine.doseQuantity ?? null,
+          medicine.doseUnit ?? null,
           medicine.dosage,
           medicine.frequency,
+          medicine.durationValue ?? null,
+          medicine.durationUnit ?? null,
           medicine.duration,
+          medicine.totalQuantity ?? null,
+          medicine.instructions ?? null,
         ]),
       ),
+    );
+  await insertRows(
+      client,
+      "invoices",
+      [
+        "id",
+        "invoice_number",
+        "organization_id",
+        "hospital_id",
+        "patient_id",
+        "patient_name",
+        "source_type",
+        "source_id",
+        "due_date",
+        "subtotal_cents",
+        "total_cents",
+        "amount_paid_cents",
+        "amount_due_cents",
+        "payment_status",
+        "created_at",
+        "updated_at",
+      ],
+      state.invoices.map((invoice) => [
+        invoice.id,
+        invoice.invoiceNumber,
+        state.organization.id,
+        invoice.hospitalId,
+        invoice.patientId,
+        invoice.patientName,
+        invoice.sourceType ?? null,
+        invoice.sourceId ?? null,
+        invoice.dueDate ?? null,
+        invoice.subtotalCents,
+        invoice.totalCents,
+        invoice.amountPaidCents,
+        invoice.amountDueCents,
+        invoice.paymentStatus,
+        invoice.createdAt,
+        invoice.createdAt,
+      ]),
+    );
+  await insertRows(
+      client,
+      "invoice_items",
+      [
+        "id",
+        "invoice_id",
+        "organization_id",
+        "description",
+        "category",
+        "quantity",
+        "unit_amount_cents",
+        "total_amount_cents",
+        "source_type",
+        "source_id",
+      ],
+      state.invoices.flatMap((invoice) =>
+        invoice.items.map((item) => [
+          item.id,
+          invoice.id,
+          state.organization.id,
+          item.description,
+          item.category,
+          item.quantity,
+          item.unitAmountCents,
+          item.totalAmountCents,
+          item.sourceType ?? null,
+          item.sourceId ?? null,
+        ]),
+      ),
+    );
+  await insertRows(
+      client,
+      "payments",
+      [
+        "id",
+        "invoice_id",
+        "organization_id",
+        "patient_id",
+        "amount_cents",
+        "method",
+        "reference_number",
+        "paid_at",
+        "recorded_by_id",
+        "recorded_by_name",
+      ],
+      state.invoices.flatMap((invoice) =>
+        invoice.payments.map((payment) => [
+          payment.id,
+          invoice.id,
+          state.organization.id,
+          payment.patientId,
+          payment.amountCents,
+          payment.method,
+          payment.referenceNumber ?? null,
+          payment.paidAt,
+          payment.recordedBy?.id ?? null,
+          payment.recordedBy?.name ?? null,
+        ]),
+      ),
+    );
+  await insertRows(
+      client,
+      "inventory_items",
+      [
+        "id",
+        "organization_id",
+        "medicine_id",
+        "medicine_name",
+        "generic_name",
+        "batch_number",
+        "quantity_in_stock",
+        "unit",
+        "unit_price_cents",
+        "expiry_date",
+        "reorder_level",
+        "manufacturer",
+        "created_at",
+        "updated_at",
+      ],
+      state.inventoryItems.map((item) => [
+        item.id,
+        state.organization.id,
+        item.medicineId ?? null,
+        item.medicineName,
+        item.genericName ?? null,
+        item.batchNumber,
+        item.quantityInStock,
+        item.unit,
+        item.unitPriceCents,
+        item.expiryDate,
+        item.reorderLevel,
+        item.manufacturer ?? null,
+        item.createdAt,
+        item.updatedAt,
+      ]),
+    );
+  await insertRows(
+      client,
+      "notifications",
+      [
+        "id",
+        "user_id",
+        "organization_id",
+        "title",
+        "message",
+        "category",
+        "related_entity_type",
+        "related_entity_id",
+        "read",
+        "created_at",
+      ],
+      state.notifications.map((notification) => [
+        notification.id,
+        notification.userId,
+        state.organization.id,
+        notification.title,
+        notification.message,
+        notification.category,
+        notification.relatedEntityType ?? null,
+        notification.relatedEntityId ?? null,
+        notification.read,
+        notification.createdAt,
+      ]),
     );
 }
 

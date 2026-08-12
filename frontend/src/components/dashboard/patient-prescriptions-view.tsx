@@ -7,6 +7,11 @@ import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  formatPrescriptionDose,
+  formatPrescriptionDuration,
+  formatPrescriptionMedicineName,
+} from "@/lib/hospital-data";
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -58,10 +63,16 @@ export function PatientPrescriptionsView() {
                       key={`${prescription.id}-${index}`}
                       className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-3"
                     >
-                      <p className="font-medium">{medicine.medicineName}</p>
+                      <p className="font-medium">{formatPrescriptionMedicineName(medicine)}</p>
                       <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                        {medicine.dosage} · {medicine.frequency} · {medicine.duration}
+                        {formatPrescriptionDose(medicine)} - {medicine.frequency} -{" "}
+                        {formatPrescriptionDuration(medicine)}
                       </p>
+                      {medicine.instructions ? (
+                        <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                          {medicine.instructions}
+                        </p>
+                      ) : null}
                     </div>
                   ))}
                 </div>

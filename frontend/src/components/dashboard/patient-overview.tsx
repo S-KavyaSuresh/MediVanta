@@ -25,6 +25,10 @@ export function PatientOverview() {
   const issuedPrescriptionCount = state.prescriptions.filter(
     (prescription) => prescription.status === "Issued",
   ).length;
+  const outstandingBilling = state.invoices.reduce(
+    (sum, invoice) => sum + invoice.amountDueCents,
+    0,
+  );
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -60,8 +64,16 @@ export function PatientOverview() {
         />
         <StatCard
           label="Billing"
-          value="Coming soon"
-          delta="Billing summaries are not active yet"
+          value={new Intl.NumberFormat("en-IN", {
+            style: "currency",
+            currency: "INR",
+            maximumFractionDigits: 2,
+          }).format(outstandingBilling / 100)}
+          delta={
+            outstandingBilling > 0
+              ? "Outstanding balance across your invoices"
+              : "No outstanding invoice balance"
+          }
           icon={ReceiptText}
         />
       </div>

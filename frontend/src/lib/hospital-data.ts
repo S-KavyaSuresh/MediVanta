@@ -237,6 +237,34 @@ export function isPastLocalTimeSlot(date: string, time: string, now = new Date()
   return getSlotTimeValue(time) <= getCurrentLocalTimeValue(now);
 }
 
+export function formatPrescriptionMedicineName(
+  medicine: Pick<PrescriptionMedicineRecord, "medicineName" | "strength">,
+) {
+  return [medicine.medicineName.trim(), medicine.strength?.trim() ?? ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function formatPrescriptionDose(
+  medicine: Pick<PrescriptionMedicineRecord, "doseQuantity" | "doseUnit" | "dosage">,
+) {
+  if (medicine.doseQuantity && medicine.doseUnit?.trim()) {
+    return `${medicine.doseQuantity} ${medicine.doseUnit.trim()}`;
+  }
+
+  return medicine.dosage.trim();
+}
+
+export function formatPrescriptionDuration(
+  medicine: Pick<PrescriptionMedicineRecord, "durationValue" | "durationUnit" | "duration">,
+) {
+  if (medicine.durationValue && medicine.durationUnit?.trim()) {
+    return `${medicine.durationValue} ${medicine.durationUnit.trim()}`;
+  }
+
+  return medicine.duration.trim();
+}
+
 export type DepartmentStatus =
   | "Operational"
   | "Busy"
@@ -267,6 +295,25 @@ export type LabRequestStatus =
   | "Completed";
 
 export type PrescriptionStatus = "Issued" | "Dispensed";
+
+export type InvoiceStatus = "Pending" | "Partially Paid" | "Paid" | "Cancelled";
+
+export type InvoiceCategory = "Consultation" | "Laboratory" | "Medicine" | "Other";
+
+export type PaymentMethod =
+  | "Cash"
+  | "Card"
+  | "UPI"
+  | "Bank Transfer"
+  | "Demo Payment";
+
+export type NotificationCategory =
+  | "Appointment"
+  | "Laboratory"
+  | "Prescription"
+  | "Billing"
+  | "Inventory"
+  | "System";
 
 export type DepartmentRecord = {
   id: string;
@@ -314,6 +361,19 @@ export type LabTestRecord = {
   id: string;
   organizationId?: string;
   name: string;
+  priceCents?: number;
+};
+
+export type MedicineCatalogRecord = {
+  id: string;
+  organizationId: string;
+  name: string;
+  strength?: string;
+  unit: string;
+  genericName?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type LabRequestRecord = {
@@ -373,10 +433,18 @@ export type MedicalRecordRecord = {
 };
 
 export type PrescriptionMedicineRecord = {
+  medicineId?: string;
   medicineName: string;
+  strength?: string;
+  doseQuantity?: number;
+  doseUnit?: string;
   dosage: string;
   frequency: string;
+  durationValue?: number;
+  durationUnit?: string;
   duration: string;
+  totalQuantity?: number;
+  instructions?: string;
 };
 
 export type PrescriptionRecord = {
@@ -397,6 +465,84 @@ export type PrescriptionRecord = {
     id: string;
     name: string;
   };
+};
+
+export type InvoiceItemRecord = {
+  id: string;
+  invoiceId: string;
+  organizationId: string;
+  description: string;
+  category: InvoiceCategory;
+  quantity: number;
+  unitAmountCents: number;
+  totalAmountCents: number;
+  sourceType?: "appointment" | "lab-request" | "prescription";
+  sourceId?: string;
+};
+
+export type PaymentRecord = {
+  id: string;
+  invoiceId: string;
+  patientId: string;
+  organizationId: string;
+  amountCents: number;
+  method: PaymentMethod;
+  referenceNumber?: string;
+  paidAt: string;
+  recordedBy?: {
+    id: string;
+    name: string;
+  };
+};
+
+export type InvoiceRecord = {
+  id: string;
+  invoiceNumber: string;
+  patientId: string;
+  patientName: string;
+  organizationId: string;
+  hospitalId: string;
+  sourceType?: "appointment" | "lab-request" | "prescription";
+  sourceId?: string;
+  createdAt: string;
+  dueDate?: string;
+  subtotalCents: number;
+  totalCents: number;
+  amountPaidCents: number;
+  amountDueCents: number;
+  paymentStatus: InvoiceStatus;
+  items: InvoiceItemRecord[];
+  payments: PaymentRecord[];
+};
+
+export type InventoryItemRecord = {
+  id: string;
+  organizationId: string;
+  medicineId?: string;
+  medicineName: string;
+  genericName?: string;
+  batchNumber: string;
+  quantityInStock: number;
+  unit: string;
+  unitPriceCents: number;
+  expiryDate: string;
+  reorderLevel: number;
+  manufacturer?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationRecord = {
+  id: string;
+  userId: string;
+  organizationId: string;
+  title: string;
+  message: string;
+  category: NotificationCategory;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+  read: boolean;
+  createdAt: string;
 };
 
 export type BookingSessionCapacityRecord = {
@@ -446,6 +592,7 @@ export type HospitalState = {
   };
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
+  medicineCatalog: MedicineCatalogRecord[];
   appointments: AppointmentRecord[];
   queueEntries: QueueEntryRecord[];
   medicalRecords: MedicalRecordRecord[];
@@ -453,6 +600,9 @@ export type HospitalState = {
   labTests: LabTestRecord[];
   labRequests: LabRequestRecord[];
   labReports: LabReportRecord[];
+  invoices: InvoiceRecord[];
+  inventoryItems: InventoryItemRecord[];
+  notifications: NotificationRecord[];
   bookingCapacity: BookingCapacityRecord;
   configuredSupportLines: number;
 };
@@ -487,10 +637,18 @@ export type MedicalRecordDraft = {
 };
 
 export type PrescriptionMedicineDraft = {
+  medicineId?: string;
   medicineName: string;
+  strength?: string;
+  doseQuantity?: number;
+  doseUnit?: string;
   dosage: string;
   frequency: string;
+  durationValue?: number;
+  durationUnit?: string;
   duration: string;
+  totalQuantity?: number;
+  instructions?: string;
 };
 
 export type PrescriptionDraft = {
@@ -498,6 +656,24 @@ export type PrescriptionDraft = {
   appointmentId?: string;
   medicines: PrescriptionMedicineDraft[];
   instructions: string;
+};
+
+export type PaymentDraft = {
+  amount: number;
+  method: PaymentMethod;
+  referenceNumber?: string;
+};
+
+export type InventoryItemDraft = {
+  medicineName: string;
+  genericName?: string;
+  batchNumber: string;
+  quantityInStock: number;
+  unit: string;
+  unitPrice: number;
+  expiryDate: string;
+  reorderLevel: number;
+  manufacturer?: string;
 };
 
 export type HospitalSettingsDraft = {
@@ -939,8 +1115,12 @@ export const defaultBookingCapacity: BookingCapacityRecord = {
 export function normalizeHospitalState(state: HospitalState): HospitalState {
   return {
     ...state,
+    medicineCatalog: state.medicineCatalog ?? [],
     medicalRecords: state.medicalRecords ?? medicalRecordsSeed,
     prescriptions: state.prescriptions ?? prescriptionsSeed,
+    invoices: state.invoices ?? [],
+    inventoryItems: state.inventoryItems ?? [],
+    notifications: state.notifications ?? [],
     bookingCapacity: state.bookingCapacity ?? defaultBookingCapacity,
   };
 }
@@ -954,6 +1134,7 @@ export function createInitialHospitalState(): HospitalState {
     },
     departments: structuredClone(departmentsSeed),
     doctors: structuredClone(doctorsSeed),
+    medicineCatalog: [],
     appointments: structuredClone(appointmentsSeed),
     queueEntries: structuredClone(queueSeed),
     medicalRecords: structuredClone(medicalRecordsSeed),
@@ -961,6 +1142,9 @@ export function createInitialHospitalState(): HospitalState {
     labTests: structuredClone(labTestsSeed),
     labRequests: structuredClone(labRequestsSeed),
     labReports: structuredClone(labReportsSeed),
+    invoices: [],
+    inventoryItems: [],
+    notifications: [],
     bookingCapacity: structuredClone(defaultBookingCapacity),
     configuredSupportLines: 9,
   };

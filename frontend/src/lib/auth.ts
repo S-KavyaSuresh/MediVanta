@@ -39,7 +39,11 @@ export type Capability =
   | "pharmacy:view"
   | "lab-request:create"
   | "lab-request:update"
-  | "lab-report:create";
+  | "lab-report:create"
+  | "billing:manage"
+  | "payment:record"
+  | "inventory:view"
+  | "inventory:manage";
 
 export type Organization = {
   id: string;
@@ -151,6 +155,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "lab-reports:view",
     "billing:view",
     "notifications:view",
+    "payment:record",
     "profile:view",
     "profile:update",
   ],
@@ -182,6 +187,10 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "department:view",
     "search:view",
     "patient:create",
+    "billing:view",
+    "billing:manage",
+    "payment:record",
+    "notifications:view",
     "profile:view",
     "profile:update",
     "operations:view",
@@ -191,6 +200,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "lab-request:update",
     "lab-report:create",
     "lab-reports:view",
+    "notifications:view",
     "profile:view",
     "profile:update",
   ],
@@ -198,6 +208,9 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "pharmacy:view",
     "prescriptions:view",
     "prescription:dispense",
+    "inventory:view",
+    "inventory:manage",
+    "notifications:view",
     "profile:view",
     "profile:update",
   ],
@@ -216,6 +229,11 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "user:manage",
     "reports:view",
     "settings:view",
+    "billing:view",
+    "billing:manage",
+    "payment:record",
+    "inventory:view",
+    "notifications:view",
     "profile:view",
     "profile:update",
     "operations:view",
@@ -340,6 +358,11 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       href: "/dashboard/doctor/records",
     },
     {
+      id: "doctor-history",
+      label: "History",
+      href: "/dashboard/doctor/history",
+    },
+    {
       id: "doctor-notifications",
       label: "Notifications",
       href: "/dashboard/doctor/notifications",
@@ -348,6 +371,7 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
   ],
   receptionist: [
     { id: "reception-overview", label: "Overview", href: "/dashboard/reception" },
+    { id: "reception-billing", label: "Billing", href: "/dashboard/reception/billing" },
     { id: "reception-appointments", label: "Appointments", href: "/dashboard/appointments" },
     { id: "reception-queue", label: "Queue Board", href: "/dashboard/queue" },
     { id: "reception-doctors", label: "Doctors", href: "/dashboard/doctors" },
@@ -355,6 +379,11 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       id: "reception-departments",
       label: "Departments",
       href: "/dashboard/departments",
+    },
+    {
+      id: "reception-notifications",
+      label: "Notifications",
+      href: "/dashboard/reception/notifications",
     },
     { id: "reception-profile", label: "Profile", href: "/dashboard/reception/profile" },
   ],
@@ -375,9 +404,19 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       label: "Profile",
       href: "/dashboard/laboratory/profile",
     },
+    {
+      id: "laboratory-notifications",
+      label: "Notifications",
+      href: "/dashboard/laboratory/notifications",
+    },
   ],
   pharmacist: [
     { id: "pharmacy-overview", label: "Overview", href: "/dashboard/pharmacy" },
+    {
+      id: "pharmacy-inventory",
+      label: "Inventory",
+      href: "/dashboard/pharmacy/inventory",
+    },
     {
       id: "pharmacy-prescriptions",
       label: "Prescriptions",
@@ -388,10 +427,16 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       label: "Dispensing History",
       href: "/dashboard/pharmacy/dispensing",
     },
+    {
+      id: "pharmacy-notifications",
+      label: "Notifications",
+      href: "/dashboard/pharmacy/notifications",
+    },
     { id: "pharmacy-profile", label: "Profile", href: "/dashboard/pharmacy/profile" },
   ],
   administrator: [
     { id: "admin-overview", label: "Overview", href: "/dashboard/admin" },
+    { id: "admin-billing", label: "Billing", href: "/dashboard/admin/billing" },
     { id: "admin-departments", label: "Departments", href: "/dashboard/departments" },
     { id: "admin-users", label: "Staff Management", href: "/dashboard/admin/users" },
     { id: "admin-appointments", label: "Appointments", href: "/dashboard/appointments" },
@@ -404,6 +449,11 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
       id: "admin-reports",
       label: "Reports / Analytics",
       href: "/dashboard/admin/reports",
+    },
+    {
+      id: "admin-notifications",
+      label: "Notifications",
+      href: "/dashboard/admin/notifications",
     },
     { id: "admin-settings", label: "Settings", href: "/dashboard/admin/settings" },
     { id: "admin-profile", label: "Profile", href: "/dashboard/admin/profile" },

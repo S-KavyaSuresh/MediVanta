@@ -1,13 +1,11 @@
-import { RolePlaceholderPage } from "@/components/dashboard/role-placeholder-page";
+import { NotificationsView } from "@/components/dashboard/notifications-view";
 
 export default function DoctorNotificationsPage() {
   return (
-    <RolePlaceholderPage
+    <NotificationsView
       eyebrow="Doctor Workspace"
       title="Notifications"
-      description="Clinical notifications and alerts will appear here."
-      emptyTitle="Notifications coming soon"
-      emptyDescription="Operational appointment and queue updates are currently reflected in your overview."
+      description="Review consultation-linked operational updates and clinical coordination notices."
     />
   );
 }

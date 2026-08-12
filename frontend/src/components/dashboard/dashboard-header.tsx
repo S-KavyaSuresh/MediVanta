@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/components/providers/auth-provider";
+import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { UserAvatar } from "@/components/dashboard/user-avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,10 +21,20 @@ export function DashboardHeader({
   const searchParams = useSearchParams();
   const activeQuery = searchParams.get("q") ?? "";
   const { hasCapability, logout, session } = useAuth();
+  const { state } = useHospitalData();
   const canSearch = hasCapability("search:view");
+  const unreadNotificationCount = state.notifications.filter((notification) => !notification.read).length;
+  const notificationsPathByRole = {
+    patient: "/dashboard/patient/notifications",
+    doctor: "/dashboard/doctor/notifications",
+    receptionist: "/dashboard/reception/notifications",
+    laboratory: "/dashboard/laboratory/notifications",
+    pharmacist: "/dashboard/pharmacy/notifications",
+    administrator: "/dashboard/admin/notifications",
+  } as const;
   return (
     <div
-      className="sticky top-0 z-30 border-b border-[color:var(--border)] bg-[color:var(--surface)]/95 px-4 py-4 backdrop-blur md:px-8"
+      className="border-b border-[color:var(--border)] bg-[color:var(--surface)]/95 px-4 py-4 backdrop-blur md:px-8"
     >
       <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between xl:items-center">
         <div className="flex min-w-0 w-full items-start gap-3 lg:min-w-[18rem] lg:flex-1">
@@ -99,10 +110,16 @@ export function DashboardHeader({
             <HelpCircle className="h-4 w-4" />
             Take a tour
           </Button>
-          <div className="hidden items-center gap-2 rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-2 text-xs font-medium text-[color:var(--muted-foreground)] lg:inline-flex">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden shrink-0 lg:inline-flex"
+            onClick={() => router.push(notificationsPathByRole[session.user.role])}
+            aria-label="Open notifications"
+          >
             <Bell className="h-4 w-4 text-[color:var(--accent)]" />
-            {roleTitles[session.user.role]}
-          </div>
+            {unreadNotificationCount > 0 ? `${unreadNotificationCount} unread` : "Notifications"}
+          </Button>
           <div
             className="flex min-w-[15.5rem] w-full items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-2 basis-full shrink-0 sm:min-w-[18rem] md:w-auto md:max-w-[22rem] md:basis-auto"
             data-tour="dashboard-profile-control"

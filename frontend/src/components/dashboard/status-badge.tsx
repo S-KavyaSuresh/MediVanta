@@ -3,6 +3,7 @@ import type {
   AppointmentStatus,
   DepartmentStatus,
   DoctorStatus,
+  InvoiceStatus,
   LabRequestStatus,
   PrescriptionStatus,
   QueueStatus,
@@ -14,7 +15,8 @@ type StatusValue =
   | DoctorStatus
   | QueueStatus
   | LabRequestStatus
-  | PrescriptionStatus;
+  | PrescriptionStatus
+  | InvoiceStatus;
 
 export function StatusBadge({ status }: { status: StatusValue }) {
   const variant =
@@ -23,7 +25,8 @@ export function StatusBadge({ status }: { status: StatusValue }) {
       : status === "Available" ||
           status === "Operational" ||
           status === "Completed" ||
-          status === "Dispensed"
+          status === "Dispensed" ||
+          status === "Paid"
         ? "success"
         : status === "Checked in" ||
             status === "In consultation" ||
@@ -39,6 +42,8 @@ export function StatusBadge({ status }: { status: StatusValue }) {
               status === "Waiting" ||
               status === "Scheduled" ||
               status === "Issued" ||
+              status === "Pending" ||
+              status === "Partially Paid" ||
               status === "On break" ||
               status === "Requested"
             ? "warning"

@@ -171,6 +171,9 @@ function normalizePersistedUsers(users: UserRecord[]) {
 
 function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
   const fallbackState = createDemoHospitalState();
+  const fallbackLabTestPrices = new Map(
+    fallbackState.labTests.map((test) => [test.id, test.priceCents ?? 0] as const),
+  );
 
   return {
     ...state,
@@ -183,6 +186,13 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
       ...doctor,
       organizationId: doctor.organizationId ?? DEMO_ORGANIZATION.id,
     })),
+    medicineCatalog: (state.medicineCatalog ?? fallbackState.medicineCatalog).map((medicine) => ({
+      ...medicine,
+      organizationId: medicine.organizationId ?? DEMO_ORGANIZATION.id,
+      active: medicine.active ?? true,
+      createdAt: medicine.createdAt ?? new Date().toISOString(),
+      updatedAt: medicine.updatedAt ?? medicine.createdAt ?? new Date().toISOString(),
+    })),
     appointments: state.appointments.map((appointment) => ({
       ...appointment,
       organizationId: appointment.organizationId ?? DEMO_ORGANIZATION.id,
@@ -193,7 +203,7 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
       ...entry,
       organizationId: entry.organizationId ?? DEMO_ORGANIZATION.id,
     })),
-    medicalRecords: state.medicalRecords?.length
+    medicalRecords: state.medicalRecords
       ? state.medicalRecords.map((record) => ({
           ...record,
           patientId: record.patientId ?? getPatientIdFromName(record.patientName, users),
@@ -208,7 +218,7 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
           updatedAt: record.updatedAt,
         }))
       : fallbackState.medicalRecords,
-    prescriptions: state.prescriptions?.length
+    prescriptions: state.prescriptions
       ? state.prescriptions.map((prescription) => ({
           ...prescription,
           patientId:
@@ -224,13 +234,17 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
           medicines: prescription.medicines ?? [],
         }))
       : fallbackState.prescriptions,
-    labTests: state.labTests?.length
+    labTests: state.labTests
       ? state.labTests.map((test) => ({
           ...test,
           organizationId: test.organizationId ?? DEMO_ORGANIZATION.id,
+          priceCents:
+            test.priceCents && test.priceCents > 0
+              ? test.priceCents
+              : (fallbackLabTestPrices.get(test.id) ?? 0),
         }))
       : fallbackState.labTests,
-    labRequests: state.labRequests?.length
+    labRequests: state.labRequests
       ? state.labRequests.map((request) => ({
           ...request,
           patientId: request.patientId ?? "user-patient",
@@ -239,7 +253,7 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
           createdAt: request.createdAt ?? `${DEMO_REFERENCE_DATE}T09:00:00.000Z`,
         }))
       : fallbackState.labRequests,
-    labReports: state.labReports?.length
+    labReports: state.labReports
       ? state.labReports.map((report) => {
           const linkedRequest = state.labRequests?.find(
             (request) => request.id === report.labRequestId,
@@ -254,6 +268,27 @@ function hydrateHospitalState(state: HospitalState, users: UserRecord[]) {
           };
         })
       : fallbackState.labReports,
+    invoices: state.invoices
+      ? state.invoices.map((invoice) => ({
+          ...invoice,
+          organizationId: invoice.organizationId ?? DEMO_ORGANIZATION.id,
+          hospitalId: invoice.hospitalId ?? DEMO_ORGANIZATION.id,
+          items: invoice.items ?? [],
+          payments: invoice.payments ?? [],
+        }))
+      : fallbackState.invoices,
+    inventoryItems: state.inventoryItems
+      ? state.inventoryItems.map((item) => ({
+          ...item,
+          organizationId: item.organizationId ?? DEMO_ORGANIZATION.id,
+        }))
+      : fallbackState.inventoryItems,
+    notifications: state.notifications
+      ? state.notifications.map((notification) => ({
+          ...notification,
+          organizationId: notification.organizationId ?? DEMO_ORGANIZATION.id,
+        }))
+      : fallbackState.notifications,
     bookingCapacity: state.bookingCapacity ?? fallbackState.bookingCapacity,
   };
 }

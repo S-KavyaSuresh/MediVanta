@@ -13,7 +13,9 @@ import {
   type AppointmentSlotLoadRecord,
   type LabSlotLoadRecord,
   type MedicalRecordDraft,
+  type InventoryItemDraft,
   type PrescriptionDraft,
+  type PaymentDraft,
   type HospitalSettingsDraft,
   getActiveQueueEntries,
   getAllowedAppointmentStatuses,
@@ -52,12 +54,16 @@ type HospitalMeta = {
 type HospitalMutationPatch = {
   organization?: Organization;
   bookingCapacity?: HospitalState["bookingCapacity"];
+  medicineCatalog?: HospitalState["medicineCatalog"];
   appointments?: HospitalState["appointments"];
   queueEntries?: HospitalState["queueEntries"];
   medicalRecords?: HospitalState["medicalRecords"];
   prescriptions?: HospitalState["prescriptions"];
   labRequests?: HospitalState["labRequests"];
   labReports?: HospitalState["labReports"];
+  invoices?: HospitalState["invoices"];
+  inventoryItems?: HospitalState["inventoryItems"];
+  notifications?: HospitalState["notifications"];
   meta?: HospitalMeta;
 };
 
@@ -138,6 +144,19 @@ type HospitalContextValue = {
   dispensePrescription: (
     prescriptionId: string,
   ) => Promise<{ ok: boolean; message?: string }>;
+  recordInvoicePayment: (
+    invoiceId: string,
+    draft: PaymentDraft,
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  createInventoryItem: (
+    draft: InventoryItemDraft,
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  updateInventoryItem: (
+    inventoryItemId: string,
+    draft: InventoryItemDraft,
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  markNotificationRead: (notificationId: string) => Promise<{ ok: boolean; message?: string }>;
+  markAllNotificationsRead: () => Promise<{ ok: boolean; message?: string }>;
   createLabRequest: (draft: LabRequestDraft) => Promise<{
     ok: boolean;
     message?: string;
@@ -217,12 +236,16 @@ export function HospitalDataProvider({
           ...current,
           organization: response.patch?.organization ?? current.organization,
           bookingCapacity: response.patch?.bookingCapacity ?? current.bookingCapacity,
+          medicineCatalog: mergeById(current.medicineCatalog, response.patch?.medicineCatalog),
           appointments: mergeById(current.appointments, response.patch?.appointments),
           queueEntries: mergeById(current.queueEntries, response.patch?.queueEntries),
           medicalRecords: mergeById(current.medicalRecords, response.patch?.medicalRecords),
           prescriptions: mergeById(current.prescriptions, response.patch?.prescriptions),
           labRequests: mergeById(current.labRequests, response.patch?.labRequests),
           labReports: mergeById(current.labReports, response.patch?.labReports),
+          invoices: mergeById(current.invoices, response.patch?.invoices),
+          inventoryItems: mergeById(current.inventoryItems, response.patch?.inventoryItems),
+          notifications: mergeById(current.notifications, response.patch?.notifications),
         }),
       );
     }
@@ -506,6 +529,96 @@ export function HospitalDataProvider({
     [updateFromResponse],
   );
 
+  const recordInvoicePayment = useCallback(
+    async (invoiceId: string, draft: PaymentDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/invoices/${invoiceId}/payments`,
+          {
+            method: "POST",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const createInventoryItem = useCallback(
+    async (draft: InventoryItemDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/inventory-items", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateInventoryItem = useCallback(
+    async (inventoryItemId: string, draft: InventoryItemDraft) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/inventory-items/${inventoryItemId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const markNotificationRead = useCallback(
+    async (notificationId: string) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/notifications/${notificationId}/read`,
+          {
+            method: "PATCH",
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to mark notification as read." };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const markAllNotificationsRead = useCallback(
+    async () => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/notifications/read-all", {
+          method: "POST",
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to update notifications." };
+      }
+    },
+    [updateFromResponse],
+  );
+
   const createLabRequest = useCallback(
     async (draft: LabRequestDraft) => {
       try {
@@ -694,6 +807,11 @@ export function HospitalDataProvider({
       createPrescription,
       updateHospitalSettings,
       dispensePrescription,
+      recordInvoicePayment,
+      createInventoryItem,
+      updateInventoryItem,
+      markNotificationRead,
+      markAllNotificationsRead,
       createLabRequest,
       updateLabRequestStatus,
       createLabReport,
@@ -719,6 +837,11 @@ export function HospitalDataProvider({
       createPrescription,
       updateHospitalSettings,
       dispensePrescription,
+      recordInvoicePayment,
+      createInventoryItem,
+      updateInventoryItem,
+      markNotificationRead,
+      markAllNotificationsRead,
       createLabRequest,
       createLabReport,
       departmentSummaries,
