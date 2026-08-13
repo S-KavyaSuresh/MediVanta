@@ -88,6 +88,7 @@ export type AppointmentStatus =
   | "No Show";
 
 export type QueueStatus = "Waiting" | "Called" | "In consultation" | "Completed";
+export type QueuePriority = "Normal" | "Priority" | "Emergency";
 
 export type LabRequestStatus =
   | "Requested"
@@ -115,6 +116,7 @@ export type NotificationCategory =
   | "Prescription"
   | "Billing"
   | "Inventory"
+  | "Emergency"
   | "System";
 
 export type DepartmentRecord = {
@@ -160,7 +162,49 @@ export type QueueEntryRecord = {
   departmentId: string;
   doctorId?: string;
   appointmentId?: string;
+  priority: QueuePriority;
   status: QueueStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmergencyVisitSeverity = "Priority" | "Emergency";
+
+export type EmergencyVisitStatus =
+  | "Active"
+  | "In consultation"
+  | "Transferred"
+  | "Completed";
+
+export type EmergencyVisitRecord = {
+  id: string;
+  organizationId: string;
+  appointmentId?: string;
+  queueEntryId?: string;
+  patientId?: string;
+  familyMemberId?: string;
+  patientName: string;
+  contactName?: string;
+  contactPhone?: string;
+  emergencyReason: string;
+  severity: EmergencyVisitSeverity;
+  allergies?: string;
+  medicalConditions?: string;
+  bloodGroup?: string;
+  status: EmergencyVisitStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PatientJourneyRecord = {
+  id: string;
+  organizationId: string;
+  token: string;
+  appointmentId?: string;
+  queueEntryId?: string;
+  patientId?: string;
+  familyMemberId?: string;
+  patientName: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -483,6 +527,8 @@ export type HospitalState = {
   medicineCatalog: MedicineCatalogRecord[];
   appointments: AppointmentRecord[];
   queueEntries: QueueEntryRecord[];
+  emergencyVisits?: EmergencyVisitRecord[];
+  patientJourneys?: PatientJourneyRecord[];
   medicalRecords: MedicalRecordRecord[];
   prescriptions: PrescriptionRecord[];
   labTests: LabTestRecord[];
@@ -624,6 +670,19 @@ export type LabRequestDraft = {
   requestedDate: string;
   requestedTime: string;
   familyMemberId?: string;
+};
+
+export type EmergencyVisitDraft = {
+  patientId?: string;
+  familyMemberId?: string;
+  patientName?: string;
+  contactName?: string;
+  contactPhone?: string;
+  emergencyReason: string;
+  severity: EmergencyVisitSeverity;
+  allergies?: string;
+  medicalConditions?: string;
+  bloodGroup?: string;
 };
 
 export type LabReportDraft = {

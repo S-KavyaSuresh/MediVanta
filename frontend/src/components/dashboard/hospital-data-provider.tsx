@@ -13,6 +13,9 @@ import {
   type AppointmentSlotLoadRecord,
   type LabSlotLoadRecord,
   type FamilyMemberDraft,
+  type QueuePriority,
+  type EmergencyVisitRecord,
+  type PatientJourneyRecord,
   type MedicalRecordDraft,
   type MedicalHistoryEntryDraft,
   type ClinicalAttachmentDraft,
@@ -55,6 +58,86 @@ type HospitalMeta = {
   labSlotLoads?: LabSlotLoadRecord[];
 };
 
+type OperationalAnalytics = {
+  overview: {
+    patientsToday: number;
+    appointmentsToday: number;
+    completedConsultations: number;
+    cancelledAppointments: number;
+    noShows: number;
+    activeQueue: number;
+    revenueTodayCents: number;
+    outstandingBillingCents: number;
+    labRequestsToday: number;
+    prescriptionsIssued: number;
+    prescriptionsDispensed: number;
+  };
+  trends: Array<{
+    date: string;
+    appointments: number;
+    completed: number;
+    cancelled: number;
+    noShows: number;
+    online: number;
+    inPerson: number;
+  }>;
+  doctorPerformance: Array<{
+    id: string;
+    name: string;
+    specialization: string;
+    completedConsultations: number;
+    currentAppointmentCount: number;
+    patientLoad: number;
+    activeQueueCount: number;
+  }>;
+  departmentPerformance: Array<{
+    id: string;
+    name: string;
+    doctorCount: number;
+    onDutyDoctorCount: number;
+    appointmentCount: number;
+    patientVolume: number;
+  }>;
+  laboratory: {
+    requested: number;
+    processing: number;
+    completed: number;
+    reportsCompleted: number;
+  };
+  pharmacy: {
+    dispensed: number;
+    medicineValueCents: number;
+    lowStockCount: number;
+    outOfStockCount: number;
+    nearExpiryCount: number;
+  };
+  billing: {
+    revenueCents: number;
+    paidInvoices: number;
+    unpaidInvoices: number;
+    outstandingAmountCents: number;
+    consultationRevenueCents: number;
+    labRevenueCents: number;
+    pharmacyRevenueCents: number;
+  };
+};
+
+type DoctorHandoffSummary = {
+  patient: string;
+  patientContext: string;
+  reasonForVisit: string;
+  allergies: string;
+  chronicConditions: string;
+  bloodGroup: string;
+  latestDiagnosis: string;
+  latestClinicalNote: string;
+  recentLabFindings: string;
+  activePrescription: string;
+  pendingLabs: string;
+  visitStatus: string;
+  followUp: string;
+};
+
 type HospitalMutationPatch = {
   organization?: Organization;
   bookingCapacity?: HospitalState["bookingCapacity"];
@@ -68,6 +151,8 @@ type HospitalMutationPatch = {
   invoices?: HospitalState["invoices"];
   inventoryItems?: HospitalState["inventoryItems"];
   notifications?: HospitalState["notifications"];
+  emergencyVisits?: HospitalState["emergencyVisits"];
+  patientJourneys?: HospitalState["patientJourneys"];
   familyMembers?: HospitalState["familyMembers"];
   medicalHistoryEntries?: HospitalState["medicalHistoryEntries"];
   clinicalAttachments?: HospitalState["clinicalAttachments"];
@@ -82,6 +167,40 @@ type HospitalContextValue = {
   departmentSummaries: ReturnType<typeof getDepartmentSummaries>;
   activeQueueEntries: ReturnType<typeof getActiveQueueEntries>;
   metrics: ReturnType<typeof getDashboardMetrics>;
+  fetchOperationalAnalytics: (scope: "today" | "7d" | "30d") => Promise<{
+    ok: boolean;
+    analytics?: OperationalAnalytics;
+    message?: string;
+  }>;
+  createEmergencyVisit: (draft: {
+    patientId?: string;
+    familyMemberId?: string;
+    patientName?: string;
+    contactName?: string;
+    contactPhone?: string;
+    emergencyReason: string;
+    severity: "Priority" | "Emergency";
+    allergies?: string;
+    medicalConditions?: string;
+    bloodGroup?: string;
+  }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  updateQueuePriority: (
+    queueEntryId: string,
+    priority: QueuePriority,
+  ) => Promise<{ ok: boolean; message?: string }>;
+  fetchPatientJourney: (token: string) => Promise<{
+    ok: boolean;
+    journey?: PatientJourneyRecord;
+    message?: string;
+  }>;
+  fetchDoctorHandoff: (input: {
+    appointmentId?: string;
+    patientId?: string;
+  }) => Promise<{
+    ok: boolean;
+    handoff?: DoctorHandoffSummary;
+    message?: string;
+  }>;
   createDepartment: (draft: {
     code: string;
     name: string;
@@ -237,6 +356,9 @@ type HospitalApiResponse = {
   meta?: HospitalMeta;
   session?: AuthSession;
   patch?: HospitalMutationPatch;
+  analytics?: OperationalAnalytics;
+  journey?: PatientJourneyRecord;
+  handoff?: DoctorHandoffSummary;
 };
 
 function mergeById<T extends { id: string }>(current: T[], incoming?: T[]) {
@@ -283,6 +405,14 @@ export function HospitalDataProvider({
           invoices: mergeById(current.invoices, response.patch?.invoices),
           inventoryItems: mergeById(current.inventoryItems, response.patch?.inventoryItems),
           notifications: mergeById(current.notifications, response.patch?.notifications),
+          emergencyVisits: mergeById(
+            current.emergencyVisits ?? [],
+            response.patch?.emergencyVisits,
+          ),
+          patientJourneys: mergeById(
+            current.patientJourneys ?? [],
+            response.patch?.patientJourneys,
+          ),
           familyMembers: mergeById(current.familyMembers ?? [], response.patch?.familyMembers),
           medicalHistoryEntries: mergeById(
             current.medicalHistoryEntries ?? [],
@@ -338,6 +468,128 @@ export function HospitalDataProvider({
       }
     },
     [updateFromResponse],
+  );
+
+  const fetchOperationalAnalytics = useCallback(
+    async (scope: "today" | "7d" | "30d") => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/analytics?scope=${encodeURIComponent(scope)}`,
+        );
+        return { ok: true, analytics: response.analytics };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Analytics are not available right now.",
+        };
+      }
+    },
+    [],
+  );
+
+  const createEmergencyVisit = useCallback(
+    async (draft: {
+      patientId?: string;
+      familyMemberId?: string;
+      patientName?: string;
+      contactName?: string;
+      contactPhone?: string;
+      emergencyReason: string;
+      severity: "Priority" | "Emergency";
+      allergies?: string;
+      medicalConditions?: string;
+      bloodGroup?: string;
+    }) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>("/api/hospital/emergency-visits", {
+          method: "POST",
+          body: JSON.stringify(draft),
+        });
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateQueuePriority = useCallback(
+    async (queueEntryId: string, priority: QueuePriority) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/queue/${queueEntryId}/priority`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ priority }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The queue priority could not be updated.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const fetchPatientJourney = useCallback(async (token: string) => {
+    try {
+      const response = await apiRequest<HospitalApiResponse>(
+        `/api/hospital/journeys?token=${encodeURIComponent(token)}`,
+      );
+      return { ok: true, journey: response.journey };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "The patient journey could not be loaded.",
+      };
+    }
+  }, []);
+
+  const fetchDoctorHandoff = useCallback(
+    async (input: { appointmentId?: string; patientId?: string }) => {
+      try {
+        const search = new URLSearchParams();
+        if (input.appointmentId) {
+          search.set("appointmentId", input.appointmentId);
+        }
+        if (input.patientId) {
+          search.set("patientId", input.patientId);
+        }
+
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/handoff?${search.toString()}`,
+        );
+        return { ok: true, handoff: response.handoff };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The patient handoff could not be loaded.",
+        };
+      }
+    },
+    [],
   );
 
   const createStaffMember = useCallback(
@@ -963,6 +1215,11 @@ export function HospitalDataProvider({
       departmentSummaries,
       activeQueueEntries,
       metrics,
+      fetchOperationalAnalytics,
+      createEmergencyVisit,
+      updateQueuePriority,
+      fetchPatientJourney,
+      fetchDoctorHandoff,
       createDepartment,
       createStaffMember,
       updateUserAccountStatus,
@@ -999,8 +1256,12 @@ export function HospitalDataProvider({
     [
       activeQueueEntries,
       advanceQueue,
+      createEmergencyVisit,
       createDepartment,
       createStaffMember,
+      fetchDoctorHandoff,
+      fetchOperationalAnalytics,
+      fetchPatientJourney,
       updateUserAccountStatus,
       createAppointment,
       createMedicalRecord,
@@ -1030,6 +1291,7 @@ export function HospitalDataProvider({
       search,
       setAppointmentStatus,
       state,
+      updateQueuePriority,
       updateLabRequestStatus,
       updateAppointment,
     ],

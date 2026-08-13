@@ -1,6 +1,9 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Bell, CalendarClock, FileHeart, ReceiptText } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -10,7 +13,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 
 export function PatientOverview() {
-  const { getDepartmentName, getDoctorName, state } = useHospitalData();
+  const { fetchPatientJourney, getDepartmentName, getDoctorName, state } = useHospitalData();
   const appointments = [...state.appointments].sort((left, right) =>
     `${left.appointmentDate}${left.appointmentTime}`.localeCompare(
       `${right.appointmentDate}${right.appointmentTime}`,
@@ -32,6 +35,55 @@ export function PatientOverview() {
   const activeFamilyMemberName = upcomingAppointment?.familyMemberId
     ? state.familyMembers?.find((member) => member.id === upcomingAppointment.familyMemberId)?.fullName
     : null;
+  const journey = upcomingAppointment
+    ? state.patientJourneys?.find((item) => item.appointmentId === upcomingAppointment.id)
+    : undefined;
+  const [journeyStatus, setJourneyStatus] = useState<{
+    loading: boolean;
+    currentStep?: string;
+    nextStep?: string;
+    estimatedWait?: string;
+    departmentName?: string;
+    doctorName?: string;
+  }>({ loading: false });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const run = async () => {
+      if (!journey?.token) {
+        setJourneyStatus({ loading: false });
+        return;
+      }
+
+      setJourneyStatus({ loading: true });
+      const result = await fetchPatientJourney(journey.token);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!result.ok || !result.journey) {
+        setJourneyStatus({ loading: false });
+        return;
+      }
+
+      setJourneyStatus({
+        loading: false,
+        currentStep: result.journey.currentStep,
+        nextStep: result.journey.nextStep,
+        estimatedWait: result.journey.estimatedWait,
+        departmentName: result.journey.departmentName,
+        doctorName: result.journey.doctorName,
+      });
+    };
+
+    void run();
+
+    return () => {
+      mounted = false;
+    };
+  }, [fetchPatientJourney, journey?.token]);
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -102,9 +154,49 @@ export function PatientOverview() {
               </p>
             ) : null}
             {activeQueueEntry ? (
-              <p className="mt-3 text-sm text-[color:var(--muted-foreground)]">
-                Queue status: {activeQueueEntry.status} ({activeQueueEntry.id})
-              </p>
+              <div className="mt-3 space-y-2 text-sm text-[color:var(--muted-foreground)]">
+                <p>
+                  Queue status: {activeQueueEntry.status} ({activeQueueEntry.id})
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant={
+                      activeQueueEntry.priority === "Emergency"
+                        ? "danger"
+                        : activeQueueEntry.priority === "Priority"
+                          ? "warning"
+                          : "neutral"
+                    }
+                  >
+                    {activeQueueEntry.priority ?? "Normal"}
+                  </Badge>
+                </div>
+              </div>
+            ) : null}
+            {journey ? (
+              <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Care journey</p>
+                    <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                      {journeyStatus.loading
+                        ? "Loading current journey..."
+                        : journeyStatus.currentStep
+                          ? `Current step: ${journeyStatus.currentStep}`
+                          : `Current step: ${journey.currentStep}`}
+                    </p>
+                  </div>
+                  <Button type="button" variant="secondary" size="sm" disabled>
+                    Journey Ready
+                  </Button>
+                </div>
+                <div className="mt-3 grid gap-2 text-sm text-[color:var(--muted-foreground)] sm:grid-cols-2">
+                  <p>Next step: {journeyStatus.nextStep ?? journey.nextStep ?? "Continue care"}</p>
+                  <p>Department: {journeyStatus.departmentName ?? journey.departmentName ?? "Not assigned"}</p>
+                  <p>Doctor: {journeyStatus.doctorName ?? journey.doctorName ?? "Doctor pending"}</p>
+                  <p>Queue estimate: {journeyStatus.estimatedWait ?? journey.estimatedWait ?? "Not available yet"}</p>
+                </div>
+              </div>
             ) : null}
           </div>
         </Card>

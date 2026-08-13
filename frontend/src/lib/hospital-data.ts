@@ -354,7 +354,10 @@ export type NotificationCategory =
   | "Prescription"
   | "Billing"
   | "Inventory"
+  | "Emergency"
   | "System";
+
+export type QueuePriority = "Normal" | "Priority" | "Emergency";
 
 export type DepartmentRecord = {
   id: string;
@@ -391,11 +394,61 @@ export type AppointmentRecord = {
 
 export type QueueEntryRecord = {
   id: string;
+  organizationId?: string;
   patientName: string;
   departmentId: string;
   doctorId?: string;
   appointmentId?: string;
+  priority?: QueuePriority;
   status: QueueStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmergencyVisitSeverity = "Priority" | "Emergency";
+
+export type EmergencyVisitStatus =
+  | "Active"
+  | "In consultation"
+  | "Transferred"
+  | "Completed";
+
+export type EmergencyVisitRecord = {
+  id: string;
+  organizationId: string;
+  appointmentId?: string;
+  queueEntryId?: string;
+  patientId?: string;
+  familyMemberId?: string;
+  patientName: string;
+  contactName?: string;
+  contactPhone?: string;
+  emergencyReason: string;
+  severity: EmergencyVisitSeverity;
+  allergies?: string;
+  medicalConditions?: string;
+  bloodGroup?: string;
+  status: EmergencyVisitStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PatientJourneyRecord = {
+  id: string;
+  organizationId: string;
+  patientId: string;
+  familyMemberId?: string;
+  appointmentId?: string;
+  queueEntryId?: string;
+  token: string;
+  currentStep: string;
+  steps: string[];
+  nextStep?: string;
+  queueStatus?: QueueStatus;
+  priority?: QueuePriority;
+  doctorName?: string;
+  departmentName?: string;
+  estimatedWait?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -730,6 +783,8 @@ export type HospitalState = {
   invoices: InvoiceRecord[];
   inventoryItems: InventoryItemRecord[];
   notifications: NotificationRecord[];
+  emergencyVisits?: EmergencyVisitRecord[];
+  patientJourneys?: PatientJourneyRecord[];
   familyMembers?: FamilyMemberRecord[];
   medicalHistoryEntries?: MedicalHistoryEntryRecord[];
   clinicalAttachments?: ClinicalAttachmentRecord[];
@@ -1294,12 +1349,18 @@ export function normalizeHospitalState(state: HospitalState): HospitalState {
       ...appointment,
       consultationMode: appointment.consultationMode ?? "In Person",
     })),
+    queueEntries: (state.queueEntries ?? queueSeed).map((entry) => ({
+      ...entry,
+      priority: entry.priority ?? "Normal",
+    })),
     medicineCatalog: state.medicineCatalog ?? [],
     medicalRecords: state.medicalRecords ?? medicalRecordsSeed,
     prescriptions: state.prescriptions ?? prescriptionsSeed,
     invoices: state.invoices ?? [],
     inventoryItems: state.inventoryItems ?? [],
     notifications: state.notifications ?? [],
+    emergencyVisits: state.emergencyVisits ?? [],
+    patientJourneys: state.patientJourneys ?? [],
     familyMembers: state.familyMembers ?? [],
     medicalHistoryEntries: state.medicalHistoryEntries ?? [],
     clinicalAttachments: state.clinicalAttachments ?? [],
@@ -1319,7 +1380,10 @@ export function createInitialHospitalState(): HospitalState {
     doctors: structuredClone(doctorsSeed),
     medicineCatalog: [],
     appointments: structuredClone(appointmentsSeed),
-    queueEntries: structuredClone(queueSeed),
+    queueEntries: structuredClone(queueSeed).map((entry) => ({
+      ...entry,
+      priority: "Normal" as QueuePriority,
+    })),
     medicalRecords: structuredClone(medicalRecordsSeed),
     prescriptions: structuredClone(prescriptionsSeed),
     labTests: structuredClone(labTestsSeed),
@@ -1328,6 +1392,8 @@ export function createInitialHospitalState(): HospitalState {
     invoices: [],
     inventoryItems: [],
     notifications: [],
+    emergencyVisits: [],
+    patientJourneys: [],
     familyMembers: [],
     medicalHistoryEntries: [],
     clinicalAttachments: [],
@@ -1366,7 +1432,24 @@ export function getDepartmentSummaries(state: HospitalState) {
 }
 
 export function getActiveQueueEntries(state: HospitalState) {
-  return state.queueEntries.filter((entry) => entry.status !== "Completed");
+  const priorityRank: Record<QueuePriority, number> = {
+    Emergency: 0,
+    Priority: 1,
+    Normal: 2,
+  };
+
+  return state.queueEntries
+    .filter((entry) => entry.status !== "Completed")
+    .sort((left, right) => {
+      const leftRank = priorityRank[left.priority ?? "Normal"];
+      const rightRank = priorityRank[right.priority ?? "Normal"];
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+
+      return String(left.createdAt).localeCompare(String(right.createdAt));
+    });
 }
 
 export function getDashboardMetrics(state: HospitalState) {
@@ -1633,6 +1716,7 @@ export function createQueueEntryFromAppointment(
     departmentId: appointment.departmentId,
     doctorId: appointment.doctorId,
     appointmentId: appointment.id,
+    priority: "Normal",
     status: "Waiting",
     createdAt: appointment.appointmentTime,
     updatedAt: appointment.appointmentTime,

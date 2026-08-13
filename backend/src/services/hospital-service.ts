@@ -11,6 +11,8 @@ import type {
   DepartmentRecord,
   DepartmentStatus,
   DoctorStatus,
+  EmergencyVisitDraft,
+  EmergencyVisitRecord,
   FamilyMemberDraft,
   FamilyMemberRecord,
   HospitalState,
@@ -32,9 +34,11 @@ import type {
   NotificationRecord,
   PaymentDraft,
   PaymentRecord,
+  PatientJourneyRecord,
   PrescriptionDraft,
   PrescriptionRecord,
   PrescriptionStatus,
+  QueuePriority,
   QueueEntryRecord,
   QueueStatus,
   SafeUser,
@@ -59,6 +63,8 @@ import {
   insertLabRequest,
   insertMedicalRecord,
   insertNotifications,
+  insertEmergencyVisit,
+  insertPatientJourney,
   insertPrescription,
   insertQueueEntry,
   loadLabReportById,
@@ -72,6 +78,8 @@ import {
   updateLabRequestStatusById,
   updateMedicalRecordDetails,
   updatePrescriptionRecord,
+  updateEmergencyVisitRecord,
+  updatePatientJourneyRecord,
   updateQueueEntryById,
   updateQueueEntriesForAppointment,
   updateQueueStatusesByAppointment,
@@ -736,10 +744,104 @@ function createQueueEntryFromAppointment(
     departmentId: appointment.departmentId,
     doctorId: appointment.doctorId,
     appointmentId: appointment.id,
+    priority: "Normal",
     status: "Waiting",
     createdAt: appointment.appointmentTime,
     updatedAt: appointment.appointmentTime,
   };
+}
+
+function createEmergencyVisitId() {
+  return `EMG-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function createJourneyId() {
+  return `JRN-${Date.now()}-${randomBytes(3).toString("hex")}`;
+}
+
+function createJourneyToken() {
+  return randomBytes(16).toString("hex");
+}
+
+function getQueuePriorityRank(priority: QueuePriority) {
+  switch (priority) {
+    case "Emergency":
+      return 3;
+    case "Priority":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function sortQueueEntriesForFlow(entries: QueueEntryRecord[]) {
+  return [...entries].sort((left, right) => {
+    const priorityDelta = getQueuePriorityRank(right.priority) - getQueuePriorityRank(left.priority);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    return `${left.createdAt}-${left.id}`.localeCompare(`${right.createdAt}-${right.id}`);
+  });
+}
+
+function estimateConsultationDurationMinutes(
+  doctor: AppointmentRecord["doctorId"] | undefined,
+  state: HospitalState,
+) {
+  const organizationDefault = state.organization.defaultConsultationSlotDurationMinutes ?? 20;
+  if (!doctor) {
+    return organizationDefault;
+  }
+
+  const relevantCompleted = state.appointments.filter(
+    (appointment) =>
+      appointment.doctorId === doctor &&
+      appointment.status === "Completed" &&
+      appointment.appointmentDate >= getCurrentLocalDateIso(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+  );
+
+  if (relevantCompleted.length === 0) {
+    return organizationDefault;
+  }
+
+  return organizationDefault;
+}
+
+function getQueueWaitEstimate(
+  state: HospitalState,
+  queueEntry: QueueEntryRecord,
+) {
+  const departmentEntries = sortQueueEntriesForFlow(
+    state.queueEntries.filter(
+      (entry) =>
+        entry.departmentId === queueEntry.departmentId &&
+        entry.status !== "Completed" &&
+        !(entry.status === "In consultation" && entry.id !== queueEntry.id),
+    ),
+  );
+  const targetIndex = departmentEntries.findIndex((entry) => entry.id === queueEntry.id);
+  const patientsAhead = targetIndex < 0 ? 0 : targetIndex;
+  const doctorMinutes = estimateConsultationDurationMinutes(queueEntry.doctorId, state);
+  const baseMinutes = patientsAhead * doctorMinutes;
+  const emergencyAhead = departmentEntries
+    .slice(0, Math.max(0, targetIndex))
+    .filter((entry) => entry.priority === "Emergency").length;
+  const priorityAhead = departmentEntries
+    .slice(0, Math.max(0, targetIndex))
+    .filter((entry) => entry.priority === "Priority").length;
+
+  return {
+    estimatedMinutes: Math.max(0, baseMinutes + emergencyAhead * 8 + priorityAhead * 4),
+    summary:
+      patientsAhead > 0
+        ? `${patientsAhead} patient${patientsAhead === 1 ? "" : "s"} ahead`
+        : "Next in queue",
+  };
+}
+
+function findExistingJourneyForAppointment(state: HospitalState, appointmentId: string) {
+  return (state.patientJourneys ?? []).find((journey) => journey.appointmentId === appointmentId);
 }
 
 function createLabRequestId(state: HospitalState) {
@@ -1516,6 +1618,228 @@ function getAllowedQueueStatuses(status: QueueStatus): QueueStatus[] {
   }
 }
 
+function getJourneyCurrentStep(state: HospitalState, appointment?: AppointmentRecord, queueEntry?: QueueEntryRecord) {
+  if (!appointment && !queueEntry) {
+    return "Registration";
+  }
+
+  if (appointment?.status === "Completed") {
+    const hasPendingInvoice = state.invoices.some(
+      (invoice) =>
+        invoice.sourceType === "appointment" &&
+        invoice.sourceId === appointment.id &&
+        invoice.paymentStatus !== "Paid",
+    );
+    if (hasPendingInvoice) {
+      return "Billing";
+    }
+
+    const hasIssuedPrescription = state.prescriptions.some(
+      (prescription) =>
+        prescription.appointmentId === appointment.id &&
+        prescription.status === "Issued",
+    );
+    if (hasIssuedPrescription) {
+      return "Pharmacy";
+    }
+
+    return "Completed";
+  }
+
+  if (queueEntry?.status === "In consultation" || appointment?.status === "In consultation") {
+    return "Consultation";
+  }
+
+  if (queueEntry?.status === "Called") {
+    return "Consultation";
+  }
+
+  if (queueEntry?.status === "Waiting") {
+    return "Waiting";
+  }
+
+  if (appointment?.status === "Checked in") {
+    return "Check In";
+  }
+
+  return "Registration";
+}
+
+function buildJourneySteps(state: HospitalState, appointment?: AppointmentRecord) {
+  const steps: string[] = ["Registration", "Check In", "Waiting", "Consultation"];
+  if (
+    appointment &&
+    state.labRequests.some(
+      (request) =>
+        request.patientId === appointment.patientId &&
+        request.requestedDate >= appointment.appointmentDate,
+    )
+  ) {
+    steps.push("Laboratory");
+  }
+  if (
+    appointment &&
+    state.prescriptions.some((prescription) => prescription.appointmentId === appointment.id)
+  ) {
+    steps.push("Pharmacy");
+  }
+  if (
+    appointment &&
+    state.invoices.some(
+      (invoice) =>
+        invoice.sourceType === "appointment" &&
+        invoice.sourceId === appointment.id,
+    )
+  ) {
+    steps.push("Billing");
+  }
+  steps.push("Completed");
+  return [...new Set(steps)];
+}
+
+function canAccessJourney(user: SafeUser, journey: PatientJourneyRecord, state: HospitalState) {
+  if (user.organizationId !== journey.organizationId) {
+    return false;
+  }
+
+  if (user.role === "administrator" || user.role === "receptionist") {
+    return true;
+  }
+
+  if (user.role === "patient") {
+    return journey.patientId === user.id;
+  }
+
+  if (user.role === "doctor") {
+    const appointment = journey.appointmentId
+      ? state.appointments.find((item) => item.id === journey.appointmentId)
+      : undefined;
+    return appointment?.doctorId === user.doctorId;
+  }
+
+  if (user.role === "laboratory") {
+    return true;
+  }
+
+  return false;
+}
+
+function buildOperationalAnalytics(state: HospitalState, scope: "today" | "7d" | "30d") {
+  const today = getCurrentLocalDateIso();
+  const days = scope === "today" ? 1 : scope === "7d" ? 7 : 30;
+  const startDate = new Date(`${today}T00:00:00`);
+  startDate.setDate(startDate.getDate() - (days - 1));
+  const minDate = getCurrentLocalDateIso(startDate);
+  const inRange = (date: string) => date >= minDate && date <= today;
+
+  const appointments = state.appointments.filter((appointment) => inRange(appointment.appointmentDate));
+  const todaysAppointments = state.appointments.filter((appointment) => appointment.appointmentDate === today);
+  const labRequests = state.labRequests.filter((request) => inRange(request.requestedDate));
+  const invoices = state.invoices.filter((invoice) => invoice.createdAt.slice(0, 10) >= minDate);
+  const payments = invoices.flatMap((invoice) => invoice.payments).filter((payment) => payment.paidAt.slice(0, 10) >= minDate);
+  const prescriptions = state.prescriptions.filter((prescription) => prescription.createdAt.slice(0, 10) >= minDate);
+
+  const trendDays = Array.from({ length: days }, (_, index) => {
+    const date = new Date(`${minDate}T00:00:00`);
+    date.setDate(date.getDate() + index);
+    const iso = getCurrentLocalDateIso(date);
+    const dayAppointments = state.appointments.filter((appointment) => appointment.appointmentDate === iso);
+    return {
+      date: iso,
+      appointments: dayAppointments.length,
+      completed: dayAppointments.filter((appointment) => appointment.status === "Completed").length,
+      cancelled: dayAppointments.filter((appointment) => appointment.status === "Cancelled").length,
+      noShows: dayAppointments.filter((appointment) => appointment.status === "No Show").length,
+      online: dayAppointments.filter((appointment) => appointment.consultationMode === "Online").length,
+      inPerson: dayAppointments.filter((appointment) => appointment.consultationMode !== "Online").length,
+    };
+  });
+
+  const departmentPerformance = state.departments.map((department) => {
+    const departmentAppointments = appointments.filter((appointment) => appointment.departmentId === department.id);
+    const departmentDoctors = state.doctors.filter((doctor) => doctor.departmentId === department.id);
+    return {
+      id: department.id,
+      name: department.name,
+      doctorCount: departmentDoctors.length,
+      onDutyDoctorCount: departmentDoctors.filter((doctor) => doctor.status !== "Off duty").length,
+      appointmentCount: departmentAppointments.length,
+      patientVolume: new Set(departmentAppointments.map((appointment) => appointment.patientName)).size,
+    };
+  });
+
+  const doctorPerformance = state.doctors.map((doctor) => {
+    const doctorAppointments = appointments.filter((appointment) => appointment.doctorId === doctor.id);
+    const currentQueue = state.queueEntries.filter(
+      (entry) => entry.doctorId === doctor.id && entry.status !== "Completed",
+    ).length;
+    return {
+      id: doctor.id,
+      name: doctor.name,
+      specialization: doctor.specialization,
+      completedConsultations: doctorAppointments.filter((appointment) => appointment.status === "Completed").length,
+      currentAppointmentCount: doctorAppointments.length,
+      patientLoad: new Set(doctorAppointments.map((appointment) => appointment.patientName)).size,
+      activeQueueCount: currentQueue,
+    };
+  });
+
+  return {
+    overview: {
+      patientsToday: new Set(todaysAppointments.map((appointment) => appointment.patientName)).size,
+      appointmentsToday: todaysAppointments.length,
+      completedConsultations: appointments.filter((appointment) => appointment.status === "Completed").length,
+      cancelledAppointments: appointments.filter((appointment) => appointment.status === "Cancelled").length,
+      noShows: appointments.filter((appointment) => appointment.status === "No Show").length,
+      activeQueue: state.queueEntries.filter((entry) => entry.status !== "Completed").length,
+      revenueTodayCents: payments
+        .filter((payment) => payment.paidAt.slice(0, 10) === today)
+        .reduce((sum, payment) => sum + payment.amountCents, 0),
+      outstandingBillingCents: state.invoices.reduce((sum, invoice) => sum + invoice.amountDueCents, 0),
+      labRequestsToday: state.labRequests.filter((request) => request.requestedDate === today).length,
+      prescriptionsIssued: prescriptions.filter((prescription) => prescription.status === "Issued").length,
+      prescriptionsDispensed: prescriptions.filter((prescription) => prescription.status === "Dispensed").length,
+    },
+    trends: trendDays,
+    doctorPerformance,
+    departmentPerformance,
+    laboratory: {
+      requested: labRequests.filter((request) => request.status === "Requested").length,
+      processing: labRequests.filter((request) => ["Sample Collected", "Processing"].includes(request.status)).length,
+      completed: labRequests.filter((request) => request.status === "Completed").length,
+      reportsCompleted: state.labReports.filter((report) => report.uploadedAt.slice(0, 10) >= minDate).length,
+    },
+    pharmacy: {
+      dispensed: prescriptions.filter((prescription) => prescription.status === "Dispensed").length,
+      medicineValueCents: invoices
+        .flatMap((invoice) => invoice.items)
+        .filter((item) => item.category === "Medicine")
+        .reduce((sum, item) => sum + item.totalAmountCents, 0),
+      lowStockCount: state.inventoryItems.filter((item) => item.quantityInStock <= item.reorderLevel && item.quantityInStock > 0).length,
+      outOfStockCount: state.inventoryItems.filter((item) => item.quantityInStock <= 0).length,
+      nearExpiryCount: state.inventoryItems.filter((item) => item.expiryDate >= today && item.expiryDate <= getCurrentLocalDateIso(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))).length,
+    },
+    billing: {
+      revenueCents: payments.reduce((sum, payment) => sum + payment.amountCents, 0),
+      paidInvoices: invoices.filter((invoice) => invoice.paymentStatus === "Paid").length,
+      unpaidInvoices: invoices.filter((invoice) => invoice.paymentStatus !== "Paid").length,
+      outstandingAmountCents: invoices.reduce((sum, invoice) => sum + invoice.amountDueCents, 0),
+      consultationRevenueCents: invoices
+        .flatMap((invoice) => invoice.items)
+        .filter((item) => item.category === "Consultation")
+        .reduce((sum, item) => sum + item.totalAmountCents, 0),
+      labRevenueCents: invoices
+        .flatMap((invoice) => invoice.items)
+        .filter((item) => item.category === "Laboratory")
+        .reduce((sum, item) => sum + item.totalAmountCents, 0),
+      pharmacyRevenueCents: invoices
+        .flatMap((invoice) => invoice.items)
+        .filter((item) => item.category === "Medicine")
+        .reduce((sum, item) => sum + item.totalAmountCents, 0),
+    },
+  };
+}
+
 function validateLabRequestDraft(state: HospitalState, draft: LabRequestDraft) {
   const errors: Partial<Record<keyof LabRequestDraft, string>> = {};
   const currentDate = getCurrentLocalDateIso();
@@ -2078,6 +2402,12 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       telemedicineSessions: (state.telemedicineSessions ?? []).filter(
         (session) => session.organizationId === user.organizationId,
       ),
+      emergencyVisits: (state.emergencyVisits ?? []).filter(
+        (visit) => visit.organizationId === user.organizationId,
+      ),
+      patientJourneys: (state.patientJourneys ?? []).filter(
+        (journey) => journey.organizationId === user.organizationId,
+      ),
       notifications: getScopedNotificationsForUser(user, state),
     };
   }
@@ -2134,6 +2464,15 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
           (session.doctorUserId === user.id ||
             appointments.some((appointment) => appointment.id === session.appointmentId)),
       ),
+      emergencyVisits: (state.emergencyVisits ?? []).filter(
+        (visit) =>
+          visit.organizationId === user.organizationId &&
+          (visit.patientId ? patientIds.has(visit.patientId) : patientNames.has(visit.patientName)),
+      ),
+      patientJourneys: (state.patientJourneys ?? []).filter((journey) =>
+        journey.organizationId === user.organizationId &&
+        (journey.appointmentId ? appointmentIds.has(journey.appointmentId) : false),
+      ),
       invoices: [],
       inventoryItems: state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
       notifications: getScopedNotificationsForUser(user, state),
@@ -2154,6 +2493,8 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       labTests: state.labTests.filter((test) => test.organizationId === user.organizationId),
       labRequests: state.labRequests.filter((request) => request.organizationId === user.organizationId),
       labReports: state.labReports.filter((report) => report.organizationId === user.organizationId),
+      emergencyVisits: (state.emergencyVisits ?? []).filter((visit) => visit.organizationId === user.organizationId),
+      patientJourneys: (state.patientJourneys ?? []).filter((journey) => journey.organizationId === user.organizationId),
       invoices: [],
       inventoryItems: [],
       notifications: getScopedNotificationsForUser(user, state),
@@ -2171,6 +2512,8 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       ),
       labRequests: [],
       labReports: [],
+      emergencyVisits: [],
+      patientJourneys: [],
       invoices: [],
       inventoryItems: state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
       notifications: getScopedNotificationsForUser(user, state),
@@ -2230,6 +2573,16 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       (session) =>
         session.patientUserId === user.id &&
         appointments.some((appointment) => appointment.id === session.appointmentId),
+    ),
+    emergencyVisits: (state.emergencyVisits ?? []).filter(
+      (visit) =>
+        visit.patientId === user.id ||
+        appointments.some((appointment) => appointment.id === visit.appointmentId),
+    ),
+    patientJourneys: (state.patientJourneys ?? []).filter(
+      (journey) =>
+        journey.patientId === user.id ||
+        (journey.appointmentId ? appointmentIds.has(journey.appointmentId) : false),
     ),
   };
 }
@@ -2328,6 +2681,332 @@ export async function getLabRequestsForUser(user: SafeUser) {
 
   return {
     labRequests: getScopedLabRequestsForUser(user, state),
+  };
+}
+
+export async function getOperationalAnalytics(
+  user: SafeUser,
+  scope: "today" | "7d" | "30d",
+) {
+  if (user.role !== "administrator") {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const state = await reconcileNoShowAppointments(await loadHospitalState());
+  const scopedState = withScopedState(user.role, user, state);
+
+  return {
+    analytics: buildOperationalAnalytics(scopedState, scope),
+  };
+}
+
+export async function createEmergencyVisitForOperations(
+  user: SafeUser,
+  draft: EmergencyVisitDraft,
+) {
+  if (!["administrator", "receptionist"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  if (!draft.emergencyReason.trim() || draft.emergencyReason.trim().length < 3) {
+    throw createHttpError(400, "Please review the emergency details provided.", {
+      errors: { emergencyReason: "Enter the immediate care reason." },
+    });
+  }
+
+  const state = await loadHospitalState();
+  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
+  const patientUser =
+    draft.patientId && draft.patientId.trim()
+      ? (await loadUsers()).find(
+          (currentUser) =>
+            currentUser.id === draft.patientId &&
+            currentUser.organizationId === user.organizationId &&
+            currentUser.role === "patient",
+        )
+      : undefined;
+
+  if (draft.familyMemberId && (!familyMember || familyMember.organizationId !== user.organizationId)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  if (draft.patientId && !patientUser) {
+    throw createHttpError(400, "The selected patient could not be found.");
+  }
+
+  const patientName =
+    familyMember?.fullName ??
+    patientUser?.patientName ??
+    patientUser?.displayName ??
+    draft.patientName?.trim();
+
+  if (!patientName) {
+    throw createHttpError(400, "Please review the emergency details provided.", {
+      errors: { patientName: "Enter a patient or visitor name." },
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  const emergencyQueueEntry: QueueEntryRecord = {
+    id: `Q-${Date.now().toString().slice(-6)}`,
+    organizationId: user.organizationId,
+    patientName,
+    departmentId: "dept-emergency",
+    doctorId: undefined,
+    appointmentId: undefined,
+    priority: draft.severity === "Emergency" ? "Emergency" : "Priority",
+    status: "Waiting",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+  const emergencyVisit: EmergencyVisitRecord = {
+    id: createEmergencyVisitId(),
+    organizationId: user.organizationId,
+    appointmentId: undefined,
+    queueEntryId: emergencyQueueEntry.id,
+    patientId: patientUser?.id,
+    familyMemberId: familyMember?.id,
+    patientName,
+    contactName: draft.contactName?.trim() || undefined,
+    contactPhone: draft.contactPhone?.trim() || undefined,
+    emergencyReason: draft.emergencyReason.trim(),
+    severity: draft.severity,
+    allergies:
+      familyMember?.allergies ??
+      patientUser?.allergies ??
+      (draft.allergies?.trim() || undefined),
+    medicalConditions:
+      familyMember?.medicalConditions ??
+      patientUser?.medicalConditions ??
+      (draft.medicalConditions?.trim() || undefined),
+    bloodGroup:
+      familyMember?.bloodGroup ??
+      patientUser?.bloodGroup ??
+      (draft.bloodGroup?.trim() || undefined),
+    status: "Active",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  await withTransaction(async () => {
+    await insertQueueEntry(emergencyQueueEntry);
+    await insertEmergencyVisit(emergencyVisit);
+  });
+
+  const users = await loadUsers();
+  const emergencyDoctors = users
+    .filter(
+      (currentUser) =>
+        currentUser.organizationId === user.organizationId &&
+        currentUser.role === "doctor",
+    )
+    .filter((currentUser) => {
+      const doctor = state.doctors.find((item) => item.id === currentUser.doctorId);
+      return doctor?.status === "Emergency duty" || doctor?.departmentId === "dept-emergency";
+    })
+    .map((currentUser) => currentUser.id);
+
+  const createdNotifications = await notifyUsers({
+    organizationId: user.organizationId,
+    userIds: [...emergencyDoctors, ...(patientUser?.id ? [patientUser.id] : [])],
+    title: "Emergency priority activated",
+    message: `${patientName} was added for immediate care in Emergency.`,
+    category: "Emergency",
+    relatedEntityType: "emergency-visit",
+    relatedEntityId: emergencyVisit.id,
+  });
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "emergency.created",
+    entityType: "emergency-visit",
+    entityId: emergencyVisit.id,
+    metadata: {
+      severity: emergencyVisit.severity,
+      queueEntryId: emergencyQueueEntry.id,
+    },
+  });
+
+  return {
+    patch: {
+      queueEntries: [emergencyQueueEntry],
+      emergencyVisits: [emergencyVisit],
+      notifications: createdNotifications.filter((notification) => notification.userId === user.id),
+    },
+  };
+}
+
+export async function updateQueuePriority(
+  user: SafeUser,
+  queueEntryId: string,
+  priority: QueuePriority,
+) {
+  if (!["administrator", "receptionist"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const state = await loadHospitalState();
+  const queueEntry = state.queueEntries.find((entry) => entry.id === queueEntryId);
+
+  if (!queueEntry) {
+    throw createHttpError(404, "Queue entry not found.");
+  }
+
+  if (queueEntry.organizationId !== user.organizationId) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  if (queueEntry.status === "In consultation") {
+    throw createHttpError(400, "Queue priority cannot be changed during consultation.");
+  }
+
+  const updatedQueueEntry = {
+    ...queueEntry,
+    priority,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await updateQueueEntryById({
+    queueEntryId,
+    organizationId: queueEntry.organizationId,
+    status: queueEntry.status,
+    updatedAt: updatedQueueEntry.updatedAt,
+    priority,
+  });
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "queue.priority-updated",
+    entityType: "queue-entry",
+    entityId: queueEntryId,
+    metadata: {
+      priority,
+    },
+  });
+
+  return {
+    patch: {
+      queueEntries: [updatedQueueEntry],
+    },
+  };
+}
+
+export async function getJourneyByToken(user: SafeUser, token: string) {
+  const state = await reconcileNoShowAppointments(await loadHospitalState());
+  const journey = (state.patientJourneys ?? []).find((item) => item.token === token);
+
+  if (!journey) {
+    throw createHttpError(404, "Patient journey not found.");
+  }
+
+  if (!canAccessJourney(user, journey, state)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const appointment = journey.appointmentId
+    ? state.appointments.find((item) => item.id === journey.appointmentId)
+    : undefined;
+  const queueEntry = journey.queueEntryId
+    ? state.queueEntries.find((item) => item.id === journey.queueEntryId)
+    : undefined;
+  const currentStep = getJourneyCurrentStep(state, appointment, queueEntry);
+
+  return {
+    journey: {
+      ...journey,
+      currentStep,
+      steps: buildJourneySteps(state, appointment),
+      nextStep:
+        buildJourneySteps(state, appointment).find((step) => step !== currentStep) ?? currentStep,
+      queueStatus: queueEntry?.status,
+      priority: queueEntry?.priority,
+      doctorName: appointment ? getDoctorById(state, appointment.doctorId)?.name ?? "Doctor pending" : undefined,
+      departmentName:
+        appointment
+          ? state.departments.find((department) => department.id === appointment.departmentId)?.name
+          : queueEntry
+            ? state.departments.find((department) => department.id === queueEntry.departmentId)?.name
+            : undefined,
+      estimatedWait: queueEntry ? getQueueWaitEstimate(state, queueEntry) : undefined,
+    },
+  };
+}
+
+export async function getDoctorHandoffSummary(
+  user: SafeUser,
+  input: { appointmentId?: string; patientId?: string },
+) {
+  if (!["doctor", "administrator"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const state = await reconcileNoShowAppointments(await loadHospitalState());
+  const scopedState = withScopedState(user.role, user, state);
+  const appointment = input.appointmentId
+    ? scopedState.appointments.find((item) => item.id === input.appointmentId)
+    : undefined;
+  const patientId = input.patientId ?? appointment?.patientId;
+
+  if (!appointment && !patientId) {
+    throw createHttpError(400, "Select a patient visit to generate the handoff.");
+  }
+
+  const medicalRecords = scopedState.medicalRecords
+    .filter((record) => (patientId ? record.patientId === patientId : appointment ? record.appointmentId === appointment.id : false))
+    .sort((left, right) => `${right.visitDate}${right.createdAt}`.localeCompare(`${left.visitDate}${left.createdAt}`));
+  const prescriptions = scopedState.prescriptions
+    .filter((prescription) => (patientId ? prescription.patientId === patientId : appointment ? prescription.appointmentId === appointment.id : false))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const labRequests = scopedState.labRequests
+    .filter((request) => (patientId ? request.patientId === patientId : appointment ? request.patientName === appointment.patientName : false))
+    .sort((left, right) => `${right.requestedDate}${right.requestedTime}`.localeCompare(`${left.requestedDate}${left.requestedTime}`));
+  const latestRecord = medicalRecords[0];
+  const latestPrescription = prescriptions[0];
+  const linkedFamilyMember =
+    appointment?.familyMemberId
+      ? scopedState.familyMembers?.find((member) => member.id === appointment.familyMemberId)
+      : undefined;
+  const patientProfile =
+    patientId
+      ? (await loadUsers()).find((currentUser) => currentUser.id === patientId)
+      : undefined;
+
+  const summary = {
+    patient: appointment?.patientName ?? patientProfile?.patientName ?? patientProfile?.displayName ?? "Not recorded",
+    patientContext: linkedFamilyMember ? linkedFamilyMember.relationship : "Primary patient",
+    reasonForVisit: appointment?.reasonForAppointment || "Not recorded",
+    allergies: linkedFamilyMember?.allergies ?? patientProfile?.allergies ?? "Not recorded",
+    chronicConditions: linkedFamilyMember?.medicalConditions ?? patientProfile?.medicalConditions ?? "Not recorded",
+    bloodGroup: linkedFamilyMember?.bloodGroup ?? patientProfile?.bloodGroup ?? "Not recorded",
+    latestDiagnosis: latestRecord?.diagnosis ?? "Not recorded",
+    latestClinicalNote: latestRecord?.clinicalNotes ?? "Not recorded",
+    recentLabFindings:
+      labRequests[0]
+        ? `${labRequests[0].testName} - ${labRequests[0].status}`
+        : "No data available",
+    activePrescription:
+      latestPrescription
+        ? `${latestPrescription.medicines.map((medicine) => medicine.medicineName).join(", ")}`
+        : "No data available",
+    pendingLabs:
+      labRequests.filter((request) => request.status !== "Completed").map((request) => request.testName).join(", ") ||
+      "No data available",
+    visitStatus: appointment?.status ?? "Not recorded",
+    followUp: latestPrescription?.followUpDate ?? "Not recorded",
+  };
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "handoff.viewed",
+    entityType: "patient-handoff",
+    entityId: appointment?.id ?? patientId,
+  });
+
+  return {
+    handoff: summary,
   };
 }
 
@@ -3577,7 +4256,28 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     status: "Scheduled",
   };
 
-    await measurePerfStep("appointment.create.write", () => insertAppointment(appointment));
+  const existingJourney = findExistingJourneyForAppointment(state, appointment.id);
+  const journey: PatientJourneyRecord | null = existingJourney
+    ? null
+    : {
+        id: createJourneyId(),
+        organizationId: appointment.organizationId,
+        token: createJourneyToken(),
+        appointmentId: appointment.id,
+        queueEntryId: undefined,
+        patientId: appointment.patientId,
+        familyMemberId: appointment.familyMemberId,
+        patientName: appointment.patientName,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+    await measurePerfStep("appointment.create.write", async () => {
+      await insertAppointment(appointment);
+      if (journey) {
+        await insertPatientJourney(journey);
+      }
+    });
     const users = await loadUsers();
     const doctorUsers = users.filter(
       (currentUser) =>
@@ -3611,11 +4311,13 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
   const nextState: HospitalState = {
     ...state,
     appointments: [appointment, ...state.appointments],
+    patientJourneys: journey ? [journey, ...(state.patientJourneys ?? [])] : state.patientJourneys,
   };
 
   return {
       patch: {
         appointments: [appointment],
+        patientJourneys: journey ? [journey] : [],
         notifications: createdNotifications.filter((notification) => notification.userId === user.id),
         meta: {
           appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
@@ -3926,6 +4628,7 @@ export async function setAppointmentStatus(
 
   const updatedAppointment: AppointmentRecord = { ...appointment, status };
   const changedQueueEntries = nextQueueEntries.filter((entry) => entry.appointmentId === appointment.id);
+  const linkedJourney = (state.patientJourneys ?? []).find((journey) => journey.appointmentId === appointment.id);
   let createdInvoice: InvoiceRecord | null = null;
 
   if (
@@ -3985,6 +4688,16 @@ export async function setAppointmentStatus(
         });
       } else if (changedQueueEntries[0]) {
         await insertQueueEntry(changedQueueEntries[0]);
+      }
+
+      if (linkedJourney && changedQueueEntries[0]) {
+        await updatePatientJourneyRecord({
+          journeyId: linkedJourney.id,
+          organizationId: appointment.organizationId,
+          queueEntryId: changedQueueEntries[0].id,
+          appointmentId: appointment.id,
+          updatedAt: new Date().toISOString(),
+        });
       }
     }
 
@@ -4048,6 +4761,16 @@ export async function setAppointmentStatus(
     patch: {
       appointments: [updatedAppointment],
       queueEntries: changedQueueEntries,
+      patientJourneys:
+        linkedJourney && changedQueueEntries[0]
+          ? [
+              {
+                ...linkedJourney,
+                queueEntryId: changedQueueEntries[0].id,
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
       invoices: createdInvoice ? [createdInvoice] : [],
       notifications: [...createdNotifications, ...billingNotifications].filter(
         (notification) => notification.userId === user.id,
@@ -4098,6 +4821,9 @@ export async function advanceQueue(
   const updatedAppointment = linkedAppointmentId
     ? nextAppointments.find((appointment) => appointment.id === linkedAppointmentId)
     : undefined;
+  const linkedEmergencyVisit = (state.emergencyVisits ?? []).find(
+    (visit) => visit.queueEntryId === queueEntry.id,
+  );
 
   await measurePerfStep("queue.write", async () => {
     await updateQueueEntryById({
@@ -4105,6 +4831,7 @@ export async function advanceQueue(
       organizationId: queueEntry.organizationId,
       status,
       updatedAt: queueEntry.updatedAt,
+      priority: queueEntry.priority,
     });
 
     if (updatedAppointment) {
@@ -4112,6 +4839,20 @@ export async function advanceQueue(
         appointmentId: updatedAppointment.id,
         organizationId: updatedAppointment.organizationId,
         status: updatedAppointment.status,
+      });
+    }
+
+    if (linkedEmergencyVisit) {
+      await updateEmergencyVisitRecord({
+        emergencyVisitId: linkedEmergencyVisit.id,
+        organizationId: linkedEmergencyVisit.organizationId,
+        status:
+          status === "In consultation"
+            ? "In consultation"
+            : status === "Completed"
+              ? "Completed"
+              : undefined,
+        updatedAt: new Date().toISOString(),
       });
     }
   });
@@ -4129,6 +4870,21 @@ export async function advanceQueue(
     patch: {
       queueEntries: [updatedQueueEntry],
       appointments: updatedAppointment ? [updatedAppointment] : [],
+      emergencyVisits:
+        linkedEmergencyVisit
+          ? [
+              {
+                ...linkedEmergencyVisit,
+                status:
+                  status === "In consultation"
+                    ? "In consultation"
+                    : status === "Completed"
+                      ? "Completed"
+                      : linkedEmergencyVisit.status,
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
     },
   };
 }

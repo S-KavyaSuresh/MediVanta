@@ -6,6 +6,7 @@ import type {
   ClinicalAttachmentRecord,
   DepartmentRecord,
   DoctorRecord,
+  EmergencyVisitRecord,
   FamilyMemberRecord,
   HospitalState,
   InventoryItemRecord,
@@ -23,8 +24,10 @@ import type {
   OrganizationRecord,
   PaymentMethod,
   PaymentRecord,
+  PatientJourneyRecord,
   PrescriptionMedicineRecord,
   PrescriptionRecord,
+  QueuePriority,
   QueueEntryRecord,
   QueueStatus,
   SessionRecord,
@@ -1112,8 +1115,8 @@ export async function insertQueueEntry(entry: QueueEntryRecord) {
   await query(
     `insert into queue_entries (
       id, organization_id, patient_name, department_id, doctor_id,
-      appointment_id, status, created_at, updated_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      appointment_id, priority, status, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       entry.id,
       entry.organizationId,
@@ -1121,6 +1124,7 @@ export async function insertQueueEntry(entry: QueueEntryRecord) {
       entry.departmentId,
       entry.doctorId ?? null,
       entry.appointmentId ?? null,
+      entry.priority,
       entry.status,
       entry.createdAt,
       entry.updatedAt,
@@ -1136,6 +1140,7 @@ export async function updateQueueEntriesForAppointment(input: {
   departmentId: string;
   createdAt: string;
   updatedAt: string;
+  priority?: QueuePriority;
 }) {
   await query(
     `update queue_entries
@@ -1143,7 +1148,8 @@ export async function updateQueueEntriesForAppointment(input: {
          doctor_id = $4,
          department_id = $5,
          created_at = $6,
-         updated_at = $7
+         updated_at = $7,
+         priority = coalesce($8, priority)
      where organization_id = $1 and appointment_id = $2`,
     [
       input.organizationId,
@@ -1153,6 +1159,7 @@ export async function updateQueueEntriesForAppointment(input: {
       input.departmentId,
       input.createdAt,
       input.updatedAt,
+      input.priority ?? null,
     ],
   );
 }
@@ -1205,6 +1212,7 @@ export async function loadQueueEntriesByAppointment(
       department_id,
       doctor_id,
       appointment_id,
+      priority,
       status,
       created_at,
       updated_at
@@ -1217,14 +1225,15 @@ export async function loadQueueEntriesByAppointment(
   return result.rows.map((row): QueueEntryRecord => ({
     id: String(row.id),
     organizationId: String(row.organization_id),
-    patientName: String(row.patient_name),
-    departmentId: String(row.department_id),
-    doctorId: asString(row.doctor_id),
-    appointmentId: asString(row.appointment_id),
-    status: row.status as QueueStatus,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  }));
+      patientName: String(row.patient_name),
+      departmentId: String(row.department_id),
+      doctorId: asString(row.doctor_id),
+      appointmentId: asString(row.appointment_id),
+      priority: (asString(row.priority) as QueuePriority) ?? "Normal",
+      status: row.status as QueueStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }));
 }
 
 export async function updateQueueEntryById(input: {
@@ -1232,13 +1241,114 @@ export async function updateQueueEntryById(input: {
   organizationId: string;
   status: QueueStatus;
   updatedAt: string;
+  priority?: QueuePriority;
 }) {
   await query(
     `update queue_entries
      set status = $3,
-         updated_at = $4
+         updated_at = $4,
+         priority = coalesce($5, priority)
      where id = $1 and organization_id = $2`,
-    [input.queueEntryId, input.organizationId, input.status, input.updatedAt],
+    [input.queueEntryId, input.organizationId, input.status, input.updatedAt, input.priority ?? null],
+  );
+}
+
+export async function insertEmergencyVisit(visit: EmergencyVisitRecord) {
+  await query(
+    `insert into emergency_visits (
+      id, organization_id, appointment_id, queue_entry_id, patient_id, family_member_id,
+      patient_name, contact_name, contact_phone, emergency_reason, severity, allergies,
+      medical_conditions, blood_group, status, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    [
+      visit.id,
+      visit.organizationId,
+      visit.appointmentId ?? null,
+      visit.queueEntryId ?? null,
+      visit.patientId ?? null,
+      visit.familyMemberId ?? null,
+      visit.patientName,
+      visit.contactName ?? null,
+      visit.contactPhone ?? null,
+      visit.emergencyReason,
+      visit.severity,
+      visit.allergies ?? null,
+      visit.medicalConditions ?? null,
+      visit.bloodGroup ?? null,
+      visit.status,
+      visit.createdAt,
+      visit.updatedAt,
+    ],
+  );
+}
+
+export async function updateEmergencyVisitRecord(input: {
+  emergencyVisitId: string;
+  organizationId: string;
+  status?: EmergencyVisitRecord["status"];
+  queueEntryId?: string | null;
+  appointmentId?: string | null;
+  updatedAt: string;
+}) {
+  await query(
+    `update emergency_visits
+     set status = coalesce($3, status),
+         queue_entry_id = coalesce($4, queue_entry_id),
+         appointment_id = coalesce($5, appointment_id),
+         updated_at = $6
+     where id = $1 and organization_id = $2`,
+    [
+      input.emergencyVisitId,
+      input.organizationId,
+      input.status ?? null,
+      input.queueEntryId ?? null,
+      input.appointmentId ?? null,
+      input.updatedAt,
+    ],
+  );
+}
+
+export async function insertPatientJourney(journey: PatientJourneyRecord) {
+  await query(
+    `insert into patient_journeys (
+      id, organization_id, token, appointment_id, queue_entry_id, patient_id,
+      family_member_id, patient_name, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      journey.id,
+      journey.organizationId,
+      journey.token,
+      journey.appointmentId ?? null,
+      journey.queueEntryId ?? null,
+      journey.patientId ?? null,
+      journey.familyMemberId ?? null,
+      journey.patientName,
+      journey.createdAt,
+      journey.updatedAt,
+    ],
+  );
+}
+
+export async function updatePatientJourneyRecord(input: {
+  journeyId: string;
+  organizationId: string;
+  queueEntryId?: string | null;
+  appointmentId?: string | null;
+  updatedAt: string;
+}) {
+  await query(
+    `update patient_journeys
+     set queue_entry_id = coalesce($3, queue_entry_id),
+         appointment_id = coalesce($4, appointment_id),
+         updated_at = $5
+     where id = $1 and organization_id = $2`,
+    [
+      input.journeyId,
+      input.organizationId,
+      input.queueEntryId ?? null,
+      input.appointmentId ?? null,
+      input.updatedAt,
+    ],
   );
 }
 
@@ -1885,6 +1995,8 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
     medicalHistoryEntriesResult,
     clinicalAttachmentsResult,
     telemedicineSessionsResult,
+    emergencyVisitsResult,
+    patientJourneysResult,
   ] =
     await Promise.all([
       query("select * from hospital_settings where organization_id = $1 limit 1", [organizationId]),
@@ -1927,6 +2039,8 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       query("select * from medical_history_entries where organization_id = $1 order by recorded_date desc, created_at desc", [organizationId]),
       query("select * from clinical_attachments where organization_id = $1 order by created_at desc", [organizationId]),
       query("select * from telemedicine_sessions where organization_id = $1 order by created_at desc", [organizationId]),
+      query("select * from emergency_visits where organization_id = $1 order by created_at desc", [organizationId]),
+      query("select * from patient_journeys where organization_id = $1 order by created_at desc", [organizationId]),
     ]);
 
   const settingsRow = settingsResult.rows[0];
@@ -2056,9 +2170,41 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       departmentId: String(row.department_id),
       doctorId: asString(row.doctor_id),
       appointmentId: asString(row.appointment_id),
+      priority: (asString(row.priority) as QueuePriority) ?? "Normal",
       status: row.status as QueueEntryRecord["status"],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
+    })),
+    emergencyVisits: emergencyVisitsResult.rows.map((row): EmergencyVisitRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      appointmentId: asString(row.appointment_id),
+      queueEntryId: asString(row.queue_entry_id),
+      patientId: asString(row.patient_id),
+      familyMemberId: asString(row.family_member_id),
+      patientName: String(row.patient_name),
+      contactName: asString(row.contact_name),
+      contactPhone: asString(row.contact_phone),
+      emergencyReason: String(row.emergency_reason),
+      severity: String(row.severity) as EmergencyVisitRecord["severity"],
+      allergies: asString(row.allergies),
+      medicalConditions: asString(row.medical_conditions),
+      bloodGroup: asString(row.blood_group),
+      status: String(row.status) as EmergencyVisitRecord["status"],
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
+    })),
+    patientJourneys: patientJourneysResult.rows.map((row): PatientJourneyRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      token: String(row.token),
+      appointmentId: asString(row.appointment_id),
+      queueEntryId: asString(row.queue_entry_id),
+      patientId: asString(row.patient_id),
+      familyMemberId: asString(row.family_member_id),
+      patientName: String(row.patient_name),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
     })),
     medicalRecords: medicalRecordsResult.rows.map((row): MedicalRecordRecord => ({
       id: String(row.id),

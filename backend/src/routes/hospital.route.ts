@@ -7,6 +7,7 @@ import {
   createClinicalAttachment,
   createInventoryBatch,
   createDepartment,
+  createEmergencyVisitForOperations,
   createFamilyMember,
   createLabReport,
   createLabRequest,
@@ -18,9 +19,12 @@ import {
   dispensePrescription,
   getFamilyMembers,
   getConversationSignals,
+  getDoctorHandoffSummary,
   getDoctorHistory,
   getLabReportForUser,
   getLabRequestsForUser,
+  getJourneyByToken,
+  getOperationalAnalytics,
   getScopedHospitalStateForUser,
   getTelemedicineMessages,
   getTelemedicineSessionForAppointment,
@@ -42,6 +46,7 @@ import {
   updatePrescription,
   updatePatientProfile,
   updateLabRequestStatus,
+  updateQueuePriority,
   updateAppointment,
 } from "../services/hospital-service.js";
 import { getAuditLogs } from "../services/audit-service.js";
@@ -70,6 +75,10 @@ const appointmentStatusSchema = z.object({
 
 const queueStatusSchema = z.object({
   status: z.enum(["Waiting", "Called", "In consultation", "Completed"]),
+});
+
+const queuePrioritySchema = z.object({
+  priority: z.enum(["Normal", "Priority", "Emergency"]),
 });
 
 const departmentDraftSchema = z.object({
@@ -292,6 +301,32 @@ const searchQuerySchema = z.object({
   q: z.string().default(""),
 });
 
+const analyticsQuerySchema = z.object({
+  scope: z.enum(["today", "7d", "30d"]).default("today"),
+});
+
+const journeyQuerySchema = z.object({
+  token: z.string().min(1),
+});
+
+const handoffQuerySchema = z.object({
+  appointmentId: z.string().optional(),
+  patientId: z.string().optional(),
+});
+
+const emergencyVisitDraftSchema = z.object({
+  patientId: z.string().optional(),
+  familyMemberId: z.string().optional(),
+  patientName: z.string().optional(),
+  contactName: z.string().optional(),
+  contactPhone: z.string().optional(),
+  emergencyReason: z.string(),
+  severity: z.enum(["Priority", "Emergency"]),
+  allergies: z.string().optional(),
+  medicalConditions: z.string().optional(),
+  bloodGroup: z.string().optional(),
+});
+
 const accountStatusSchema = z.object({
   status: z.enum(["Active", "Deactivated"]),
 });
@@ -364,6 +399,53 @@ hospitalRouter.get(
   },
 );
 
+hospitalRouter.get(
+  "/analytics",
+  requireCapabilities("reports:view"),
+  async (request, response, next) => {
+    try {
+      const { scope } = analyticsQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await getOperationalAnalytics(request.authUser!, scope)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/journeys",
+  async (request, response, next) => {
+    try {
+      const { token } = journeyQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await getJourneyByToken(request.authUser!, token)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/handoff",
+  requireCapabilities("health-records:view"),
+  async (request, response, next) => {
+    try {
+      const query = handoffQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await getDoctorHandoffSummary(request.authUser!, query)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 hospitalRouter.post(
   "/appointments",
   async (request, response, next) => {
@@ -372,6 +454,22 @@ hospitalRouter.post(
       response.status(201).json({
         success: true,
         ...(await createAppointment(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/emergency-visits",
+  requireCapabilities("operations:view"),
+  async (request, response, next) => {
+    try {
+      const draft = emergencyVisitDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createEmergencyVisitForOperations(request.authUser!, draft)),
       });
     } catch (error) {
       next(error);
@@ -927,6 +1025,23 @@ hospitalRouter.patch(
       response.json({
         success: true,
         ...(await advanceQueue(request.authUser!, queueEntryId, status)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/queue/:queueEntryId/priority",
+  requireCapabilities("queue:update"),
+  async (request, response, next) => {
+    try {
+      const { priority } = queuePrioritySchema.parse(request.body);
+      const queueEntryId = getRouteParam(request.params.queueEntryId);
+      response.json({
+        success: true,
+        ...(await updateQueuePriority(request.authUser!, queueEntryId, priority)),
       });
     } catch (error) {
       next(error);

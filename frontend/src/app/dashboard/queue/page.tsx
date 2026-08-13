@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ export default function QueueBoardPage() {
       inConsultation: activeQueueEntries.filter(
         (entry) => entry.status === "In consultation",
       ).length,
+      emergency: activeQueueEntries.filter((entry) => entry.priority === "Emergency").length,
     };
   }, [activeQueueEntries]);
 
@@ -40,11 +42,12 @@ export default function QueueBoardPage() {
         description="Track waiting patients, move them through consultation stages, and keep appointment-linked queue entries synchronized."
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Waiting", value: totals.waiting },
           { label: "Called", value: totals.called },
           { label: "In consultation", value: totals.inConsultation },
+          { label: "Emergency priority", value: totals.emergency },
         ].map((item) => (
           <Card key={item.label}>
             <p className="text-sm text-[color:var(--muted-foreground)]">{item.label}</p>
@@ -69,6 +72,24 @@ export default function QueueBoardPage() {
                     {row.doctorId ? getDoctorName(row.doctorId) : "Doctor assignment pending"}
                   </p>
                 </div>
+              ),
+            },
+            {
+              id: "queue-priority",
+              key: "priority",
+              header: "Priority",
+              render: (value) => (
+                <Badge
+                  variant={
+                    value === "Emergency"
+                      ? "danger"
+                      : value === "Priority"
+                        ? "warning"
+                        : "neutral"
+                  }
+                >
+                  {String(value ?? "Normal")}
+                </Badge>
               ),
             },
             {

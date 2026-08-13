@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { Button } from "@/components/ui/button";
@@ -62,8 +62,13 @@ function hasUsableEmail(profile?: SafeUser) {
 }
 
 export function DoctorPatientsView() {
-  const { meta, state } = useHospitalData();
+  const { fetchDoctorHandoff, meta, state } = useHospitalData();
   const [selectedPatient, setSelectedPatient] = useState<DoctorPatientSummary | null>(null);
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<Awaited<
+    ReturnType<typeof fetchDoctorHandoff>
+  >["handoff"]>();
 
   const patients = useMemo(() => {
     const patientProfiles = meta?.patientProfiles ?? [];
@@ -158,6 +163,42 @@ export function DoctorPatientsView() {
     return [...combined.values()].sort((left, right) => left.fullName.localeCompare(right.fullName));
   }, [meta?.patientProfiles, state.appointments, state.labReports, state.labRequests, state.medicalRecords]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const run = async () => {
+      if (!selectedPatient || selectedPatient.patientId.startsWith("external:")) {
+        setHandoff(undefined);
+        setHandoffError(null);
+        return;
+      }
+
+      setHandoffLoading(true);
+      setHandoffError(null);
+      const result = await fetchDoctorHandoff({ patientId: selectedPatient.patientId });
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!result.ok) {
+        setHandoff(undefined);
+        setHandoffError(result.message ?? "The patient handoff could not be loaded.");
+        setHandoffLoading(false);
+        return;
+      }
+
+      setHandoff(result.handoff);
+      setHandoffLoading(false);
+    };
+
+    void run();
+
+    return () => {
+      mounted = false;
+    };
+  }, [fetchDoctorHandoff, selectedPatient]);
+
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
@@ -229,7 +270,11 @@ export function DoctorPatientsView() {
         open={Boolean(selectedPatient)}
         title={selectedPatient?.fullName ?? "Patient"}
         description="Clinical summary scoped to your current doctor workspace."
-        onClose={() => setSelectedPatient(null)}
+        onClose={() => {
+          setSelectedPatient(null);
+          setHandoff(undefined);
+          setHandoffError(null);
+        }}
       >
         {selectedPatient ? (
           <div className="space-y-4">
@@ -290,6 +335,35 @@ export function DoctorPatientsView() {
                 <p>Pending lab requests: {selectedPatient.pendingLabRequests}</p>
                 <p>Completed lab reports: {selectedPatient.completedReports}</p>
               </div>
+            </Card>
+
+            <Card className="space-y-3 p-4">
+              <p className="font-semibold">Handoff summary</p>
+              {handoffLoading ? (
+                <p className="text-sm text-[color:var(--muted-foreground)]">
+                  Loading patient handoff...
+                </p>
+              ) : handoffError ? (
+                <p className="text-sm text-[color:var(--muted-foreground)]">{handoffError}</p>
+              ) : handoff ? (
+                <div className="space-y-2 text-sm text-[color:var(--muted-foreground)]">
+                  <p>Patient context: {handoff.patientContext}</p>
+                  <p>Reason for visit: {handoff.reasonForVisit}</p>
+                  <p>Allergies: {handoff.allergies}</p>
+                  <p>Chronic conditions: {handoff.chronicConditions}</p>
+                  <p>Blood group: {handoff.bloodGroup}</p>
+                  <p>Latest diagnosis: {handoff.latestDiagnosis}</p>
+                  <p>Recent lab findings: {handoff.recentLabFindings}</p>
+                  <p>Active prescription: {handoff.activePrescription}</p>
+                  <p>Pending labs: {handoff.pendingLabs}</p>
+                  <p>Visit status: {handoff.visitStatus}</p>
+                  <p>Follow-up: {handoff.followUp}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-[color:var(--muted-foreground)]">
+                  No handoff summary is available for this patient yet.
+                </p>
+              )}
             </Card>
 
             <Card className="space-y-3 p-4">
