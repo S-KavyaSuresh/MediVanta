@@ -732,10 +732,10 @@ The development dataset includes role-specific demonstration accounts.
 |---|---|---|
 | Patient | `patient@medivanta.demo` | `/dashboard/patient` |
 | Doctor | `doctor@medivanta.demo` | `/dashboard/doctor` |
-| Receptionist | `receptionist@medivanta.demo` | `/dashboard/reception` |
-| Laboratory Staff | `lab@medivanta.demo` | `/dashboard/laboratory` |
-| Pharmacist | `pharmacist@medivanta.demo` | `/dashboard/pharmacy` |
-| Administrator | `admin@medivanta.demo` | `/dashboard/admin` |
+| Receptionist | `receptionist@Medivanta.demo` | `/dashboard/reception` |
+| Laboratory Staff | `lab@Medivanta.demo` | `/dashboard/laboratory` |
+| Pharmacist | `pharmacist@Medivanta.demo` | `/dashboard/pharmacy` |
+| Administrator | `admin@Medivanta.demo` | `/dashboard/admin` |
 
 > Demo credentials are intended only for development/evaluation. Production deployments should use securely provisioned accounts and secrets.
 
