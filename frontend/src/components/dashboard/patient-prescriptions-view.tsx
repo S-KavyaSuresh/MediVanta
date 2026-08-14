@@ -41,7 +41,7 @@ export function PatientPrescriptionsView() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="Prescriptions"
         description="Track medicines prescribed for you, review instructions, and follow dispensing updates from the pharmacy."
       />

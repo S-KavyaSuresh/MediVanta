@@ -81,6 +81,7 @@ import {
   updateEmergencyVisitRecord,
   updatePatientJourneyRecord,
   updateQueueEntryById,
+  updateQueueEntryDoctor,
   updateQueueEntriesForAppointment,
   updateQueueStatusesByAppointment,
 } from "../repositories/postgres-store.js";
@@ -2420,11 +2421,31 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
     const patientIds = new Set(
       appointments.map((appointment) => appointment.patientId).filter(Boolean) as string[],
     );
+    // Unassigned walk-in/emergency queue entries (no doctorId, no appointmentId yet) are not
+    // tied to any appointment, so they must be surfaced by department instead. Any doctor
+    // working in that department (in particular emergency-duty doctors) needs visibility into
+    // them, otherwise emergency-priority intake never reaches a doctor's scoped queue.
+    const selfDoctorRecord = state.doctors.find((doctor) => doctor.id === user.doctorId);
+    const unassignedDepartmentQueueEntries = selfDoctorRecord
+      ? state.queueEntries.filter(
+          (entry) =>
+            !entry.doctorId &&
+            !entry.appointmentId &&
+            entry.organizationId === user.organizationId &&
+            entry.departmentId === selfDoctorRecord.departmentId,
+        )
+      : [];
     const queueEntries = state.queueEntries.filter(
       (entry) =>
-        entry.doctorId === user.doctorId || (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false),
+        entry.doctorId === user.doctorId ||
+        (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false) ||
+        unassignedDepartmentQueueEntries.some((unassigned) => unassigned.id === entry.id),
     );
+    const queueEntryIds = new Set(queueEntries.map((entry) => entry.id));
     const departmentIds = new Set(appointments.map((appointment) => appointment.departmentId));
+    if (selfDoctorRecord && unassignedDepartmentQueueEntries.length > 0) {
+      departmentIds.add(selfDoctorRecord.departmentId);
+    }
     const patientNames = new Set(appointments.map((appointment) => appointment.patientName));
 
     return {
@@ -2467,7 +2488,8 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       emergencyVisits: (state.emergencyVisits ?? []).filter(
         (visit) =>
           visit.organizationId === user.organizationId &&
-          (visit.patientId ? patientIds.has(visit.patientId) : patientNames.has(visit.patientName)),
+          ((visit.patientId ? patientIds.has(visit.patientId) : patientNames.has(visit.patientName)) ||
+            (visit.queueEntryId ? queueEntryIds.has(visit.queueEntryId) : false)),
       ),
       patientJourneys: (state.patientJourneys ?? []).filter((journey) =>
         journey.organizationId === user.organizationId &&
@@ -2893,6 +2915,127 @@ export async function updateQueuePriority(
   };
 }
 
+export async function assignQueueDoctor(
+  user: SafeUser,
+  queueEntryId: string,
+  doctorId: string,
+) {
+  if (!["administrator", "receptionist"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const state = await loadHospitalState();
+  const queueEntry = state.queueEntries.find((entry) => entry.id === queueEntryId);
+
+  if (!queueEntry) {
+    throw createHttpError(404, "Queue entry not found.");
+  }
+
+  if (queueEntry.organizationId !== user.organizationId) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const doctor = state.doctors.find(
+    (candidate) => candidate.id === doctorId && candidate.organizationId === user.organizationId,
+  );
+
+  if (!doctor) {
+    throw createHttpError(400, "The selected doctor could not be found.");
+  }
+
+  if (queueEntry.status === "Completed") {
+    throw createHttpError(400, "This visit has already been completed.");
+  }
+
+  const updatedAt = new Date().toISOString();
+
+  await updateQueueEntryDoctor({
+    queueEntryId,
+    organizationId: queueEntry.organizationId,
+    doctorId,
+    updatedAt,
+  });
+
+  const updatedQueueEntry = {
+    ...queueEntry,
+    doctorId,
+    updatedAt,
+  };
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "queue.doctor-assigned",
+    entityType: "queue-entry",
+    entityId: queueEntryId,
+    metadata: {
+      doctorId,
+    },
+  });
+
+  const users = await loadUsers();
+  const doctorUser = users.find(
+    (currentUser) => currentUser.role === "doctor" && currentUser.doctorId === doctorId,
+  );
+  const notifications = doctorUser
+    ? await notifyUsers({
+        organizationId: user.organizationId,
+        userIds: [doctorUser.id],
+        title: "Emergency patient assigned",
+        message: `${queueEntry.patientName} has been assigned to you in the immediate-care queue.`,
+        category: "Emergency",
+        relatedEntityType: "queue-entry",
+        relatedEntityId: queueEntryId,
+      })
+    : [];
+
+  return {
+    patch: {
+      queueEntries: [updatedQueueEntry],
+      notifications: notifications.filter((notification) => notification.userId === user.id),
+    },
+  };
+}
+
+const ACTIVE_QUEUE_WAIT_STATUSES: QueueStatus[] = ["Waiting", "Called"];
+
+/**
+ * Builds the patient-facing wait message. Deliberately avoids showing a computed
+ * minute estimate when there is no live operational queue context for the visit
+ * yet (e.g. a future-dated appointment), since that number would be misleading.
+ */
+function getPatientFacingWaitEstimate(
+  state: HospitalState,
+  appointment: AppointmentRecord | undefined,
+  queueEntry: QueueEntryRecord | undefined,
+): string {
+  if (appointment && appointment.status !== "Completed" && appointment.status !== "Cancelled") {
+    const today = getCurrentLocalDateIso();
+    if (appointment.appointmentDate > today) {
+      return "Available on appointment day";
+    }
+  }
+
+  if (appointment?.status === "Completed" || queueEntry?.status === "Completed") {
+    return "Visit completed";
+  }
+
+  if (appointment?.status === "Cancelled") {
+    return "Appointment cancelled";
+  }
+
+  if (queueEntry?.status === "In consultation") {
+    return "Currently in consultation";
+  }
+
+  if (queueEntry && ACTIVE_QUEUE_WAIT_STATUSES.includes(queueEntry.status)) {
+    const estimate = getQueueWaitEstimate(state, queueEntry);
+    return `~${estimate.estimatedMinutes} min · ${estimate.summary}`;
+  }
+
+  return "Available once you check in";
+}
+
 export async function getJourneyByToken(user: SafeUser, token: string) {
   const state = await reconcileNoShowAppointments(await loadHospitalState());
   const journey = (state.patientJourneys ?? []).find((item) => item.token === token);
@@ -2929,57 +3072,122 @@ export async function getJourneyByToken(user: SafeUser, token: string) {
           : queueEntry
             ? state.departments.find((department) => department.id === queueEntry.departmentId)?.name
             : undefined,
-      estimatedWait: queueEntry ? getQueueWaitEstimate(state, queueEntry) : undefined,
+      estimatedWait: getPatientFacingWaitEstimate(state, appointment, queueEntry),
     },
   };
 }
 
 export async function getDoctorHandoffSummary(
   user: SafeUser,
-  input: { appointmentId?: string; patientId?: string },
+  input: { appointmentId?: string; patientId?: string; familyMemberId?: string },
 ) {
   if (!["doctor", "administrator"].includes(user.role)) {
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
-  const state = await reconcileNoShowAppointments(await loadHospitalState());
+  const [rawState, users] = await Promise.all([loadHospitalState(), loadUsers()]);
+  const state = await reconcileNoShowAppointments(rawState);
   const scopedState = withScopedState(user.role, user, state);
   const appointment = input.appointmentId
     ? scopedState.appointments.find((item) => item.id === input.appointmentId)
     : undefined;
   const patientId = input.patientId ?? appointment?.patientId;
+  // The exact subject of this handoff: undefined means the primary patient account,
+  // a defined id means a specific dependent. This must be matched exactly (not just
+  // patientId) everywhere below, otherwise a parent's and their dependents' clinical
+  // data can bleed into a single handoff.
+  const familyMemberId = appointment ? appointment.familyMemberId : input.familyMemberId;
 
   if (!appointment && !patientId) {
     throw createHttpError(400, "Select a patient visit to generate the handoff.");
   }
 
+  const matchesSubject = (recordPatientId?: string, recordFamilyMemberId?: string) => {
+    if (patientId && recordPatientId !== patientId) {
+      return false;
+    }
+    if (!patientId && appointment) {
+      // No linked patient account (e.g. a walk-in captured by name only): fall back to
+      // the exact appointment so we never widen the match to other same-named patients.
+      return false;
+    }
+    return (recordFamilyMemberId ?? undefined) === (familyMemberId ?? undefined);
+  };
+
   const medicalRecords = scopedState.medicalRecords
-    .filter((record) => (patientId ? record.patientId === patientId : appointment ? record.appointmentId === appointment.id : false))
+    .filter((record) =>
+      patientId
+        ? matchesSubject(record.patientId, record.familyMemberId)
+        : appointment
+          ? record.appointmentId === appointment.id
+          : false,
+    )
     .sort((left, right) => `${right.visitDate}${right.createdAt}`.localeCompare(`${left.visitDate}${left.createdAt}`));
   const prescriptions = scopedState.prescriptions
-    .filter((prescription) => (patientId ? prescription.patientId === patientId : appointment ? prescription.appointmentId === appointment.id : false))
+    .filter((prescription) =>
+      patientId
+        ? matchesSubject(prescription.patientId, prescription.familyMemberId)
+        : appointment
+          ? prescription.appointmentId === appointment.id
+          : false,
+    )
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const labRequests = scopedState.labRequests
-    .filter((request) => (patientId ? request.patientId === patientId : appointment ? request.patientName === appointment.patientName : false))
+    .filter((request) =>
+      patientId
+        ? matchesSubject(request.patientId, request.familyMemberId)
+        : appointment
+          ? request.patientName === appointment.patientName && !appointment.familyMemberId
+          : false,
+    )
     .sort((left, right) => `${right.requestedDate}${right.requestedTime}`.localeCompare(`${left.requestedDate}${left.requestedTime}`));
   const latestRecord = medicalRecords[0];
   const latestPrescription = prescriptions[0];
-  const linkedFamilyMember =
-    appointment?.familyMemberId
-      ? scopedState.familyMembers?.find((member) => member.id === appointment.familyMemberId)
-      : undefined;
+  const linkedFamilyMember = familyMemberId
+    ? scopedState.familyMembers?.find((member) => member.id === familyMemberId)
+    : undefined;
   const patientProfile =
     patientId
-      ? (await loadUsers()).find((currentUser) => currentUser.id === patientId)
+      ? users.find((currentUser) => currentUser.id === patientId)
       : undefined;
+  // Emergency intake often has no linked appointment record (walk-ins), so the reason
+  // for visit, visit status, allergies, and conditions may only exist on the emergency
+  // visit itself. Only ever match the exact same subject (patientId + familyMemberId).
+  const relatedEmergencyVisit = [...(scopedState.emergencyVisits ?? [])]
+    .filter((visit) =>
+      patientId
+        ? matchesSubject(visit.patientId, visit.familyMemberId)
+        : appointment
+          ? visit.appointmentId === appointment.id
+          : false,
+    )
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
 
   const summary = {
-    patient: appointment?.patientName ?? patientProfile?.patientName ?? patientProfile?.displayName ?? "Not recorded",
+    patient:
+      linkedFamilyMember?.fullName ??
+      appointment?.patientName ??
+      relatedEmergencyVisit?.patientName ??
+      patientProfile?.patientName ??
+      patientProfile?.displayName ??
+      "Not recorded",
     patientContext: linkedFamilyMember ? linkedFamilyMember.relationship : "Primary patient",
-    reasonForVisit: appointment?.reasonForAppointment || "Not recorded",
-    allergies: linkedFamilyMember?.allergies ?? patientProfile?.allergies ?? "Not recorded",
-    chronicConditions: linkedFamilyMember?.medicalConditions ?? patientProfile?.medicalConditions ?? "Not recorded",
-    bloodGroup: linkedFamilyMember?.bloodGroup ?? patientProfile?.bloodGroup ?? "Not recorded",
+    reasonForVisit: appointment?.reasonForAppointment || relatedEmergencyVisit?.emergencyReason || "Not recorded",
+    allergies:
+      linkedFamilyMember?.allergies ??
+      (!familyMemberId ? patientProfile?.allergies : undefined) ??
+      relatedEmergencyVisit?.allergies ??
+      "Not recorded",
+    chronicConditions:
+      linkedFamilyMember?.medicalConditions ??
+      (!familyMemberId ? patientProfile?.medicalConditions : undefined) ??
+      relatedEmergencyVisit?.medicalConditions ??
+      "Not recorded",
+    bloodGroup:
+      linkedFamilyMember?.bloodGroup ??
+      (!familyMemberId ? patientProfile?.bloodGroup : undefined) ??
+      relatedEmergencyVisit?.bloodGroup ??
+      "Not recorded",
     latestDiagnosis: latestRecord?.diagnosis ?? "Not recorded",
     latestClinicalNote: latestRecord?.clinicalNotes ?? "Not recorded",
     recentLabFindings:
@@ -2993,7 +3201,7 @@ export async function getDoctorHandoffSummary(
     pendingLabs:
       labRequests.filter((request) => request.status !== "Completed").map((request) => request.testName).join(", ") ||
       "No data available",
-    visitStatus: appointment?.status ?? "Not recorded",
+    visitStatus: appointment?.status ?? relatedEmergencyVisit?.status ?? "Not recorded",
     followUp: latestPrescription?.followUpDate ?? "Not recorded",
   };
 
@@ -3003,12 +3211,14 @@ export async function getDoctorHandoffSummary(
     action: "handoff.viewed",
     entityType: "patient-handoff",
     entityId: appointment?.id ?? patientId,
+    metadata: familyMemberId ? { familyMemberId } : undefined,
   });
 
   return {
     handoff: summary,
   };
 }
+
 
 function buildHistoryDateRange(
   preset: string,
@@ -5495,11 +5705,11 @@ export async function markAllUserNotificationsRead(user: SafeUser) {
 }
 
 export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
-  if (user.role !== "patient") {
-    throw createHttpError(403, "Only patients can create lab test requests.");
+  if (user.role !== "patient" && user.role !== "doctor") {
+    throw createHttpError(403, "You do not have access to create lab test requests.");
   }
 
-  const state = await loadHospitalState();
+  const [state, users] = await Promise.all([loadHospitalState(), loadUsers()]);
   const validation = validateLabRequestDraft(state, draft);
 
   if (!validation.isValid) {
@@ -5509,16 +5719,8 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
   }
 
   const selectedTest = state.labTests.find((test) => test.id === draft.testId);
-  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
   if (!selectedTest) {
     throw createHttpError(400, "The selected lab test could not be found.");
-  }
-
-  if (
-    draft.familyMemberId &&
-    (!familyMember || familyMember.primaryPatientUserId !== user.id)
-  ) {
-    throw createHttpError(403, "You do not have access to this workspace.");
   }
 
   if ((selectedTest.priceCents ?? 0) <= 0) {
@@ -5527,13 +5729,88 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     });
   }
 
+  let patientId: string;
+  let familyMemberId: string | undefined;
+  let patientName: string;
+  let orderingAppointment: AppointmentRecord | undefined;
+
+  if (user.role === "doctor") {
+    // A clinical order must be tied to a patient/dependent the doctor is actually
+    // treating — never an arbitrary organization-wide patientId.
+    const doctorAppointments = state.appointments.filter(
+      (appointment) => appointment.doctorId === user.doctorId,
+    );
+
+    orderingAppointment = draft.appointmentId
+      ? doctorAppointments.find((appointment) => appointment.id === draft.appointmentId)
+      : undefined;
+
+    if (draft.appointmentId && !orderingAppointment) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    const resolvedPatientId = draft.patientId?.trim() || orderingAppointment?.patientId;
+    if (!resolvedPatientId) {
+      throw createHttpError(400, "Select a patient to order this lab test for.", {
+        errors: { testId: "Select a patient before ordering a lab test." },
+      });
+    }
+
+    const isKnownPatient = doctorAppointments.some(
+      (appointment) => appointment.patientId === resolvedPatientId,
+    );
+    if (!isKnownPatient) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    const resolvedFamilyMemberId =
+      draft.familyMemberId?.trim() || orderingAppointment?.familyMemberId;
+    const familyMember = getFamilyMemberById(state, resolvedFamilyMemberId);
+    if (
+      resolvedFamilyMemberId &&
+      (!familyMember ||
+        familyMember.organizationId !== user.organizationId ||
+        familyMember.primaryPatientUserId !== resolvedPatientId)
+    ) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+    // The dependent/patient must actually be someone this doctor has seen.
+    if (
+      resolvedFamilyMemberId &&
+      !doctorAppointments.some((appointment) => appointment.familyMemberId === resolvedFamilyMemberId)
+    ) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    const patientUser = users.find(
+      (currentUser) =>
+        currentUser.id === resolvedPatientId && currentUser.organizationId === user.organizationId,
+    );
+    if (!patientUser) {
+      throw createHttpError(400, "The selected patient could not be found.");
+    }
+
+    patientId = resolvedPatientId;
+    familyMemberId = resolvedFamilyMemberId;
+    patientName = familyMember?.fullName ?? patientUser.patientName ?? patientUser.displayName;
+  } else {
+    const familyMember = getFamilyMemberById(state, draft.familyMemberId);
+    if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== user.id)) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    patientId = user.id;
+    familyMemberId = draft.familyMemberId?.trim() || undefined;
+    patientName = familyMember?.fullName ?? (user.patientName ?? user.displayName);
+  }
+
     const request: LabRequestRecord = {
     id: createLabRequestId(state),
-    patientId: user.id,
+    patientId,
     hospitalId: user.organizationId,
     organizationId: user.organizationId,
-    patientName: familyMember?.fullName ?? (user.patientName ?? user.displayName),
-    familyMemberId: draft.familyMemberId?.trim() || undefined,
+    patientName,
+    familyMemberId,
     testId: selectedTest.id,
     testName: selectedTest.name,
     departmentId: "dept-laboratory",
@@ -5581,7 +5858,6 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
       await insertInvoice(invoice);
       await insertInvoiceItems(invoice.items);
     }
-    const users = await loadUsers();
     const labUserIds = users
       .filter(
         (currentUser) =>
@@ -5589,11 +5865,17 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
           currentUser.organizationId === request.organizationId,
       )
       .map((currentUser) => currentUser.id);
+    const isDoctorOrder = user.role === "doctor";
+    const recipientUserIds = isDoctorOrder
+      ? [user.id, ...labUserIds, ...(patientId !== user.id ? [patientId] : [])]
+      : [user.id, ...labUserIds];
     const createdNotifications = await notifyUsers({
       organizationId: request.organizationId,
-      userIds: [user.id, ...labUserIds],
-      title: "Laboratory request booked",
-      message: `${request.testName} was requested for ${request.requestedDate} at ${request.requestedTime}.`,
+      userIds: recipientUserIds,
+      title: isDoctorOrder ? "Lab test ordered by your doctor" : "Laboratory request booked",
+      message: isDoctorOrder
+        ? `Your doctor ordered ${request.testName} for ${request.requestedDate} at ${request.requestedTime}.`
+        : `${request.testName} was requested for ${request.requestedDate} at ${request.requestedTime}.`,
       category: "Laboratory",
       relatedEntityType: "lab-request",
       relatedEntityId: request.id,
@@ -5601,7 +5883,7 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     const billingNotifications = !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
       ? await notifyUsers({
           organizationId: request.organizationId,
-          userIds: [user.id],
+          userIds: [patientId],
           title: "Invoice generated",
           message: `Invoice ${invoice.invoiceNumber} was created for ${request.testName}.`,
           category: "Billing",
@@ -5617,6 +5899,9 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     entityId: request.id,
     metadata: {
       testId: request.testId,
+      orderedByRole: user.role,
+      patientId,
+      familyMemberId,
     },
   });
   return {

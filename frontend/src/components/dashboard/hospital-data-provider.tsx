@@ -188,6 +188,10 @@ type HospitalContextValue = {
     queueEntryId: string,
     priority: QueuePriority,
   ) => Promise<{ ok: boolean; message?: string }>;
+  assignQueueDoctor: (
+    queueEntryId: string,
+    doctorId: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
   fetchPatientJourney: (token: string) => Promise<{
     ok: boolean;
     journey?: PatientJourneyRecord;
@@ -196,6 +200,7 @@ type HospitalContextValue = {
   fetchDoctorHandoff: (input: {
     appointmentId?: string;
     patientId?: string;
+    familyMemberId?: string;
   }) => Promise<{
     ok: boolean;
     handoff?: DoctorHandoffSummary;
@@ -547,6 +552,31 @@ export function HospitalDataProvider({
     [updateFromResponse],
   );
 
+  const assignQueueDoctor = useCallback(
+    async (queueEntryId: string, doctorId: string) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/queue/${queueEntryId}/doctor`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ doctorId }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The doctor could not be assigned.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
   const fetchPatientJourney = useCallback(async (token: string) => {
     try {
       const response = await apiRequest<HospitalApiResponse>(
@@ -565,7 +595,7 @@ export function HospitalDataProvider({
   }, []);
 
   const fetchDoctorHandoff = useCallback(
-    async (input: { appointmentId?: string; patientId?: string }) => {
+    async (input: { appointmentId?: string; patientId?: string; familyMemberId?: string }) => {
       try {
         const search = new URLSearchParams();
         if (input.appointmentId) {
@@ -573,6 +603,9 @@ export function HospitalDataProvider({
         }
         if (input.patientId) {
           search.set("patientId", input.patientId);
+        }
+        if (input.familyMemberId) {
+          search.set("familyMemberId", input.familyMemberId);
         }
 
         const response = await apiRequest<HospitalApiResponse>(
@@ -1218,6 +1251,7 @@ export function HospitalDataProvider({
       fetchOperationalAnalytics,
       createEmergencyVisit,
       updateQueuePriority,
+      assignQueueDoctor,
       fetchPatientJourney,
       fetchDoctorHandoff,
       createDepartment,
@@ -1292,6 +1326,7 @@ export function HospitalDataProvider({
       setAppointmentStatus,
       state,
       updateQueuePriority,
+      assignQueueDoctor,
       updateLabRequestStatus,
       updateAppointment,
     ],

@@ -18,6 +18,7 @@ const queuePriorities = ["Normal", "Priority", "Emergency"] as const;
 
 export function AdminOperationsView() {
   const {
+    assignQueueDoctor,
     createEmergencyVisit,
     getDepartmentName,
     getDoctorName,
@@ -27,6 +28,8 @@ export function AdminOperationsView() {
   const { pushToast } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [priorityUpdatingId, setPriorityUpdatingId] = useState<string | null>(null);
+  const [doctorAssigningId, setDoctorAssigningId] = useState<string | null>(null);
+  const [doctorSelection, setDoctorSelection] = useState<Record<string, string>>({});
   const [form, setForm] = useState({
     patientName: "",
     contactName: "",
@@ -53,6 +56,31 @@ export function AdminOperationsView() {
     () => [...(state.emergencyVisits ?? [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
     [state.emergencyVisits],
   );
+
+  const rankedDoctors = useMemo(() => {
+    const statusRank: Record<string, number> = {
+      "Emergency duty": 0,
+      Available: 1,
+      Consulting: 2,
+      "On break": 3,
+      "Off duty": 4,
+    };
+
+    return (departmentId: string) =>
+      [...state.doctors].sort((left, right) => {
+        const leftDeptMatch = left.departmentId === departmentId ? 0 : 1;
+        const rightDeptMatch = right.departmentId === departmentId ? 0 : 1;
+        if (leftDeptMatch !== rightDeptMatch) {
+          return leftDeptMatch - rightDeptMatch;
+        }
+        const leftRank = statusRank[left.status] ?? 5;
+        const rightRank = statusRank[right.status] ?? 5;
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        return left.name.localeCompare(right.name);
+      });
+  }, [state.doctors]);
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -205,38 +233,90 @@ export function AdminOperationsView() {
                         </div>
                         <p className="mt-3 text-lg font-semibold">{entry.patientName}</p>
                         <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
-                          {getDepartmentName(entry.departmentId)} · {entry.doctorId ? getDoctorName(entry.doctorId) : "Doctor assignment pending"}
+                          {getDepartmentName(entry.departmentId)} ·{" "}
+                          {entry.doctorId ? getDoctorName(entry.doctorId) : "Awaiting doctor assignment"}
                         </p>
                       </div>
-                      <div className="w-full max-w-[13rem]">
-                        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-                          Queue priority
-                        </label>
-                        <Select
-                          value={entry.priority ?? "Normal"}
-                          onChange={async (event) => {
-                            setPriorityUpdatingId(entry.id);
-                            const result = await updateQueuePriority(
-                              entry.id,
-                              event.target.value as (typeof queuePriorities)[number],
-                            );
-                            setPriorityUpdatingId(null);
+                      <div className="flex w-full flex-wrap items-end gap-3 sm:w-auto">
+                        <div className="w-full max-w-[13rem]">
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
+                            Queue priority
+                          </label>
+                          <Select
+                            value={entry.priority ?? "Normal"}
+                            onChange={async (event) => {
+                              setPriorityUpdatingId(entry.id);
+                              const result = await updateQueuePriority(
+                                entry.id,
+                                event.target.value as (typeof queuePriorities)[number],
+                              );
+                              setPriorityUpdatingId(null);
 
-                            if (!result.ok) {
-                              pushToast("Unable to change priority", result.message ?? "Please try again.");
-                              return;
-                            }
+                              if (!result.ok) {
+                                pushToast("Unable to change priority", result.message ?? "Please try again.");
+                                return;
+                              }
 
-                            pushToast("Priority updated", `${entry.patientName} was updated to ${event.target.value}.`);
-                          }}
-                          disabled={priorityUpdatingId === entry.id}
-                        >
-                          {queuePriorities.map((priority) => (
-                            <option key={priority} value={priority}>
-                              {priority}
-                            </option>
-                          ))}
-                        </Select>
+                              pushToast("Priority updated", `${entry.patientName} was updated to ${event.target.value}.`);
+                            }}
+                            disabled={priorityUpdatingId === entry.id}
+                          >
+                            {queuePriorities.map((priority) => (
+                              <option key={priority} value={priority}>
+                                {priority}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+
+                        <div className="w-full max-w-[16rem]">
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
+                            Assigned doctor
+                          </label>
+                          <div className="flex gap-2">
+                            <Select
+                              value={doctorSelection[entry.id] ?? entry.doctorId ?? ""}
+                              onChange={(event) =>
+                                setDoctorSelection((current) => ({ ...current, [entry.id]: event.target.value }))
+                              }
+                              disabled={doctorAssigningId === entry.id}
+                            >
+                              <option value="">Awaiting doctor assignment</option>
+                              {rankedDoctors(entry.departmentId).map((doctor) => (
+                                <option key={doctor.id} value={doctor.id}>
+                                  {doctor.name} · {doctor.status}
+                                </option>
+                              ))}
+                            </Select>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={
+                                doctorAssigningId === entry.id ||
+                                !(doctorSelection[entry.id] ?? "") ||
+                                doctorSelection[entry.id] === entry.doctorId
+                              }
+                              onClick={async () => {
+                                const doctorId = doctorSelection[entry.id];
+                                if (!doctorId) {
+                                  return;
+                                }
+                                setDoctorAssigningId(entry.id);
+                                const result = await assignQueueDoctor(entry.id, doctorId);
+                                setDoctorAssigningId(null);
+
+                                if (!result.ok) {
+                                  pushToast("Unable to assign doctor", result.message ?? "Please try again.");
+                                  return;
+                                }
+
+                                pushToast("Doctor assigned", `${entry.patientName} is now assigned.`);
+                              }}
+                            >
+                              Confirm
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>

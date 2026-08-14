@@ -670,6 +670,9 @@ export type LabRequestDraft = {
   requestedDate: string;
   requestedTime: string;
   familyMemberId?: string;
+  // Only used when a doctor orders a lab test on behalf of one of their patients.
+  patientId?: string;
+  appointmentId?: string;
 };
 
 export type EmergencyVisitDraft = {

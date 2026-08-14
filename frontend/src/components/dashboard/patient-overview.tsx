@@ -88,7 +88,7 @@ export function PatientOverview() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="Your appointments, records, and hospital updates"
         description="Keep track of your upcoming visit, care documents, and the latest progress connected to your account."
       />

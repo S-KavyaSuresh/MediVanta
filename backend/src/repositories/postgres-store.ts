@@ -1253,6 +1253,21 @@ export async function updateQueueEntryById(input: {
   );
 }
 
+export async function updateQueueEntryDoctor(input: {
+  queueEntryId: string;
+  organizationId: string;
+  doctorId: string;
+  updatedAt: string;
+}) {
+  await query(
+    `update queue_entries
+     set doctor_id = $3,
+         updated_at = $4
+     where id = $1 and organization_id = $2`,
+    [input.queueEntryId, input.organizationId, input.doctorId, input.updatedAt],
+  );
+}
+
 export async function insertEmergencyVisit(visit: EmergencyVisitRecord) {
   await query(
     `insert into emergency_visits (

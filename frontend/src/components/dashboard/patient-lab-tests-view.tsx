@@ -30,7 +30,7 @@ export function PatientLabTestsView() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="Lab Tests"
         description="Request a new lab test, book for a linked family member when needed, and track the status of your laboratory requests."
         action={

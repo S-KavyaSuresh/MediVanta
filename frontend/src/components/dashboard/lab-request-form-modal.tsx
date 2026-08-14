@@ -34,6 +34,18 @@ type LabRequestFormModalProps = {
     message?: string;
     fieldErrors?: Partial<Record<keyof LabRequestDraft, string>>;
   }>;
+  /**
+   * When set, this modal is being used from the doctor clinical workflow to order
+   * a lab test for a specific patient/dependent rather than a patient self-booking.
+   * The subject is preselected and locked (no "request for" picker), and the
+   * copy reflects that this is a clinical order rather than a personal booking.
+   */
+  doctorOrderContext?: {
+    patientId: string;
+    familyMemberId?: string;
+    appointmentId?: string;
+    subjectLabel: string;
+  };
 };
 
 const emptyDraft: LabRequestDraft = {
@@ -53,6 +65,7 @@ export function LabRequestFormModal({
   familyMembers = [],
   onClose,
   onSubmit,
+  doctorOrderContext,
 }: LabRequestFormModalProps) {
   const [draft, setDraft] = useState<LabRequestDraft>(emptyDraft);
   const [errors, setErrors] = useState<Partial<Record<keyof LabRequestDraft, string>>>({});
@@ -113,8 +126,12 @@ export function LabRequestFormModal({
         setDraft(emptyDraft);
         onClose();
       }}
-      title="Book Lab Test"
-      description="Choose your hospital, test, and preferred date and time for a laboratory request."
+      title={doctorOrderContext ? "Order Lab Test" : "Book Lab Test"}
+      description={
+        doctorOrderContext
+          ? "Send a laboratory order for this patient. It will appear in Laboratory's queue and the patient's lab requests."
+          : "Choose your hospital, test, and preferred date and time for a laboratory request."
+      }
     >
       <form
         className="space-y-4"
@@ -128,7 +145,16 @@ export function LabRequestFormModal({
             setErrors(validation.errors);
             return;
           }
-          const result = await onSubmit(draft);
+          const result = await onSubmit(
+            doctorOrderContext
+              ? {
+                  ...draft,
+                  patientId: doctorOrderContext.patientId,
+                  familyMemberId: doctorOrderContext.familyMemberId,
+                  appointmentId: doctorOrderContext.appointmentId,
+                }
+              : draft,
+          );
           setSubmitting(false);
           setErrors(result.fieldErrors ?? {});
 
@@ -143,28 +169,39 @@ export function LabRequestFormModal({
           }
         }}
       >
-        <div>
-          <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
-            Request for
-          </label>
-          <Select
-            aria-label="Request for"
-            value={draft.familyMemberId ?? "self"}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                familyMemberId: event.target.value === "self" ? undefined : event.target.value,
-              }))
-            }
-          >
-            <option value="self">{patientName}</option>
-            {familyMembers.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.fullName} - {member.relationship}
-              </option>
-            ))}
-          </Select>
-        </div>
+        {doctorOrderContext ? (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+              Ordering for
+            </label>
+            <Select value={doctorOrderContext.subjectLabel} disabled aria-label="Ordering for">
+              <option value={doctorOrderContext.subjectLabel}>{doctorOrderContext.subjectLabel}</option>
+            </Select>
+          </div>
+        ) : (
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+              Request for
+            </label>
+            <Select
+              aria-label="Request for"
+              value={draft.familyMemberId ?? "self"}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  familyMemberId: event.target.value === "self" ? undefined : event.target.value,
+                }))
+              }
+            >
+              <option value="self">{patientName}</option>
+              {familyMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.fullName} - {member.relationship}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
 
         <div>
           <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">

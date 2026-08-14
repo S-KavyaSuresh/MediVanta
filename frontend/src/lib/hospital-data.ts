@@ -808,6 +808,9 @@ export type LabRequestDraft = {
   requestedDate: string;
   requestedTime: string;
   familyMemberId?: string;
+  // Only used when a doctor orders a lab test on behalf of one of their patients.
+  patientId?: string;
+  appointmentId?: string;
 };
 
 export type LabReportDraft = {
@@ -1429,6 +1432,35 @@ export function getDepartmentSummaries(state: HospitalState) {
       activeQueueCount,
     };
   });
+}
+
+const UPCOMING_APPOINTMENT_STATUSES: AppointmentStatus[] = [
+  "Scheduled",
+  "Checked in",
+  "In consultation",
+];
+
+function getAppointmentTimestamp(appointment: AppointmentRecord) {
+  const value = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}:00`).getTime();
+  return Number.isNaN(value) ? 0 : value;
+}
+
+/**
+ * Orders a patient's own appointments for display: active/upcoming visits first
+ * (soonest first, so the nearest appointment is easiest to find), followed by
+ * historical visits (Completed/Cancelled/No Show) with the most recent first.
+ * Appointment statuses themselves are left untouched.
+ */
+export function sortPatientAppointments(appointments: AppointmentRecord[]): AppointmentRecord[] {
+  const upcoming = appointments
+    .filter((appointment) => UPCOMING_APPOINTMENT_STATUSES.includes(appointment.status))
+    .sort((left, right) => getAppointmentTimestamp(left) - getAppointmentTimestamp(right));
+
+  const historical = appointments
+    .filter((appointment) => !UPCOMING_APPOINTMENT_STATUSES.includes(appointment.status))
+    .sort((left, right) => getAppointmentTimestamp(right) - getAppointmentTimestamp(left));
+
+  return [...upcoming, ...historical];
 }
 
 export function getActiveQueueEntries(state: HospitalState) {

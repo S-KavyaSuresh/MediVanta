@@ -47,6 +47,7 @@ import {
   updatePatientProfile,
   updateLabRequestStatus,
   updateQueuePriority,
+  assignQueueDoctor,
   updateAppointment,
 } from "../services/hospital-service.js";
 import { getAuditLogs } from "../services/audit-service.js";
@@ -103,6 +104,8 @@ const labRequestDraftSchema = z.object({
   requestedDate: z.string(),
   requestedTime: z.string(),
   familyMemberId: z.string().optional(),
+  patientId: z.string().optional(),
+  appointmentId: z.string().optional(),
 });
 
 const labRequestStatusSchema = z.object({
@@ -312,6 +315,7 @@ const journeyQuerySchema = z.object({
 const handoffQuerySchema = z.object({
   appointmentId: z.string().optional(),
   patientId: z.string().optional(),
+  familyMemberId: z.string().optional(),
 });
 
 const emergencyVisitDraftSchema = z.object({
@@ -1042,6 +1046,27 @@ hospitalRouter.patch(
       response.json({
         success: true,
         ...(await updateQueuePriority(request.authUser!, queueEntryId, priority)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+const queueDoctorAssignSchema = z.object({
+  doctorId: z.string().min(1),
+});
+
+hospitalRouter.patch(
+  "/queue/:queueEntryId/doctor",
+  requireCapabilities("queue:update"),
+  async (request, response, next) => {
+    try {
+      const { doctorId } = queueDoctorAssignSchema.parse(request.body);
+      const queueEntryId = getRouteParam(request.params.queueEntryId);
+      response.json({
+        success: true,
+        ...(await assignQueueDoctor(request.authUser!, queueEntryId, doctorId)),
       });
     } catch (error) {
       next(error);

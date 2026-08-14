@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
-import { getTelemedicineJoinAvailability } from "@/lib/hospital-data";
+import { getTelemedicineJoinAvailability, sortPatientAppointments } from "@/lib/hospital-data";
 
 export function PatientAppointmentsView() {
   const { session } = useAuth();
@@ -31,11 +31,12 @@ export function PatientAppointmentsView() {
   const editingAppointment =
     state.appointments.find((appointment) => appointment.id === editingId) ?? null;
   const now = new Date();
+  const orderedAppointments = sortPatientAppointments(state.appointments);
 
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="My Appointments"
         description="Review scheduled visits, reschedule eligible bookings, and join your online consultations from one place."
         action={
@@ -50,9 +51,9 @@ export function PatientAppointmentsView() {
           </Button>
         }
       />
-      {state.appointments.length > 0 ? (
+      {orderedAppointments.length > 0 ? (
         <div className="space-y-4">
-          {state.appointments.map((appointment) => {
+          {orderedAppointments.map((appointment) => {
             const joinAvailability = getTelemedicineJoinAvailability(appointment);
             const canManageAppointment =
               appointment.status === "Scheduled" &&

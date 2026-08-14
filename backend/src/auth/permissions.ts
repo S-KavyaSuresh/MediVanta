@@ -33,6 +33,7 @@ export const roleCapabilities: Record<UserRole, Capability[]> = {
     "prescription:create",
     "health-records:view",
     "health-records:create",
+    "lab-request:create",
     "lab-reports:view",
     "notifications:view",
     "profile:view",

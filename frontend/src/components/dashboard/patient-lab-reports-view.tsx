@@ -58,7 +58,7 @@ export function PatientLabReportsView() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="Lab Reports"
         description="Review completed laboratory reports linked to your account and download the released report file when available."
       />

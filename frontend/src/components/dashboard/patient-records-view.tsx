@@ -95,7 +95,7 @@ export function PatientRecordsView() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="My Health Records"
         description="Review clinical notes, surgeries, vaccinations, attachments, lab reports, and treatment advice shared as part of your care journey."
       />

@@ -72,7 +72,7 @@ export default function PatientProfilePage() {
 
   return (
     <RoleProfilePage
-      eyebrow="Patient Dashboard"
+      eyebrow="My Dashboard"
       title="Profile"
       description="Review and update the personal details linked to your patient workspace."
       initialDraft={{
