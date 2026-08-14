@@ -41,16 +41,32 @@ export function AdminOperationsView() {
     bloodGroup: "",
   });
 
-  const emergencyQueue = useMemo(
-    () =>
-      state.queueEntries.filter(
+  const emergencyQueue = useMemo(() => {
+    const priorityRank: Record<string, number> = { Emergency: 0, Priority: 1, Normal: 2 };
+    return state.queueEntries
+      .filter(
         (entry) =>
           entry.priority === "Emergency" ||
           entry.priority === "Priority" ||
           entry.departmentId === "dept-emergency",
-      ),
-    [state.queueEntries],
-  );
+      )
+      .sort((left, right) => {
+        // Completed entries always sink to the bottom, regardless of priority.
+        const leftCompleted = left.status === "Completed" ? 1 : 0;
+        const rightCompleted = right.status === "Completed" ? 1 : 0;
+        if (leftCompleted !== rightCompleted) {
+          return leftCompleted - rightCompleted;
+        }
+
+        const leftPriority = priorityRank[left.priority ?? "Normal"] ?? 2;
+        const rightPriority = priorityRank[right.priority ?? "Normal"] ?? 2;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+
+        return `${left.createdAt}-${left.id}`.localeCompare(`${right.createdAt}-${right.id}`);
+      });
+  }, [state.queueEntries]);
 
   const activeEmergencyVisits = useMemo(
     () => [...(state.emergencyVisits ?? [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
@@ -66,20 +82,22 @@ export function AdminOperationsView() {
       "Off duty": 4,
     };
 
-    return (departmentId: string) =>
-      [...state.doctors].sort((left, right) => {
-        const leftDeptMatch = left.departmentId === departmentId ? 0 : 1;
-        const rightDeptMatch = right.departmentId === departmentId ? 0 : 1;
-        if (leftDeptMatch !== rightDeptMatch) {
-          return leftDeptMatch - rightDeptMatch;
-        }
-        const leftRank = statusRank[left.status] ?? 5;
-        const rightRank = statusRank[right.status] ?? 5;
-        if (leftRank !== rightRank) {
-          return leftRank - rightRank;
-        }
-        return left.name.localeCompare(right.name);
-      });
+    return (departmentId: string, currentDoctorId?: string) =>
+      [...state.doctors]
+        .filter((doctor) => doctor.status !== "Off duty" || doctor.id === currentDoctorId)
+        .sort((left, right) => {
+          const leftDeptMatch = left.departmentId === departmentId ? 0 : 1;
+          const rightDeptMatch = right.departmentId === departmentId ? 0 : 1;
+          if (leftDeptMatch !== rightDeptMatch) {
+            return leftDeptMatch - rightDeptMatch;
+          }
+          const leftRank = statusRank[left.status] ?? 5;
+          const rightRank = statusRank[right.status] ?? 5;
+          if (leftRank !== rightRank) {
+            return leftRank - rightRank;
+          }
+          return left.name.localeCompare(right.name);
+        });
   }, [state.doctors]);
 
   return (
@@ -273,7 +291,7 @@ export function AdminOperationsView() {
                           <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
                             Assigned doctor
                           </label>
-                          <div className="flex gap-2">
+                          <div className="flex flex-col gap-2">
                             <Select
                               value={doctorSelection[entry.id] ?? entry.doctorId ?? ""}
                               onChange={(event) =>
@@ -282,7 +300,7 @@ export function AdminOperationsView() {
                               disabled={doctorAssigningId === entry.id}
                             >
                               <option value="">Awaiting doctor assignment</option>
-                              {rankedDoctors(entry.departmentId).map((doctor) => (
+                              {rankedDoctors(entry.departmentId, entry.doctorId).map((doctor) => (
                                 <option key={doctor.id} value={doctor.id}>
                                   {doctor.name} · {doctor.status}
                                 </option>
@@ -291,6 +309,7 @@ export function AdminOperationsView() {
                             <Button
                               type="button"
                               variant="secondary"
+                              className="w-full whitespace-nowrap"
                               disabled={
                                 doctorAssigningId === entry.id ||
                                 !(doctorSelection[entry.id] ?? "") ||
@@ -313,7 +332,11 @@ export function AdminOperationsView() {
                                 pushToast("Doctor assigned", `${entry.patientName} is now assigned.`);
                               }}
                             >
-                              Confirm
+                              {doctorAssigningId === entry.id
+                                ? "Assigning..."
+                                : entry.doctorId
+                                  ? "Reassign Doctor"
+                                  : "Assign Doctor"}
                             </Button>
                           </div>
                         </div>

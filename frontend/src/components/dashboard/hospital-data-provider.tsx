@@ -157,6 +157,7 @@ type HospitalMutationPatch = {
   medicalHistoryEntries?: HospitalState["medicalHistoryEntries"];
   clinicalAttachments?: HospitalState["clinicalAttachments"];
   telemedicineSessions?: HospitalState["telemedicineSessions"];
+  doctors?: HospitalState["doctors"];
   meta?: HospitalMeta;
 };
 
@@ -191,6 +192,10 @@ type HospitalContextValue = {
   assignQueueDoctor: (
     queueEntryId: string,
     doctorId: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
+  setDoctorStatus: (
+    doctorId: string,
+    status: "Available" | "On break" | "Off duty",
   ) => Promise<{ ok: boolean; message?: string }>;
   fetchPatientJourney: (token: string) => Promise<{
     ok: boolean;
@@ -431,6 +436,7 @@ export function HospitalDataProvider({
             current.telemedicineSessions ?? [],
             response.patch?.telemedicineSessions,
           ),
+          doctors: mergeById(current.doctors ?? [], response.patch?.doctors),
         }),
       );
     }
@@ -571,6 +577,31 @@ export function HospitalDataProvider({
             error instanceof Error
               ? error.message
               : "The doctor could not be assigned.",
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const setDoctorStatus = useCallback(
+    async (doctorId: string, status: "Available" | "On break" | "Off duty") => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/doctors/${doctorId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The status could not be updated.",
         };
       }
     },
@@ -1252,6 +1283,7 @@ export function HospitalDataProvider({
       createEmergencyVisit,
       updateQueuePriority,
       assignQueueDoctor,
+      setDoctorStatus,
       fetchPatientJourney,
       fetchDoctorHandoff,
       createDepartment,
@@ -1327,6 +1359,7 @@ export function HospitalDataProvider({
       state,
       updateQueuePriority,
       assignQueueDoctor,
+      setDoctorStatus,
       updateLabRequestStatus,
       updateAppointment,
     ],

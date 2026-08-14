@@ -10,6 +10,7 @@ import type {
   ClinicalAttachmentRecord,
   DepartmentRecord,
   DepartmentStatus,
+  DoctorRecord,
   DoctorStatus,
   EmergencyVisitDraft,
   EmergencyVisitRecord,
@@ -74,6 +75,7 @@ import {
   upsertHospitalSettings,
   updateAppointmentRecord,
   updateAppointmentStatusById,
+  updateDoctorStatusById,
   updateInventoryItemRecord,
   updateLabRequestStatusById,
   updateMedicalRecordDetails,
@@ -2943,6 +2945,10 @@ export async function assignQueueDoctor(
     throw createHttpError(400, "The selected doctor could not be found.");
   }
 
+  if (doctor.status === "Off duty") {
+    throw createHttpError(400, "This doctor is off duty and cannot be assigned right now.");
+  }
+
   if (queueEntry.status === "Completed") {
     throw createHttpError(400, "This visit has already been completed.");
   }
@@ -2995,6 +3001,103 @@ export async function assignQueueDoctor(
       notifications: notifications.filter((notification) => notification.userId === user.id),
     },
   };
+}
+
+const DOCTOR_SELF_MANAGED_STATUSES: DoctorStatus[] = ["Available", "On break", "Off duty"];
+
+/**
+ * Doctor operational status. Doctors may manually switch between Available,
+ * On break, and Off duty from their own dashboard. "Consulting" and
+ * "Emergency duty" are set automatically by the consultation/queue workflow
+ * and are not directly selectable here to avoid the operational status
+ * drifting out of sync with what the doctor is actually doing.
+ */
+export async function setDoctorStatus(
+  user: SafeUser,
+  doctorId: string,
+  status: DoctorStatus,
+) {
+  const isSelf = user.role === "doctor" && user.doctorId === doctorId;
+  const isAdmin = user.role === "administrator";
+
+  if (!isSelf && !isAdmin) {
+    throw createHttpError(403, "You do not have access to update this doctor's status.");
+  }
+
+  if (!DOCTOR_SELF_MANAGED_STATUSES.includes(status)) {
+    throw createHttpError(400, "That status cannot be set manually.");
+  }
+
+  const state = await loadHospitalState();
+  const doctor = state.doctors.find(
+    (candidate) => candidate.id === doctorId && candidate.organizationId === user.organizationId,
+  );
+
+  if (!doctor) {
+    throw createHttpError(404, "Doctor not found.");
+  }
+
+  await updateDoctorStatusById({
+    doctorId,
+    organizationId: user.organizationId,
+    status,
+  });
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "doctor.status-updated",
+    entityType: "doctor",
+    entityId: doctorId,
+    metadata: { status },
+  });
+
+  return {
+    patch: {
+      doctors: [{ ...doctor, status }],
+    },
+  };
+}
+
+/**
+ * Automatically moves a doctor's operational status as consultations start
+ * and finish. Never overrides a status the doctor deliberately chose (On
+ * break / Off duty) outside of the expected Consulting -> Available handoff.
+ */
+async function applyAutomaticDoctorStatus(
+  state: HospitalState,
+  doctorId: string | undefined,
+  organizationId: string,
+  appointmentStatus: "In consultation" | "Completed",
+): Promise<DoctorRecord | null> {
+  if (!doctorId) {
+    return null;
+  }
+
+  const doctor = state.doctors.find(
+    (candidate) => candidate.id === doctorId && candidate.organizationId === organizationId,
+  );
+
+  if (!doctor) {
+    return null;
+  }
+
+  if (appointmentStatus === "In consultation" && doctor.status !== "Off duty") {
+    const nextStatus: DoctorStatus = "Consulting";
+    if (doctor.status === nextStatus) {
+      return null;
+    }
+    await updateDoctorStatusById({ doctorId, organizationId, status: nextStatus });
+    return { ...doctor, status: nextStatus };
+  }
+
+  if (appointmentStatus === "Completed" && doctor.status === "Consulting") {
+    const nextStatus: DoctorStatus = "Available";
+    await updateDoctorStatusById({ doctorId, organizationId, status: nextStatus });
+    return { ...doctor, status: nextStatus };
+  }
+
+  return null;
 }
 
 const ACTIVE_QUEUE_WAIT_STATUSES: QueueStatus[] = ["Waiting", "Called"];
@@ -4926,6 +5029,10 @@ export async function setAppointmentStatus(
       await insertInvoiceItems(createdInvoice.items);
     }
   });
+  const updatedDoctor =
+    status === "In consultation" || status === "Completed"
+      ? await applyAutomaticDoctorStatus(state, appointment.doctorId, appointment.organizationId, status)
+      : null;
   const patientNotificationTarget = appointment.patientId ?? user.id;
   const createdNotifications = await notifyUsers({
     organizationId: appointment.organizationId,
@@ -4982,6 +5089,7 @@ export async function setAppointmentStatus(
             ]
           : [],
       invoices: createdInvoice ? [createdInvoice] : [],
+      doctors: updatedDoctor ? [updatedDoctor] : [],
       notifications: [...createdNotifications, ...billingNotifications].filter(
         (notification) => notification.userId === user.id,
       ),
@@ -5076,10 +5184,15 @@ export async function advanceQueue(
       status,
     },
   });
+  const updatedDoctor =
+    status === "In consultation" || status === "Completed"
+      ? await applyAutomaticDoctorStatus(state, queueEntry.doctorId, queueEntry.organizationId, status)
+      : null;
   return {
     patch: {
       queueEntries: [updatedQueueEntry],
       appointments: updatedAppointment ? [updatedAppointment] : [],
+      doctors: updatedDoctor ? [updatedDoctor] : [],
       emergencyVisits:
         linkedEmergencyVisit
           ? [

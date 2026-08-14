@@ -1268,6 +1268,19 @@ export async function updateQueueEntryDoctor(input: {
   );
 }
 
+export async function updateDoctorStatusById(input: {
+  doctorId: string;
+  organizationId: string;
+  status: DoctorRecord["status"];
+}) {
+  await query(
+    `update doctors
+     set status = $3
+     where id = $1 and organization_id = $2`,
+    [input.doctorId, input.organizationId, input.status],
+  );
+}
+
 export async function insertEmergencyVisit(visit: EmergencyVisitRecord) {
   await query(
     `insert into emergency_visits (

@@ -1,15 +1,65 @@
 "use client";
 
+import { useState } from "react";
 import { ClipboardList, Clock3, Stethoscope, Users } from "lucide-react";
 
 import { useAuth } from "@/components/providers/auth-provider";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
+import { useToast } from "@/components/providers/toast-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { StatCard } from "@/components/ui/stat-card";
 import { getCurrentLocalDateIso } from "@/lib/hospital-data";
+import type { DoctorRecord } from "@/lib/hospital-data";
+
+const SELF_MANAGED_STATUSES = ["Available", "On break", "Off duty"] as const;
+
+function DoctorStatusControl({ doctor }: { doctor: DoctorRecord }) {
+  const { setDoctorStatus } = useHospitalData();
+  const { pushToast } = useToast();
+  const [updating, setUpdating] = useState(false);
+  const isAutomaticStatus = !SELF_MANAGED_STATUSES.includes(
+    doctor.status as (typeof SELF_MANAGED_STATUSES)[number],
+  );
+  const selectedValue = isAutomaticStatus ? "Available" : doctor.status;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      {isAutomaticStatus ? <StatusBadge status={doctor.status} /> : null}
+      <div className="w-44">
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
+          Your status
+        </label>
+        <Select
+          value={selectedValue}
+          disabled={updating}
+          onChange={async (event) => {
+            const nextStatus = event.target.value as (typeof SELF_MANAGED_STATUSES)[number];
+            setUpdating(true);
+            const result = await setDoctorStatus(doctor.id, nextStatus);
+            setUpdating(false);
+
+            if (!result.ok) {
+              pushToast("Unable to update status", result.message ?? "Please try again.");
+              return;
+            }
+
+            pushToast("Status updated", `You are now marked as ${nextStatus}.`);
+          }}
+        >
+          {SELF_MANAGED_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </Select>
+      </div>
+    </div>
+  );
+}
 
 export function DoctorOverview() {
   const { session } = useAuth();
@@ -38,11 +88,14 @@ export function DoctorOverview() {
 
   return (
     <div className="space-y-6 md:space-y-8">
-      <PageHeader
-        eyebrow="Doctor Workspace"
-        title="Today&apos;s consultations and patient flow"
-        description="Review your schedule, assigned patients, and queue activity from one focused clinical workspace."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageHeader
+          eyebrow="Doctor Workspace"
+          title="Today&apos;s consultations and patient flow"
+          description="Review your schedule, assigned patients, and queue activity from one focused clinical workspace."
+        />
+        {doctor ? <DoctorStatusControl doctor={doctor} /> : null}
+      </div>
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Today's appointments"

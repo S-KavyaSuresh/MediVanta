@@ -36,6 +36,7 @@ import {
   sendTelemedicineMessage,
   sendTelemedicineSignal,
   setAppointmentStatus,
+  setDoctorStatus,
   setTelemedicineSessionStatus,
   unlinkFamilyMember,
   updateFamilyMember,
@@ -80,6 +81,10 @@ const queueStatusSchema = z.object({
 
 const queuePrioritySchema = z.object({
   priority: z.enum(["Normal", "Priority", "Emergency"]),
+});
+
+const doctorStatusSchema = z.object({
+  status: z.enum(["Available", "On break", "Off duty"]),
 });
 
 const departmentDraftSchema = z.object({
@@ -1067,6 +1072,23 @@ hospitalRouter.patch(
       response.json({
         success: true,
         ...(await assignQueueDoctor(request.authUser!, queueEntryId, doctorId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/doctors/:doctorId/status",
+  requireCapabilities("doctor:view"),
+  async (request, response, next) => {
+    try {
+      const { status } = doctorStatusSchema.parse(request.body);
+      const doctorId = getRouteParam(request.params.doctorId);
+      response.json({
+        success: true,
+        ...(await setDoctorStatus(request.authUser!, doctorId, status)),
       });
     } catch (error) {
       next(error);
