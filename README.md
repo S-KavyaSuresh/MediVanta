@@ -1,381 +1,536 @@
-# 🏥 MediVanta
+# 🏥 MediVanta — Integrated Smart Healthcare & Hospital Management Platform
 
-### Smart Healthcare & Hospital Management Platform
+> **Connecting patients, doctors, laboratories, pharmacies, reception, and hospital administration through one secure digital healthcare workflow.**
 
-**MediVanta** is a full-stack healthcare SaaS platform designed to digitize and connect the complete hospital workflow across patients, doctors, receptionists, laboratory staff, pharmacists, and administrators.
+MediVanta is a full-stack healthcare and hospital management platform designed to connect the complete patient journey — from appointment booking and hospital check-in to consultation, medical records, laboratory testing, prescriptions, pharmacy dispensing, billing, follow-up, and hospital administration.
 
-Instead of managing appointments, medical records, laboratory requests, prescriptions, pharmacy inventory, billing, queues, and hospital operations through disconnected systems, MediVanta brings them together into one secure role-based platform.
-
-> **From appointment to consultation, laboratory, pharmacy, billing, and follow-up — one connected healthcare workflow.**
+Instead of treating each hospital department as an isolated module, MediVanta creates an **integrated clinical and operational ecosystem** where information moves securely between authorized roles while maintaining role-based access, auditability, and organization-level data isolation.
 
 ---
 
-## 🔗 Project Links
+## 🚀 Live Application
 
-| Resource | Link |
-|---|---|
-| 🌐 Live Application | **Frontend deployment URL will be added after Vercel deployment** |
-| ⚙️ Backend API | https://medivanta.onrender.com |
-| 💻 GitHub Repository | https://github.com/S-KavyaSuresh/MediVanta |
+**Frontend:**  
+https://medi-vanta-frontend.vercel.app/
+
+**Backend API:**  
+https://medivanta.onrender.com/
+
+> The backend is hosted on a free-tier service and may require a short initial wake-up period after inactivity.
 
 ---
 
-# 🎯 Problem
+## 🎯 Problem Statement
 
-Hospitals frequently depend on fragmented tools for:
+Hospitals depend on multiple teams — receptionists, doctors, laboratory staff, pharmacists, administrators, and patients — but their workflows are often fragmented across disconnected systems.
 
-- patient registration
-- appointment scheduling
-- queue management
-- medical records
-- prescriptions
-- laboratory processing
-- pharmacy inventory
-- billing
-- notifications
-- administrative reporting
+This creates problems such as:
 
-This fragmentation creates longer waiting times, duplicated work, poor communication between departments, inaccurate operational visibility, and a difficult patient experience.
+- fragmented patient information
+- inefficient appointment and queue coordination
+- disconnected prescription and pharmacy workflows
+- manual inventory tracking
+- delayed laboratory communication
+- limited visibility into billing and payments
+- difficulty prioritizing emergency patients
+- poor coordination during patient handoffs
+- limited operational visibility for administrators
+- repeated data entry across departments
 
-MediVanta solves this by providing a **single role-aware healthcare platform** where every hospital workflow operates on connected data.
+MediVanta addresses this by providing a **single role-aware healthcare platform** where clinical and operational workflows remain connected from beginning to end.
 
 ---
 
 # 💡 Our Solution
 
-MediVanta provides dedicated workspaces for every major hospital stakeholder while maintaining a shared operational data layer.
+MediVanta provides dedicated workspaces for:
 
-The system connects:
+- 👤 Patients
+- 🩺 Doctors
+- 🏢 Receptionists
+- 🧪 Laboratory Staff
+- 💊 Pharmacists
+- 🛡️ Administrators
 
-**Patient → Reception → Doctor → Laboratory → Pharmacy → Billing → Administration**
+Each role receives only the information and actions required for its responsibilities.
 
-Every role receives only the data and operations relevant to them through secure role-based access control.
+The platform integrates:
+
+**Appointment → Check-In → Queue → Consultation → Medical Record → Diagnosis → Prescription / Lab → Pharmacy → Billing → Notification → Follow-up**
+
+into one connected workflow backed by PostgreSQL.
 
 ---
 
 # ✨ Key Features
 
-### 👤 Patient Care
+## 👤 Patient Care
 
-- Patient registration and secure authentication
-- Structured patient profiles
-- Family member / dependent management
-- Doctor discovery
-- Appointment booking
-- Appointment reason capture
-- Online / In-Person consultation selection
-- Appointment rescheduling and cancellation
-- Queue and appointment status visibility
-- Medical-history access
-- Prescription history
-- Lab requests and reports
-- Billing and payment tracking
-- Notifications
-- Patient healthcare journey
-- Telemedicine consultation foundation
+Patients can:
 
-### 🩺 Doctor Workspace
-
-- Today's consultation workflow
-- Assigned patient management
-- Appointment and queue management
-- Doctor operational availability
-- Medical record creation
-- Controlled medical-record editing window
-- Structured prescription creation
-- Prescription editing before dispensing
-- Medicine catalog selection
-- Dosage, frequency and duration handling
-- Follow-up date
-- Prescription history
-- Printable prescriptions
-- Clinical handoff summary
-- Patient clinical context
-- Online consultation support
-
-### 🏢 Reception Desk
-
-- Patient registration
-- Appointment creation and editing
-- Rescheduling
-- Check-in
-- Cancellation
-- Waiting queue management
-- Priority patient handling
-- Billing access
-- Patient/doctor operational search
-
-### 🧪 Laboratory
-
-- Lab request management
-- Processing-status workflow
-- Result/report handling
-- Patient report access
-- Laboratory notifications
-- Operational laboratory overview
-
-### 💊 Pharmacy & Inventory
-
-- Prescription verification
-- Medicine catalog
-- Inventory batch management
-- Expiry-date tracking
-- Low-stock detection
-- Near-expiry / expired medicine handling
-- FEFO batch selection
-- Prescription dispensing
-- Automatic stock deduction
-- Medicine billing
-- Pharmacy notifications
-
-### 💳 Billing & Payments
-
-- Consultation invoices
-- Laboratory invoices
-- Pharmacy invoices
-- Itemized billing
-- Paid / due tracking
-- Persisted payment records
-- Reception/Admin payment recording
-- Patient payment workflow
-- Printable invoices
-- Source-linked invoices to prevent duplication
-
-### 📊 Administration
-
-- Hospital operational dashboard
-- User and staff management
-- Department management
-- Appointment oversight
-- Billing oversight
-- Inventory visibility
-- System settings
-- Audit logs
-- Account activation/deactivation
-- Operational analytics
-- Appointment trends
-- Revenue statistics
-- Laboratory statistics
-- Pharmacy statistics
-- Department-level insights
+- create and manage their healthcare account
+- book appointments with hospital doctors
+- choose between supported consultation modes
+- reschedule or cancel eligible appointments
+- view appointment status and history
+- manage family/dependent members
+- book healthcare services for family members
+- access medical records
+- access prescriptions
+- view laboratory requests and reports
+- view billing information and invoices
+- record supported payments
+- receive hospital notifications
+- access follow-up information
+- access patient journey information for linked visits
+- participate in supported online consultation workflows
 
 ---
 
-# 🚨 Smart Emergency Workflow
+## 🩺 Doctor Workspace
 
-MediVanta includes an emergency-care workflow designed to prioritize urgent patients without disrupting the normal hospital queue.
+Doctors can:
 
-Emergency functionality includes:
+- view today's appointments
+- identify the next eligible patient
+- manage consultation workflow
+- view patient information
+- access clinical handoff context
+- create medical records
+- record diagnoses
+- create structured prescriptions
+- select medicines from the hospital medicine catalog
+- specify dosage, unit, frequency and duration
+- automatically calculate prescription quantities
+- define follow-up dates
+- edit eligible recent prescriptions
+- view prescription and medical-record history
+- print/save structured prescriptions
+- view their queue
+- manage operational availability status
 
-- Emergency intake
-- Emergency priority classification
-- Priority queue integration
-- Emergency patients ranked ahead of normal queue entries
-- Doctor assignment
-- Doctor availability awareness
-- Clinical handoff context
-- Patient journey tracking
-- Audit logging
+### Doctor Operational Status
 
-Doctor operational states currently support:
+Doctors can use operational states such as:
 
-**Available · In Consultation · On Break · Off Duty**
+- **Available**
+- **In Consultation**
+- **On Break**
+- **Off Duty**
 
-This allows hospital operations to avoid assigning unavailable doctors during emergency handling.
+Consultation workflow can automatically update the doctor's operational state while preserving deliberate manual states such as break or off-duty status.
 
 ---
 
-# 🧠 Clinical Handoff
+## 🏢 Reception & Queue Management
 
-MediVanta provides a structured clinical handoff view to help doctors quickly understand the latest available patient context.
+Reception staff can:
 
-The handoff is derived from existing hospital data rather than being maintained as a duplicate medical record.
+- manage appointments
+- check patients into the hospital
+- coordinate queue entries
+- access relevant patient information
+- manage operational billing workflows
+- record supported manual payments
+- search permitted hospital information
+- coordinate patient movement through the hospital
 
-It can surface available information such as:
+Appointment and queue states remain synchronized with the hospital workflow.
 
-- patient / family-member context
-- appointment reason
+---
+
+## 🧪 Laboratory Management
+
+Laboratory staff can:
+
+- access laboratory requests
+- manage request processing
+- update laboratory workflow status
+- enter results
+- generate/report completed laboratory information
+- make completed results available to authorized users
+- receive relevant notifications
+
+Laboratory activity is connected with patient records, doctors, billing and notifications.
+
+---
+
+## 💊 Pharmacy & Inventory Management
+
+MediVanta includes persistent pharmacy inventory management.
+
+Pharmacists can:
+
+- maintain medicine inventory batches
+- add and edit inventory
+- track stock quantity
+- track batch numbers
+- track manufacturers
+- manage unit prices
+- monitor expiry dates
+- define reorder levels
+- identify low-stock medicines
+- identify expired/near-expiry batches
+- review issued prescriptions
+- dispense medicines
+- automatically deduct inventory after dispensing
+
+### FEFO Dispensing
+
+MediVanta uses **FEFO — First Expiry, First Out** logic.
+
+When medication is dispensed:
+
+1. the prescription's medicine is matched using its stable medicine identifier
+2. expired inventory is excluded
+3. required quantity is validated
+4. eligible batches are ordered by expiry date
+5. the earliest-expiring valid stock is consumed first
+6. inventory is deducted
+7. the prescription is marked as dispensed
+8. medicine billing is generated
+9. related notifications/audit information are recorded
+
+This reduces medication wastage and prevents accidental dispensing from expired inventory.
+
+---
+
+## 💳 Billing & Payments
+
+The platform contains PostgreSQL-backed billing infrastructure for clinical services.
+
+Supported billing workflows include:
+
+- consultation-linked invoices
+- laboratory-linked invoices
+- medicine-linked invoices
+- itemized invoice charges
+- paid and due amounts
+- payment status
+- patient billing view
+- reception/admin billing view
+- supported payment recording
+- payment method/reference tracking
+- printable invoice layouts
+
+Source-linked invoice creation helps prevent duplicate billing for the same clinical event.
+
+---
+
+## 🔔 Notifications
+
+MediVanta includes persistent per-user notifications.
+
+Notifications can be generated for events such as:
+
+- appointment creation
+- appointment status changes
+- laboratory requests
+- laboratory workflow updates
+- completed lab reports
+- prescription issuance
+- prescription dispensing
+- invoice generation
+- payment recording
+- pharmacy stock warnings
+
+Users can view unread notifications and mark individual or all notifications as read.
+
+---
+
+# 🚨 Smart Emergency & Priority Queue
+
+MediVanta includes an emergency operations workflow designed to prioritize urgent hospital cases.
+
+The operational queue follows priority logic such as:
+
+1. active **Emergency** patients
+2. active **Priority** patients
+3. other active queue entries
+4. completed entries
+
+This prevents completed cases from appearing above patients who still require care.
+
+Emergency operations can also coordinate doctor assignment using the doctor's operational availability.
+
+Off-duty doctors are prevented from being silently assigned as normal available doctors.
+
+---
+
+# 🤝 Clinical Handoff
+
+MediVanta provides doctors with a consolidated clinical context when reviewing patients.
+
+Depending on available patient data, the handoff can surface information such as:
+
+- reason for visit
+- patient/dependent context
 - allergies
-- chronic conditions
+- chronic/existing conditions
 - blood group
 - latest diagnosis
-- recent laboratory context
-- recent prescriptions
-- pending laboratory work
+- recent laboratory information
+- active prescription context
+- pending laboratory requests
 - visit status
 - follow-up information
 
-Missing clinical information is clearly represented instead of being fabricated.
+The handoff is derived from existing hospital and clinical records rather than requiring doctors to repeatedly re-enter the same information.
 
 ---
 
 # 👨‍👩‍👧 Family & Dependent Care
 
-A patient account can manage linked family members.
+Healthcare workflows frequently involve parents, children, elderly dependents and other family members.
 
-Family-aware workflows preserve the actual person receiving care across:
+MediVanta therefore supports family-member records that can be linked to healthcare activities.
 
-- appointments
+Dependent context can flow through relevant areas such as:
+
+- appointment booking
 - laboratory requests
 - prescriptions
 - medical records
+- doctor history
+- patient-facing views
+- consultation context
 - billing context
-- healthcare journey
 
-Clinical information belonging to a dependent is kept distinct from the primary account holder.
+This allows one authenticated patient account to coordinate care for supported family members while preserving their identity within clinical workflows.
+
+---
+
+# 💻 Telemedicine Foundation
+
+MediVanta supports online consultation workflow foundations.
+
+Online appointments can expose consultation access to authorized doctors and patients.
+
+Access is appointment-scoped and time-aware so consultation actions are not exposed arbitrarily long before the scheduled appointment.
+
+The current implementation focuses on secure consultation workflow and appointment context rather than building a complete custom video-conferencing infrastructure.
 
 ---
 
 # 🔎 Role-Aware Global Search
 
-MediVanta includes entity-aware search with permissions determined by the authenticated role.
+MediVanta provides role-scoped hospital search.
 
-Search supports relevant entities such as:
+Search behavior depends on the authenticated user's permissions.
 
-- Patients
-- Doctors
-- Departments
-- Appointments
-- Medicines
-- Bills
-- Records
+Supported searchable entities can include:
 
-Search results open focused detail views instead of redirecting users into unrelated role workspaces.
+- patients
+- doctors
+- departments
+- appointments
+- staff
+- invoices
+- medicines/inventory
 
-Sensitive information remains protected through backend authorization.
+Search results use entity-aware matching and open focused detail views rather than unnecessarily redirecting users into complete administrative listing pages.
 
----
+Examples include:
 
-# 📅 Appointment & Queue Intelligence
+### Doctor result
 
-Appointment workflows include:
+Can display:
 
-- Department and doctor selection
-- Doctor availability
-- Date and time selection
-- Appointment reason
-- Online / In-Person mode
-- Rescheduling
-- Cancellation
-- Check-in
-- Consultation progression
-- Queue synchronization
-- Priority handling
-- No Show status
+- doctor
+- department
+- specialization
+- qualification
+- experience
+- languages
+- availability
+- consultation information
 
-A **No Show** represents an appointment that passed without the patient checking in or attending.
+### Department result
 
----
+Can display:
 
-# 💊 Structured Prescription & FEFO Dispensing
+- department
+- doctor count
+- available/on-duty doctor information
+- location
+- relevant doctor summary
 
-Prescriptions use structured medicine information rather than relying only on free-text instructions.
+### Pharmacy search
 
-The workflow supports:
+Can surface medicine-oriented information such as:
 
-**Medicine → Strength → Dose → Frequency → Duration → Quantity → Instructions**
+- medicine
+- stock
+- price
+- batch
+- expiry context
 
-During dispensing, MediVanta verifies available, non-expired stock and consumes inventory using:
-
-### FEFO — First Expiry, First Out
-
-This reduces wastage and prevents expired inventory from being dispensed.
-
----
-
-# 🧪 Integrated Laboratory Workflow
-
-Doctor / Authorized Request  
-→ Laboratory Queue  
-→ Processing  
-→ Result / Report  
-→ Patient & Doctor Access  
-→ Billing  
-→ Notification
-
-Laboratory information remains linked to the same patient and hospital workflow rather than existing as an isolated report system.
+Search remains restricted according to role permissions.
 
 ---
 
-# 🔐 Security
+# 📊 Administration & Hospital Operations
 
-MediVanta applies security at multiple layers.
+Administrators receive broader hospital oversight capabilities.
 
-Key protections include:
+The administrative workspace includes functionality for:
 
-- Password hashing
-- Role-Based Access Control (RBAC)
-- Protected routes
-- JWT-based authentication architecture
-- Refresh/session management
-- HttpOnly authentication cookies
-- Email verification
-- Password reset workflow
-- Active-session management
-- Input validation
-- Secure file validation
-- Rate limiting
-- Origin / CSRF protections where applicable
-- XSS-safe React rendering
-- Organization-scoped data access
-- Persistent audit logging
-- Environment-based secret management
+- staff management
+- user/account management
+- account activation/deactivation
+- hospital operational oversight
+- billing oversight
+- appointment oversight
+- queue/emergency operations
+- reports and analytics
+- role-aware search
+- active-session/security visibility
+- audit-oriented operational information
 
-Sensitive hospital operations are enforced on the backend rather than relying only on hidden frontend controls.
+Historical hospital data remains preserved when supported accounts are deactivated.
 
 ---
 
 # 🏗️ System Architecture
 
-MediVanta follows a layered full-stack architecture:
-
-**Users → Next.js Frontend → Express REST API → Service Layer → PostgreSQL Repository → Neon PostgreSQL**
+MediVanta follows a full-stack client/server architecture with role-based application services and PostgreSQL persistence.
 
 ![MediVanta System Architecture](docs/diagrams/system-architecture.png)
 
-The architecture separates:
+### High-Level Architecture
 
-- presentation
-- authentication
-- authorization
-- business workflows
-- persistence
-- role-specific data access
-
-This makes the platform easier to extend toward multi-hospital deployments.
+```text
+                    ┌───────────────────────┐
+                    │       MediVanta       │
+                    │      Web Platform     │
+                    └───────────┬───────────┘
+                                │
+                    ┌───────────▼───────────┐
+                    │   Next.js Frontend    │
+                    │ React + TypeScript    │
+                    └───────────┬───────────┘
+                                │
+                          REST API Layer
+                                │
+                    ┌───────────▼───────────┐
+                    │   Node.js / Express   │
+                    │      Backend API      │
+                    └───────────┬───────────┘
+                                │
+              ┌─────────────────┼─────────────────┐
+              │                 │                 │
+             RBAC          Business Logic     Audit/Security
+              │                 │                 │
+              └─────────────────┼─────────────────┘
+                                │
+                    ┌───────────▼───────────┐
+                    │      PostgreSQL       │
+                    │         Neon          │
+                    └───────────────────────┘
+```
 
 ---
 
 # 🔄 Integrated Clinical Workflow
 
-The platform connects Doctor, Laboratory, Pharmacy, Patient and supporting hospital systems through a centralized backend.
+MediVanta connects the major hospital roles through a shared clinical workflow.
 
-![MediVanta Integrated Clinical Workflow](docs/diagrams/clinical-workflow.png)
+![MediVanta Clinical Workflow](docs/diagrams/clinical-workflow.png)
 
-Major supporting services include:
+The workflow connects:
+
+```text
+Appointment
+     ↓
+Check-In
+     ↓
+Queue
+     ↓
+Doctor Consultation
+     ↓
+Medical Record + Diagnosis
+     ↓
+ ┌───────────────┬─────────────────┐
+ │               │                 │
+Prescription   Lab Request      Follow-up
+ │               │
+ ↓               ↓
+Pharmacy       Laboratory
+ │               │
+Dispensing     Results
+ │               │
+ └───────┬───────┘
+         ↓
+       Billing
+         ↓
+   Notifications
+         ↓
+       Patient
+```
+
+Supporting services include:
 
 - PostgreSQL persistence
 - RBAC
-- Audit logging
-- Notifications
-- Billing
-- Inventory management
+- audit logging
+- notifications
+- billing
+- inventory management
 
 ---
 
-# 👤 Patient Healthcare Journey
+# 🧭 Patient Healthcare Journey
+
+The patient journey extends beyond simply booking an appointment.
 
 ![MediVanta Patient Healthcare Journey](docs/diagrams/patient-healthcare-journey.png)
 
-The patient journey connects registration, appointment booking, queue management, consultation, laboratory/pharmacy operations, billing and follow-up.
+MediVanta connects the patient's progression through hospital services so that authorized roles can understand the current stage of care and the next operational step.
 
 ---
 
-# 🚨 Emergency Workflow
+# 🚑 Emergency Workflow
+
+Emergency patients require different handling from ordinary scheduled visits.
 
 ![MediVanta Emergency Workflow](docs/diagrams/emergency-workflow.png)
 
-Emergency patients are integrated into the existing hospital workflow rather than managed through a disconnected emergency module.
+The emergency workflow connects intake, prioritization, queue management, doctor availability/assignment and subsequent clinical care.
+
+---
+
+# 🔐 Security & Access Control
+
+Security is built into MediVanta's architecture rather than being handled only at the UI level.
+
+Implemented security concepts include:
+
+- authenticated protected workspaces
+- role-based access control
+- backend route authorization
+- organization-scoped data
+- patient-owned clinical data restrictions
+- role-scoped search
+- protected clinical operations
+- authenticated session management
+- session tracking/revocation support
+- account activation/deactivation
+- audit logging for important operations
+- server-side validation
+- safe API error handling
+
+### Roles
+
+```text
+Patient
+Doctor
+Receptionist
+Laboratory Staff
+Pharmacist
+Administrator
+```
+
+Each role receives only the operations required for its hospital responsibilities.
 
 ---
 
@@ -383,72 +538,69 @@ Emergency patients are integrated into the existing hospital workflow rather tha
 
 ## Frontend
 
-| Technology | Purpose |
-|---|---|
-| **Next.js 16** | Frontend framework and routing |
-| **React 19** | Component-based user interface |
-| **TypeScript 5.9** | Type-safe development |
-| **Tailwind CSS 4** | Responsive styling |
-| **Lucide React** | Professional application icons |
-| **next-themes** | Light/Dark theme handling |
-| **Class Variance Authority** | Component variant management |
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- Lucide React
+- Responsive component-based UI
 
 ## Backend
 
-| Technology | Purpose |
-|---|---|
-| **Node.js** | Backend runtime |
-| **Express 5** | REST API |
-| **TypeScript 5.9** | Type-safe backend development |
-| **Zod 4** | Input validation |
-| **Helmet** | HTTP security headers |
-| **CORS** | Origin control |
-| **node-postgres (`pg`)** | PostgreSQL connectivity |
-| **dotenv** | Environment configuration |
+- Node.js
+- Express.js
+- TypeScript
+- REST APIs
+- Server-side validation
+- Role-based authorization
 
-## Database & Infrastructure
+## Database
 
-| Technology | Purpose |
-|---|---|
-| **PostgreSQL** | Relational persistence |
-| **Neon PostgreSQL** | Cloud-hosted database |
-| **Render** | Backend deployment |
-| **Vercel** | Frontend deployment |
+- PostgreSQL
+- Neon PostgreSQL
+- SQL migrations
+- Persistent hospital operational data
+
+## Deployment
+
+- **Frontend:** Vercel
+- **Backend:** Render
+- **Database:** Neon PostgreSQL
+- **Source Control:** GitHub
 
 ---
 
-# 🗄️ Database Architecture
+# 🗄️ Database & Persistence
 
-MediVanta uses PostgreSQL for persistent transactional healthcare data.
+MediVanta uses PostgreSQL as its persistent operational datastore.
 
-Major data domains include:
+The data model supports major hospital entities including:
 
-- Organizations
-- Users
-- Sessions
-- Patients
-- Family Members
-- Doctors
-- Departments
-- Appointments
-- Queue Entries
-- Medical Records
-- Prescriptions
-- Prescription Medicines
-- Laboratory Tests
-- Laboratory Requests
-- Laboratory Reports
-- Medicine Catalog
-- Inventory Batches
-- Invoices
-- Invoice Items
-- Payments
-- Notifications
-- Audit Logs
-- Settings
-- Emergency / Journey information
+```text
+Organizations
+Users
+Patients
+Family Members
+Doctors
+Departments
+Appointments
+Queue Entries
+Medical Records
+Prescriptions
+Prescription Medicines
+Lab Tests
+Lab Requests
+Inventory Batches
+Invoices
+Invoice Items
+Payments
+Notifications
+Sessions
+Audit Information
+Patient Journey / Emergency Data
+```
 
-Database changes are versioned using sequential SQL migrations.
+Database changes are managed using versioned migrations.
 
 ---
 
@@ -468,13 +620,10 @@ MediVanta/
 │   ├── migrations/
 │   ├── src/
 │   │   ├── auth/
-│   │   ├── config/
-│   │   ├── domain/
-│   │   ├── middleware/
 │   │   ├── repositories/
 │   │   ├── routes/
 │   │   ├── services/
-│   │   └── scripts/
+│   │   └── domain/
 │   └── package.json
 │
 ├── docs/
@@ -486,5 +635,253 @@ MediVanta/
 │   │
 │   └── screenshots/
 │
-├── README.md
-└── package.json
+├── package.json
+└── README.md
+```
+
+---
+
+# 🚀 Running MediVanta Locally
+
+## 1. Clone the repository
+
+```bash
+git clone <your-repository-url>
+cd MediVanta
+```
+
+---
+
+## 2. Install dependencies
+
+From the project root:
+
+```bash
+npm install
+```
+
+The repository uses npm workspaces for the frontend and backend.
+
+---
+
+## 3. Configure environment variables
+
+Create the backend environment file using the provided example:
+
+```powershell
+Copy-Item backend/.env.example backend/.env
+```
+
+Configure the required values.
+
+Example:
+
+```env
+PORT=4000
+DATABASE_URL=your_postgresql_connection_string
+CLIENT_ORIGIN=http://localhost:3000
+SESSION_SECRET=your_secure_session_secret
+```
+
+Never commit real production secrets to Git.
+
+Configure frontend environment variables according to `frontend/.env.example` when required.
+
+---
+
+## 4. Run database migrations
+
+```bash
+npm run db:migrate --workspace backend
+```
+
+---
+
+## 5. Seed development data
+
+For a fresh local development database:
+
+```bash
+npm run seed --workspace backend
+```
+
+---
+
+## 6. Start MediVanta
+
+Start the frontend and backend together:
+
+```bash
+npm run dev
+```
+
+Default development endpoints:
+
+```text
+Frontend: http://localhost:3000
+Backend:  http://localhost:4000
+```
+
+---
+
+# 👥 Demo Accounts
+
+The development dataset includes role-specific demonstration accounts.
+
+| Role | Email | Workspace |
+|---|---|---|
+| Patient | `patient@medivanta.demo` | `/dashboard/patient` |
+| Doctor | `doctor@medivanta.demo` | `/dashboard/doctor` |
+| Receptionist | `receptionist@medivanta.demo` | `/dashboard/reception` |
+| Laboratory Staff | `lab@medivanta.demo` | `/dashboard/laboratory` |
+| Pharmacist | `pharmacist@medivanta.demo` | `/dashboard/pharmacy` |
+| Administrator | `admin@medivanta.demo` | `/dashboard/admin` |
+
+> Demo credentials are intended only for development/evaluation. Production deployments should use securely provisioned accounts and secrets.
+
+---
+
+# 📸 Application Screenshots
+
+Final screenshots are maintained under:
+
+```text
+docs/screenshots/
+```
+
+Recommended showcase views include:
+
+- Landing Page
+- Patient Dashboard
+- Doctor Dashboard
+- Clinical Handoff
+- Digital Prescription
+- Laboratory Workspace
+- Pharmacy Inventory
+- Billing
+- Emergency Priority Queue
+- Admin Analytics
+
+---
+
+# 🧪 Validation
+
+The project is validated using:
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
+Database migrations can additionally be verified with:
+
+```bash
+npm run db:migrate --workspace backend
+```
+
+Core workflows have also been manually tested across Patient, Doctor, Receptionist, Laboratory, Pharmacy and Administrator roles.
+
+---
+
+# 🌐 Deployment Architecture
+
+```text
+                  USER
+                    │
+                    ▼
+       ┌────────────────────────┐
+       │         Vercel         │
+       │   Next.js Frontend     │
+       └────────────┬───────────┘
+                    │ HTTPS
+                    ▼
+       ┌────────────────────────┐
+       │         Render         │
+       │ Express Backend API    │
+       └────────────┬───────────┘
+                    │ TLS
+                    ▼
+       ┌────────────────────────┐
+       │          Neon          │
+       │ PostgreSQL Database    │
+       └────────────────────────┘
+```
+
+---
+
+# 🌟 What Makes MediVanta Different?
+
+MediVanta is not designed as a collection of disconnected CRUD dashboards.
+
+Its key idea is **workflow continuity**.
+
+A single healthcare event can move across multiple roles:
+
+```text
+Patient books appointment
+        ↓
+Reception coordinates arrival
+        ↓
+Queue manages patient flow
+        ↓
+Doctor performs consultation
+        ↓
+Prescription / Lab Request
+        ↓
+Pharmacy / Laboratory
+        ↓
+Inventory / Report
+        ↓
+Billing
+        ↓
+Patient notification and follow-up
+```
+
+Each department performs its own responsibility while MediVanta maintains the relationships between those actions.
+
+Additional intelligence such as:
+
+- emergency prioritization
+- FEFO pharmacy dispensing
+- doctor operational availability
+- clinical handoff
+- dependent-aware care
+- patient journey tracking
+- role-aware search
+
+helps transform the platform from a simple hospital record system into an **integrated hospital operations platform**.
+
+---
+
+# 🔮 Future Enhancements
+
+The current architecture provides a foundation for further enhancements such as:
+
+- visual QR-based patient journey access
+- advanced hospital bottleneck prediction
+- intelligent appointment-slot optimization
+- richer hospital capacity forecasting
+- advanced pharmacy procurement and supplier workflows
+- expanded EMR capabilities
+- real payment gateway integration
+- advanced downloadable clinical documents
+- richer administrative analytics
+- production-grade telemedicine media/signaling integration
+- multi-hospital SaaS tenancy
+
+---
+
+# ⚠️ Disclaimer
+
+MediVanta is currently a demonstration/hackathon healthcare software platform.
+
+It is **not a certified medical device**, should not independently provide medical diagnoses, and should not be used as a substitute for professional clinical judgment or production hospital systems without appropriate security, compliance, validation and regulatory review.
+
+---
+
+# 🏥 MediVanta
+
+### Integrated Healthcare. Connected Operations. Better Patient Journeys.
+
+Built to demonstrate how modern software can connect clinical care and hospital operations through secure, role-aware digital workflows.
