@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 
@@ -35,9 +36,19 @@ export function ForgotPasswordForm() {
 
   return (
     <Card className="w-full max-w-2xl p-6 sm:p-8">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--accent)]">
-        MediVanta
-      </p>
+      <div className="flex items-center gap-3">
+        <Image
+          src="/medivanta-icon.png"
+          alt=""
+          width={44}
+          height={44}
+          className="h-11 w-11 rounded-2xl object-contain"
+          priority
+        />
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--accent)]">
+          MediVanta
+        </p>
+      </div>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">Forgot Password</h1>
 
       {stage === "request" ? (

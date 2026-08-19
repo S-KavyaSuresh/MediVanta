@@ -1,6 +1,7 @@
 "use client";
 
-import { Stethoscope, X } from "lucide-react";
+import { X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
@@ -62,9 +63,13 @@ export function DashboardSidebar({
             title="Go to MediVanta Home"
             onClick={onCloseMobile}
           >
-            <span className="rounded-2xl bg-[color:var(--accent)]/10 p-2 text-[color:var(--accent)]">
-              <Stethoscope className="h-5 w-5" />
-            </span>
+            <Image
+              src="/medivanta-icon.png"
+              alt=""
+              width={36}
+              height={36}
+              className="h-9 w-9 shrink-0 rounded-xl object-contain"
+            />
             <div>
               <p className="font-semibold">MediVanta</p>
               <p className="text-sm text-[color:var(--muted-foreground)]">

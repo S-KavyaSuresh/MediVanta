@@ -14,7 +14,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/providers/toast-provider";
 
-function formatMoney(cents: number) {
+export function formatMoney(cents: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -22,7 +22,7 @@ function formatMoney(cents: number) {
   }).format(cents / 100);
 }
 
-function formatDateTime(value: string) {
+export function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -115,6 +115,8 @@ function buildPrintableInvoice(invoice: InvoiceRecord, organizationName: string)
       </div>
       <div class="summary">
         <div><span>Subtotal</span><strong>${escapeHtml(formatMoney(invoice.subtotalCents))}</strong></div>
+        <div><span>Discount</span><strong>${escapeHtml(formatMoney(invoice.discountCents))}</strong></div>
+        <div><span>Tax</span><strong>${escapeHtml(formatMoney(invoice.taxCents))}</strong></div>
         <div><span>Paid</span><strong>${escapeHtml(formatMoney(invoice.amountPaidCents))}</strong></div>
         <div><span>Due</span><strong>${escapeHtml(formatMoney(invoice.amountDueCents))}</strong></div>
         <div><span>Total</span><strong>${escapeHtml(formatMoney(invoice.totalCents))}</strong></div>
@@ -141,7 +143,7 @@ function buildPrintableInvoice(invoice: InvoiceRecord, organizationName: string)
   </html>`;
 }
 
-function printInvoice(invoice: InvoiceRecord, organizationName: string) {
+export function printInvoice(invoice: InvoiceRecord, organizationName: string) {
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";
@@ -173,7 +175,16 @@ function printInvoice(invoice: InvoiceRecord, organizationName: string) {
   iframe.contentWindow.print();
 }
 
-const staffPaymentMethods: PaymentMethod[] = ["Cash", "Card", "UPI", "Bank Transfer"];
+const staffPaymentMethods: PaymentMethod[] = [
+  "Cash",
+  "UPI",
+  "Credit Card",
+  "Debit Card",
+  "Net Banking",
+  "Bank Transfer",
+];
+
+type AdjustmentType = "Amount" | "Percentage";
 
 function getDefaultPaymentAmount(invoice: InvoiceRecord) {
   return invoice.amountDueCents > 0 ? (invoice.amountDueCents / 100).toFixed(2) : "";
@@ -190,7 +201,7 @@ export function BillingView({
   description: string;
   canManagePayments: boolean;
 }) {
-  const { recordInvoicePayment, state } = useHospitalData();
+  const { recordInvoicePayment, state, updateInvoiceAdjustments } = useHospitalData();
   const { pushToast } = useToast();
   const [query, setQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
@@ -200,6 +211,10 @@ export function BillingView({
     canManagePayments ? "Cash" : "Demo Payment",
   );
   const [paymentReference, setPaymentReference] = useState("");
+  const [discountType, setDiscountType] = useState<AdjustmentType>("Amount");
+  const [discountAmount, setDiscountAmount] = useState("");
+  const [taxType, setTaxType] = useState<AdjustmentType>("Amount");
+  const [taxAmount, setTaxAmount] = useState("");
 
   const invoices = useMemo(
     () =>
@@ -282,6 +297,10 @@ export function BillingView({
                       setPaymentAmount(getDefaultPaymentAmount(invoice));
                       setPaymentMethod(canManagePayments ? "Cash" : "Demo Payment");
                       setPaymentReference("");
+                      setDiscountType("Amount");
+                      setDiscountAmount((invoice.discountCents / 100).toFixed(2));
+                      setTaxType("Amount");
+                      setTaxAmount((invoice.taxCents / 100).toFixed(2));
                     }}
                   >
                     View invoice
@@ -325,10 +344,18 @@ export function BillingView({
           setActiveInvoiceId(null);
           setPaymentAmount("");
           setPaymentReference("");
+          setDiscountType("Amount");
+          setDiscountAmount("");
+          setTaxType("Amount");
+          setTaxAmount("");
           setPaymentMethod(canManagePayments ? "Cash" : "Demo Payment");
         }}
         title={activeInvoice?.invoiceNumber ?? "Invoice"}
-        description="Review itemized charges and record payment when needed."
+        description={
+          canManagePayments
+            ? "Review itemized charges and record payments received at the hospital."
+            : "Review itemized charges and complete a demo payment entry for local evaluation."
+        }
       >
         {activeInvoice ? (
           <div className="space-y-5">
@@ -341,6 +368,44 @@ export function BillingView({
                   <p className="mt-1 font-semibold">{formatMoney(activeInvoice.totalCents)}</p>
                 </div>
                 <StatusBadge status={activeInvoice.paymentStatus} />
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Subtotal
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.subtotalCents)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Discount
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.discountCents)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Tax
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.taxCents)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Total
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.totalCents)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Paid
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.amountPaidCents)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted-foreground)]">
+                    Due
+                  </p>
+                  <p className="mt-1 font-semibold">{formatMoney(activeInvoice.amountDueCents)}</p>
+                </div>
               </div>
             </div>
 
@@ -375,6 +440,73 @@ export function BillingView({
               </div>
             ) : null}
 
+            {canManagePayments ? (
+              <form
+                className="space-y-4 rounded-2xl border border-[color:var(--border)] p-4"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const discount = Number(discountAmount || "0");
+                  const tax = Number(taxAmount || "0");
+                  const result = await updateInvoiceAdjustments(activeInvoice.id, {
+                    discount,
+                    discountType,
+                    tax,
+                    taxType,
+                  });
+                  if (!result.ok) {
+                    pushToast("Unable to update invoice", result.message ?? "Please review the tax and discount values.");
+                    return;
+                  }
+                  pushToast("Invoice updated", `Adjustments saved for ${activeInvoice.invoiceNumber}.`);
+                }}
+              >
+                <p className="text-sm font-semibold">Invoice adjustments</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-3">
+                    <label className="mb-2 block text-sm font-medium">Discount</label>
+                    <Select
+                      value={discountType}
+                      onChange={(event) => setDiscountType(event.target.value as AdjustmentType)}
+                    >
+                      <option value="Amount">Amount</option>
+                      <option value="Percentage">Percentage</option>
+                    </Select>
+                    <Input
+                      value={discountAmount}
+                      onChange={(event) => setDiscountAmount(event.target.value)}
+                      type="number"
+                      min="0"
+                      max={discountType === "Percentage" ? "100" : undefined}
+                      step="0.01"
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="mb-2 block text-sm font-medium">Tax</label>
+                    <Select
+                      value={taxType}
+                      onChange={(event) => setTaxType(event.target.value as AdjustmentType)}
+                    >
+                      <option value="Amount">Amount</option>
+                      <option value="Percentage">Percentage</option>
+                    </Select>
+                    <Input
+                      value={taxAmount}
+                      onChange={(event) => setTaxAmount(event.target.value)}
+                      type="number"
+                      min="0"
+                      max={taxType === "Percentage" ? "100" : undefined}
+                      step="0.01"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button type="submit" variant="secondary">
+                    Save adjustments
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
             {activeInvoice.amountDueCents > 0 ? (
               <form
                 className="space-y-4 rounded-2xl border border-[color:var(--border)] p-4"
@@ -405,7 +537,7 @@ export function BillingView({
                 }}
               >
                 <p className="text-sm font-semibold">
-                  {canManagePayments ? "Record payment" : "Complete payment"}
+                  {canManagePayments ? "Record Payment" : "Demo Payment"}
                 </p>
                 <div>
                   <label className="mb-2 block text-sm font-medium">Amount</label>
@@ -450,7 +582,7 @@ export function BillingView({
                     Print invoice
                   </Button>
                   <Button type="submit" disabled={activeInvoice.amountDueCents <= 0}>
-                    {canManagePayments ? "Record payment" : "Pay now"}
+                    {canManagePayments ? "Record Payment" : "Pay with Demo Payment"}
                   </Button>
                 </div>
               </form>

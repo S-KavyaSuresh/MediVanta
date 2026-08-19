@@ -6,6 +6,7 @@ import { useState } from "react";
 import { DashboardDemo } from "@/app/dashboard/dashboard-demo";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { useAuth } from "@/components/providers/auth-provider";
+import { useToast } from "@/components/providers/toast-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -35,14 +36,29 @@ const emptyPatientDraft = {
   confirmPassword: "",
 };
 
+const emptyEmergencyDraft = {
+  patientName: "",
+  contactName: "",
+  contactPhone: "",
+  emergencyReason: "",
+  severity: "Emergency" as "Priority" | "Emergency",
+  allergies: "",
+  medicalConditions: "",
+  bloodGroup: "",
+};
+
 export function ReceptionOverview() {
-  const { createPatientProfile } = useHospitalData();
+  const { createEmergencyVisit, createPatientProfile } = useHospitalData();
   const { session } = useAuth();
+  const { pushToast } = useToast();
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [registerDraft, setRegisterDraft] = useState(emptyPatientDraft);
+  const [emergencyDraft, setEmergencyDraft] = useState(emptyEmergencyDraft);
   const [registerErrors, setRegisterErrors] = useState<Record<string, string>>({});
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
   const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [emergencySubmitting, setEmergencySubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -95,6 +111,11 @@ export function ReceptionOverview() {
     setRegisterDraft(emptyPatientDraft);
   }
 
+  function closeEmergencyModal() {
+    setEmergencyOpen(false);
+    setEmergencyDraft(emptyEmergencyDraft);
+  }
+
   return (
     <>
       <DashboardDemo
@@ -102,11 +123,152 @@ export function ReceptionOverview() {
         title="Coordinate appointments, queues, and front-desk operations"
         description="Manage check-ins, appointment flow, and department coordination from one operational workspace."
         action={
-          <Button type="button" onClick={() => setRegisterOpen(true)}>
-            + Register Patient
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button type="button" variant="secondary" onClick={() => setEmergencyOpen(true)}>
+              Immediate Care Intake
+            </Button>
+            <Button type="button" onClick={() => setRegisterOpen(true)}>
+              + Register Patient
+            </Button>
+          </div>
         }
       />
+
+      <Modal
+        open={emergencyOpen}
+        title="Immediate Care Intake"
+        description="Capture only the urgent front-desk details needed to activate emergency priority flow."
+        onClose={closeEmergencyModal}
+      >
+        <form
+          className="space-y-4"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setEmergencySubmitting(true);
+            const result = await createEmergencyVisit({
+              patientName: emergencyDraft.patientName,
+              contactName: emergencyDraft.contactName || undefined,
+              contactPhone: emergencyDraft.contactPhone || undefined,
+              emergencyReason: emergencyDraft.emergencyReason,
+              severity: emergencyDraft.severity,
+              allergies: emergencyDraft.allergies || undefined,
+              medicalConditions: emergencyDraft.medicalConditions || undefined,
+              bloodGroup: emergencyDraft.bloodGroup || undefined,
+            });
+            setEmergencySubmitting(false);
+
+            if (!result.ok) {
+              pushToast(
+                "Unable to start emergency intake",
+                result.message ?? "Please review the emergency details and try again.",
+              );
+              return;
+            }
+
+            pushToast(
+              "Emergency priority activated",
+              "The visit was added to the immediate-care queue.",
+            );
+            closeEmergencyModal();
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium">Patient or visitor name</label>
+              <Input
+                value={emergencyDraft.patientName}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({ ...current, patientName: event.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Severity</label>
+              <Select
+                value={emergencyDraft.severity}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({
+                    ...current,
+                    severity: event.target.value as "Priority" | "Emergency",
+                  }))
+                }
+              >
+                <option value="Emergency">Emergency</option>
+                <option value="Priority">Priority</option>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Blood group</label>
+              <Input
+                value={emergencyDraft.bloodGroup}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({ ...current, bloodGroup: event.target.value }))
+                }
+                placeholder="If known"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium">Immediate care reason</label>
+              <Textarea
+                value={emergencyDraft.emergencyReason}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({
+                    ...current,
+                    emergencyReason: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Allergies</label>
+              <Input
+                value={emergencyDraft.allergies}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({ ...current, allergies: event.target.value }))
+                }
+                placeholder="If known"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Major medical conditions</label>
+              <Input
+                value={emergencyDraft.medicalConditions}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({
+                    ...current,
+                    medicalConditions: event.target.value,
+                  }))
+                }
+                placeholder="If known"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Contact name</label>
+              <Input
+                value={emergencyDraft.contactName}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({ ...current, contactName: event.target.value }))
+                }
+                placeholder="If available"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Contact phone</label>
+              <Input
+                value={emergencyDraft.contactPhone}
+                onChange={(event) =>
+                  setEmergencyDraft((current) => ({ ...current, contactPhone: event.target.value }))
+                }
+                placeholder="If available"
+              />
+            </div>
+          </div>
+
+          <Button type="submit" disabled={emergencySubmitting}>
+            {emergencySubmitting ? "Starting..." : "Start Emergency Flow"}
+          </Button>
+        </form>
+      </Modal>
 
       <Modal
         open={registerOpen}

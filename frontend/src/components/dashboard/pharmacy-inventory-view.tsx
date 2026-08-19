@@ -82,6 +82,12 @@ export function PharmacyInventoryView() {
   const lowStockCount = state.inventoryItems.filter(
     (item) => getInventoryStatus(item, today) === "Low Stock",
   ).length;
+  const outOfStockCount = state.inventoryItems.filter(
+    (item) => getInventoryStatus(item, today) === "Out of Stock",
+  ).length;
+  const nearExpiryCount = state.inventoryItems.filter(
+    (item) => getInventoryStatus(item, today) === "Near Expiry",
+  ).length;
   const expiredCount = state.inventoryItems.filter(
     (item) => getInventoryStatus(item, today) === "Expired",
   ).length;
@@ -105,14 +111,22 @@ export function PharmacyInventoryView() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <Card className="space-y-2">
           <p className="text-sm text-[color:var(--muted-foreground)]">Inventory batches</p>
           <p className="text-2xl font-semibold">{state.inventoryItems.length}</p>
         </Card>
         <Card className="space-y-2">
+          <p className="text-sm text-[color:var(--muted-foreground)]">Out of stock</p>
+          <p className="text-2xl font-semibold">{outOfStockCount}</p>
+        </Card>
+        <Card className="space-y-2">
           <p className="text-sm text-[color:var(--muted-foreground)]">Low stock</p>
           <p className="text-2xl font-semibold">{lowStockCount}</p>
+        </Card>
+        <Card className="space-y-2">
+          <p className="text-sm text-[color:var(--muted-foreground)]">Near expiry</p>
+          <p className="text-2xl font-semibold">{nearExpiryCount}</p>
         </Card>
         <Card className="space-y-2">
           <p className="text-sm text-[color:var(--muted-foreground)]">Expired batches</p>

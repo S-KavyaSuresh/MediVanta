@@ -70,7 +70,7 @@ export function PatientFamilyMembersView() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="My Dashboard"
+        eyebrow="Family Members"
         title="Family Members"
         description="Manage linked family profiles for dependent appointment and laboratory bookings."
       />

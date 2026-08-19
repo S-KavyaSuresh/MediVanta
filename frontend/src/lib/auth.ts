@@ -44,6 +44,11 @@ export type Capability =
   | "payment:record"
   | "inventory:view"
   | "inventory:manage"
+  | "supplier:view"
+  | "supplier:manage"
+  | "purchase-order:view"
+  | "purchase-order:manage"
+  | "doctor-rating:create"
   | "family-member:manage"
   | "medical-history:create"
   | "clinical-attachment:create"
@@ -64,6 +69,8 @@ export type Organization = {
   defaultLanguage?: string;
   emergencyServicesEnabled?: boolean;
   defaultConsultationSlotDurationMinutes?: number;
+  totalBeds?: number;
+  occupiedBeds?: number;
 };
 
 export const defaultOrganization: Organization = {
@@ -81,6 +88,8 @@ export const defaultOrganization: Organization = {
   defaultLanguage: "English",
   emergencyServicesEnabled: true,
   defaultConsultationSlotDurationMinutes: 30,
+  totalBeds: 180,
+  occupiedBeds: 124,
 };
 
 export type SafeUser = {
@@ -168,6 +177,7 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "medical-history:create",
     "clinical-attachment:create",
     "telemedicine:join",
+    "doctor-rating:create",
   ],
   doctor: [
     "appointment:view",
@@ -181,6 +191,8 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "prescription:create",
     "health-records:view",
     "health-records:create",
+    "medical-history:create",
+    "lab-request:create",
     "lab-reports:view",
     "notifications:view",
     "profile:view",
@@ -224,6 +236,10 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "prescription:dispense",
     "inventory:view",
     "inventory:manage",
+    "supplier:view",
+    "supplier:manage",
+    "purchase-order:view",
+    "purchase-order:manage",
     "notifications:view",
     "profile:view",
     "profile:update",
@@ -245,8 +261,11 @@ export const capabilitiesByRole: Record<UserRole, Capability[]> = {
     "settings:view",
     "billing:view",
     "billing:manage",
-    "payment:record",
     "inventory:view",
+    "supplier:view",
+    "supplier:manage",
+    "purchase-order:view",
+    "purchase-order:manage",
     "notifications:view",
     "profile:view",
     "profile:update",
@@ -438,6 +457,16 @@ export const dashboardNavByRole: Record<UserRole, DashboardNavItem[]> = {
   ],
   pharmacist: [
     { id: "pharmacy-overview", label: "Overview", href: "/dashboard/pharmacy" },
+    {
+      id: "pharmacy-suppliers",
+      label: "Suppliers",
+      href: "/dashboard/pharmacy/suppliers",
+    },
+    {
+      id: "pharmacy-purchase-orders",
+      label: "Purchase Orders",
+      href: "/dashboard/pharmacy/purchase-orders",
+    },
     {
       id: "pharmacy-inventory",
       label: "Inventory",

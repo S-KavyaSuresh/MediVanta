@@ -9,7 +9,7 @@ export default async function PatientConsultationPage({
   return (
     <TelemedicineSessionView
       appointmentId={appointmentId}
-      roleLabel="My Dashboard"
+      roleLabel="Consultation"
     />
   );
 }

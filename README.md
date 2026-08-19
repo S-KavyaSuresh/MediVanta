@@ -554,6 +554,14 @@ The data model covers areas such as:
 
 Database changes are managed using versioned SQL migrations.
 
+# 🗃️ Entity Relationship Diagram
+
+MediVanta uses a relational PostgreSQL schema to connect hospital operations while preserving clear ownership and relationships between clinical, operational, and financial records.
+
+The database connects core entities including users, patients, doctors, family members, appointments, medical records, prescriptions, laboratory workflows, medicine inventory, billing, notifications, sessions, and audit records.
+
+![MediVanta ER Diagram](docs/diagrams/er-diagram.png)
+
 ---
 
 # 📁 Project Structure
@@ -582,12 +590,8 @@ MediVanta/
 │
 ├── docs/
 │   ├── diagrams/
-│   │   ├── system-architecture.png
-│   │   ├── clinical-workflow.png
-│   │   ├── patient-healthcare-journey.png
-│   │   └── emergency-workflow.png
-│   │
-│   └── screenshots/
+│   ├── screenshots/
+|   └── demo/
 │
 └── README.md
 ```
@@ -667,20 +671,42 @@ Backend:  http://localhost:4000
 
 ---
 
-# 🧪 Demo Accounts
+# 🎥 Demo Video
 
-The development seed includes role-specific accounts for evaluating MediVanta.
+Watch the MediVanta end-to-end demonstration covering patient, doctor, reception, laboratory, pharmacy, emergency, and administrative workflows.
 
-| Role | Email | Workspace |
-|---|---|---|
-| Patient | `patient@medivanta.demo` | `/dashboard/patient` |
-| Doctor | `doctor@medivanta.demo` | `/dashboard/doctor` |
-| Receptionist | `receptionist@medivanta.demo` | `/dashboard/reception` |
-| Laboratory Staff | `lab@medivanta.demo` | `/dashboard/laboratory` |
-| Pharmacist | `pharmacist@medivanta.demo` | `/dashboard/pharmacy` |
-| Administrator | `admin@medivanta.demo` | `/dashboard/admin` |
+▶️ **[Watch the MediVanta Demo Video](DEMO_VIDEO_URL)**
 
-> Demo credentials are intended only for controlled development/evaluation environments and should never be reused for real healthcare deployments.
+The demonstration highlights:
+
+- Patient appointment and care journey
+- Doctor consultation and clinical workflows
+- Medical records and digital prescriptions
+- Laboratory request/report lifecycle
+- Pharmacy dispensing and inventory management
+- Billing and payments
+- Emergency priority workflow
+- Doctor assignment and availability
+- Hospital analytics and administration
+
+---
+
+# 🔐 Demo / Test Accounts
+
+MediVanta includes dedicated demonstration accounts for each supported hospital role so the complete role-based workflow can be evaluated.
+
+> **Password for all demo accounts:** `Medi2026!Care`
+
+| Role | Email | Password | Workspace |
+|---|---|---|---|
+| 👤 Patient | `patient@medivanta.demo` | `Medi2026!Care` | `/dashboard/patient` |
+| 🩺 Doctor | `doctor@medivanta.demo` | `Medi2026!Care` | `/dashboard/doctor` |
+| 🏢 Receptionist | `receptionist@medivanta.demo` | `Medi2026!Care` | `/dashboard/reception` |
+| 🧪 Laboratory Staff | `lab@medivanta.demo` | `Medi2026!Care` | `/dashboard/laboratory` |
+| 💊 Pharmacist | `pharmacist@medivanta.demo` | `Medi2026!Care` | `/dashboard/pharmacy` |
+| 🛡️ Administrator | `admin@medivanta.demo` | `Medi2026!Care` | `/dashboard/admin` |
+
+These accounts are seeded demonstration credentials intended exclusively for project evaluation and testing. They must not be reused for real healthcare deployments.
 
 ---
 

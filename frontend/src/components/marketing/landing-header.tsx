@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, Menu, Stethoscope, X } from "lucide-react";
+import { ChevronDown, Menu, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -8,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserAvatar } from "@/components/dashboard/user-avatar";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/providers/toast-provider";
 import { apiRequest } from "@/lib/api";
 import type { AuthSession } from "@/lib/auth";
 import { profilePathByRole } from "@/lib/auth";
@@ -19,6 +21,7 @@ export function LandingHeader({ session }: { session: AuthSession | null }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+  const { pushToast } = useToast();
   const profileRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -48,11 +51,21 @@ export function LandingHeader({ session }: { session: AuthSession | null }) {
   }, [profileOpen]);
 
   const handleLogout = async () => {
-    await apiRequest("/api/auth/logout", { method: "POST" });
-    setProfileOpen(false);
-    setOpen(false);
-    router.push("/");
-    router.refresh();
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" });
+      router.push("/");
+      router.refresh();
+    } catch (error) {
+      pushToast(
+        "Unable to sign out",
+        error instanceof Error
+          ? error.message
+          : "MediVanta could not complete sign out right now.",
+      );
+    } finally {
+      setProfileOpen(false);
+      setOpen(false);
+    }
   };
 
   const guestActions = (
@@ -114,9 +127,14 @@ export function LandingHeader({ session }: { session: AuthSession | null }) {
     <header className="sticky top-0 z-40 border-b border-[color:var(--border)] bg-[color:color-mix(in_oklab,var(--background)_90%,transparent)] backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-4 py-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex min-w-0 items-center gap-3">
-          <span className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-2 text-[color:var(--accent)] shadow-sm">
-            <Stethoscope className="h-5 w-5" />
-          </span>
+          <Image
+            src="/medivanta-icon.png"
+            alt=""
+            width={36}
+            height={36}
+            className="h-9 w-9 shrink-0 rounded-xl object-contain"
+            priority
+          />
           <div className="min-w-0">
             <p className="text-base font-semibold tracking-tight">MediVanta</p>
             <p className="truncate text-xs text-[color:var(--muted-foreground)]">

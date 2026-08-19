@@ -9,6 +9,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "MediVanta",
   description: "Smarter Hospitals. Seamless Care.",
+  icons: {
+    icon: "/medivanta-icon.png",
+    shortcut: "/medivanta-icon.png",
+    apple: "/medivanta-icon.png",
+  },
 };
 
 const themeInitScript = `try{var theme=localStorage.getItem('medivanta-theme');var nextTheme=theme==='dark'?'dark':'light';document.documentElement.classList.toggle('dark',nextTheme==='dark');document.documentElement.dataset.theme=nextTheme;}catch(e){document.documentElement.classList.remove('dark');document.documentElement.dataset.theme='light';}`;

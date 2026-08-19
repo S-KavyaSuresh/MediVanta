@@ -1,12 +1,5 @@
-import { BillingView } from "@/components/dashboard/billing-view";
+import { AdminBillingDayListView } from "@/components/dashboard/admin-billing-day-list-view";
 
 export default function AdminBillingPage() {
-  return (
-    <BillingView
-      eyebrow="Administration"
-      title="Billing"
-      description="Monitor billing activity across the organization and record payments when required."
-      canManagePayments
-    />
-  );
+  return <AdminBillingDayListView />;
 }

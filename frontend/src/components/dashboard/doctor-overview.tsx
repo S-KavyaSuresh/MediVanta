@@ -1,69 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ClipboardList, Clock3, Stethoscope, Users } from "lucide-react";
 
 import { useAuth } from "@/components/providers/auth-provider";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
-import { useToast } from "@/components/providers/toast-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
-import { Select } from "@/components/ui/select";
 import { StatCard } from "@/components/ui/stat-card";
+import { apiRequest } from "@/lib/api";
 import { getCurrentLocalDateIso } from "@/lib/hospital-data";
-import type { DoctorRecord } from "@/lib/hospital-data";
-
-const SELF_MANAGED_STATUSES = ["Available", "On break", "Off duty"] as const;
-
-function DoctorStatusControl({ doctor }: { doctor: DoctorRecord }) {
-  const { setDoctorStatus } = useHospitalData();
-  const { pushToast } = useToast();
-  const [updating, setUpdating] = useState(false);
-  const isAutomaticStatus = !SELF_MANAGED_STATUSES.includes(
-    doctor.status as (typeof SELF_MANAGED_STATUSES)[number],
-  );
-  const selectedValue = isAutomaticStatus ? "Available" : doctor.status;
-
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      {isAutomaticStatus ? <StatusBadge status={doctor.status} /> : null}
-      <div className="w-44">
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
-          Your status
-        </label>
-        <Select
-          value={selectedValue}
-          disabled={updating}
-          onChange={async (event) => {
-            const nextStatus = event.target.value as (typeof SELF_MANAGED_STATUSES)[number];
-            setUpdating(true);
-            const result = await setDoctorStatus(doctor.id, nextStatus);
-            setUpdating(false);
-
-            if (!result.ok) {
-              pushToast("Unable to update status", result.message ?? "Please try again.");
-              return;
-            }
-
-            pushToast("Status updated", `You are now marked as ${nextStatus}.`);
-          }}
-        >
-          {SELF_MANAGED_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </Select>
-      </div>
-    </div>
-  );
-}
 
 export function DoctorOverview() {
   const { session } = useAuth();
   const { activeQueueEntries, state } = useHospitalData();
+  const [ratingSummary, setRatingSummary] = useState<{
+    averageRating: number | null;
+    ratingCount: number;
+  }>({ averageRating: null, ratingCount: 0 });
   const doctor = state.doctors.find((item) => item.id === session.user.doctorId);
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -86,17 +42,46 @@ export function DoctorOverview() {
       left.appointmentTime.localeCompare(right.appointmentTime),
     )[0];
 
+  useEffect(() => {
+    let active = true;
+
+    const loadRatingSummary = async () => {
+      if (!session.user.doctorId) {
+        return;
+      }
+      try {
+        const response = await apiRequest<{
+          averageRating: number | null;
+          ratingCount: number;
+        }>(`/api/hospital/doctors/${session.user.doctorId}/rating-summary`);
+        if (active) {
+          setRatingSummary({
+            averageRating: response.averageRating,
+            ratingCount: response.ratingCount,
+          });
+        }
+      } catch {
+        if (active) {
+          setRatingSummary({ averageRating: null, ratingCount: 0 });
+        }
+      }
+    };
+
+    void loadRatingSummary();
+
+    return () => {
+      active = false;
+    };
+  }, [session.user.doctorId]);
+
   return (
     <div className="space-y-6 md:space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <PageHeader
-          eyebrow="Doctor Workspace"
-          title="Today&apos;s consultations and patient flow"
-          description="Review your schedule, assigned patients, and queue activity from one focused clinical workspace."
-        />
-        {doctor ? <DoctorStatusControl doctor={doctor} /> : null}
-      </div>
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+      <PageHeader
+        eyebrow="Doctor Workspace"
+        title="Today&apos;s consultations and patient flow"
+        description="Review your schedule, assigned patients, and queue activity from one focused clinical workspace."
+      />
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Today's appointments"
           value={String(todaysAppointments.length)}
@@ -119,6 +104,20 @@ export function DoctorOverview() {
           label="Assigned patients"
           value={String(new Set(todaysAppointments.map((item) => item.patientName)).size)}
           delta="Unique patients on your current schedule"
+          icon={Users}
+        />
+        <StatCard
+          label="Doctor rating"
+          value={
+            ratingSummary.averageRating !== null
+              ? `${ratingSummary.averageRating.toFixed(1)}/5`
+              : "Not yet rated"
+          }
+          delta={
+            ratingSummary.ratingCount > 0
+              ? `${ratingSummary.ratingCount} patient rating${ratingSummary.ratingCount === 1 ? "" : "s"}`
+              : "No completed patient ratings yet"
+          }
           icon={Users}
         />
       </div>

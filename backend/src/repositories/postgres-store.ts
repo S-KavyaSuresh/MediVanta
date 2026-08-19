@@ -200,6 +200,8 @@ function mapOrganization(
     defaultConsultationSlotDurationMinutes: settingsRow
       ? asNumber(settingsRow.default_consultation_slot_duration_minutes)
       : undefined,
+    totalBeds: settingsRow ? asNumber(settingsRow.total_beds) : undefined,
+    occupiedBeds: settingsRow ? asNumber(settingsRow.occupied_beds) : undefined,
   };
 }
 
@@ -821,9 +823,10 @@ export async function loadOrganizationById(organizationId: string) {
 export async function insertLabRequest(request: LabRequestRecord) {
   await query(
     `insert into lab_requests (
-      id, organization_id, patient_id, hospital_id, patient_name, family_member_id, test_id,
-      test_name, department_id, requested_date, requested_time, status, created_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      id, organization_id, patient_id, hospital_id, patient_name, family_member_id, appointment_id,
+      test_id, test_name, department_id, requested_date, requested_time, clinical_notes,
+      ordered_by_user_id, status, created_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       request.id,
       request.organizationId,
@@ -831,11 +834,14 @@ export async function insertLabRequest(request: LabRequestRecord) {
       request.hospitalId,
       request.patientName,
       request.familyMemberId ?? null,
+      request.appointmentId ?? null,
       request.testId,
       request.testName,
       request.departmentId,
       request.requestedDate,
       request.requestedTime,
+      request.clinicalNotes ?? null,
+      request.orderedByUserId ?? null,
       request.status,
       request.createdAt,
     ],
@@ -942,6 +948,8 @@ export async function upsertHospitalSettings(input: {
   labSlotCapacity: number;
   configuredSupportLines: number;
   sessions: BookingSessionCapacityRecord[];
+  totalBeds: number;
+  occupiedBeds: number;
 }) {
   await withTransaction(async (client) => {
     await client.query(
@@ -982,8 +990,8 @@ export async function upsertHospitalSettings(input: {
       `insert into hospital_settings (
         organization_id, doctor_slot_capacity, default_max_appointments_per_session,
         lab_slot_capacity, configured_support_lines, emergency_services_enabled,
-        default_consultation_slot_duration_minutes, updated_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, now())
+        default_consultation_slot_duration_minutes, total_beds, occupied_beds, updated_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
       on conflict (organization_id) do update set
         doctor_slot_capacity = excluded.doctor_slot_capacity,
         default_max_appointments_per_session = excluded.default_max_appointments_per_session,
@@ -991,6 +999,8 @@ export async function upsertHospitalSettings(input: {
         configured_support_lines = excluded.configured_support_lines,
         emergency_services_enabled = excluded.emergency_services_enabled,
         default_consultation_slot_duration_minutes = excluded.default_consultation_slot_duration_minutes,
+        total_beds = excluded.total_beds,
+        occupied_beds = excluded.occupied_beds,
         updated_at = now()`,
       [
         input.organization.id,
@@ -1000,6 +1010,8 @@ export async function upsertHospitalSettings(input: {
         input.configuredSupportLines,
         input.organization.emergencyServicesEnabled ?? true,
         input.organization.defaultConsultationSlotDurationMinutes ?? 30,
+        input.totalBeds,
+        input.occupiedBeds,
       ],
     );
 
@@ -1250,34 +1262,6 @@ export async function updateQueueEntryById(input: {
          priority = coalesce($5, priority)
      where id = $1 and organization_id = $2`,
     [input.queueEntryId, input.organizationId, input.status, input.updatedAt, input.priority ?? null],
-  );
-}
-
-export async function updateQueueEntryDoctor(input: {
-  queueEntryId: string;
-  organizationId: string;
-  doctorId: string;
-  updatedAt: string;
-}) {
-  await query(
-    `update queue_entries
-     set doctor_id = $3,
-         updated_at = $4
-     where id = $1 and organization_id = $2`,
-    [input.queueEntryId, input.organizationId, input.doctorId, input.updatedAt],
-  );
-}
-
-export async function updateDoctorStatusById(input: {
-  doctorId: string;
-  organizationId: string;
-  status: DoctorRecord["status"];
-}) {
-  await query(
-    `update doctors
-     set status = $3
-     where id = $1 and organization_id = $2`,
-    [input.doctorId, input.organizationId, input.status],
   );
 }
 
@@ -1568,9 +1552,9 @@ export async function insertInvoice(invoice: InvoiceRecord) {
   await query(
     `insert into invoices (
       id, invoice_number, organization_id, hospital_id, patient_id, patient_name, family_member_id, source_type,
-      source_id, due_date, subtotal_cents, total_cents, amount_paid_cents, amount_due_cents,
+      source_id, due_date, subtotal_cents, discount_cents, tax_cents, total_cents, amount_paid_cents, amount_due_cents,
       payment_status, created_at, updated_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
     on conflict do nothing`,
     [
       invoice.id,
@@ -1584,6 +1568,8 @@ export async function insertInvoice(invoice: InvoiceRecord) {
       invoice.sourceId ?? null,
       invoice.dueDate ?? null,
       invoice.subtotalCents,
+      invoice.discountCents,
+      invoice.taxCents,
       invoice.totalCents,
       invoice.amountPaidCents,
       invoice.amountDueCents,
@@ -2291,11 +2277,14 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       organizationId,
       patientName: String(row.patient_name),
       familyMemberId: asString(row.family_member_id),
+      appointmentId: asString(row.appointment_id),
       testId: String(row.test_id),
       testName: String(row.test_name),
       departmentId: String(row.department_id),
       requestedDate: String(row.requested_date),
       requestedTime: String(row.requested_time),
+      clinicalNotes: asString(row.clinical_notes),
+      orderedByUserId: asString(row.ordered_by_user_id),
       status: row.status as LabRequestRecord["status"],
       createdAt: new Date(String(row.created_at)).toISOString(),
     })),
@@ -2338,6 +2327,8 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       createdAt: new Date(String(row.created_at)).toISOString(),
       dueDate: asString(row.due_date),
       subtotalCents: asNumber(row.subtotal_cents),
+      discountCents: asNumber(row.discount_cents ?? 0),
+      taxCents: asNumber(row.tax_cents ?? 0),
       totalCents: asNumber(row.total_cents),
       amountPaidCents: asNumber(row.amount_paid_cents),
       amountDueCents: asNumber(row.amount_due_cents),
@@ -2473,12 +2464,12 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
       ],
     );
 
-  await client.query(
+    await client.query(
       `insert into hospital_settings (
         organization_id, doctor_slot_capacity, default_max_appointments_per_session,
         lab_slot_capacity, configured_support_lines, emergency_services_enabled,
-        default_consultation_slot_duration_minutes, updated_at
-      ) values ($1, $2, $3, $4, $5, $6, $7, now())
+        default_consultation_slot_duration_minutes, total_beds, occupied_beds, updated_at
+      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
       on conflict (organization_id) do update set
         doctor_slot_capacity = excluded.doctor_slot_capacity,
         default_max_appointments_per_session = excluded.default_max_appointments_per_session,
@@ -2486,6 +2477,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         configured_support_lines = excluded.configured_support_lines,
         emergency_services_enabled = excluded.emergency_services_enabled,
         default_consultation_slot_duration_minutes = excluded.default_consultation_slot_duration_minutes,
+        total_beds = excluded.total_beds,
+        occupied_beds = excluded.occupied_beds,
         updated_at = now()`,
       [
         state.organization.id,
@@ -2495,6 +2488,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         state.configuredSupportLines,
         state.organization.emergencyServicesEnabled ?? true,
         state.organization.defaultConsultationSlotDurationMinutes ?? 30,
+        state.organization.totalBeds ?? 0,
+        state.organization.occupiedBeds ?? 0,
       ],
     );
 
@@ -2611,18 +2606,39 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
   await insertRows(
       client,
       "lab_requests",
-      ["id", "organization_id", "patient_id", "hospital_id", "patient_name", "test_id", "test_name", "department_id", "requested_date", "requested_time", "status", "created_at"],
+      [
+        "id",
+        "organization_id",
+        "patient_id",
+        "hospital_id",
+        "patient_name",
+        "family_member_id",
+        "appointment_id",
+        "test_id",
+        "test_name",
+        "department_id",
+        "requested_date",
+        "requested_time",
+        "clinical_notes",
+        "ordered_by_user_id",
+        "status",
+        "created_at",
+      ],
       state.labRequests.map((request) => [
         request.id,
         state.organization.id,
         request.patientId,
         request.hospitalId,
         request.patientName,
+        request.familyMemberId ?? null,
+        request.appointmentId ?? null,
         request.testId,
         request.testName,
         request.departmentId,
         request.requestedDate,
         request.requestedTime,
+        request.clinicalNotes ?? null,
+        request.orderedByUserId ?? null,
         request.status,
         request.createdAt,
       ]),
@@ -2819,6 +2835,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         "source_id",
         "due_date",
         "subtotal_cents",
+        "discount_cents",
+        "tax_cents",
         "total_cents",
         "amount_paid_cents",
         "amount_due_cents",
@@ -2837,6 +2855,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         invoice.sourceId ?? null,
         invoice.dueDate ?? null,
         invoice.subtotalCents,
+        invoice.discountCents,
+        invoice.taxCents,
         invoice.totalCents,
         invoice.amountPaidCents,
         invoice.amountDueCents,

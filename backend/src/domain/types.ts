@@ -44,6 +44,11 @@ export type Capability =
   | "payment:record"
   | "inventory:view"
   | "inventory:manage"
+  | "supplier:view"
+  | "supplier:manage"
+  | "purchase-order:view"
+  | "purchase-order:manage"
+  | "doctor-rating:create"
   | "family-member:manage"
   | "medical-history:create"
   | "clinical-attachment:create"
@@ -64,6 +69,8 @@ export type OrganizationRecord = {
   defaultLanguage?: string;
   emergencyServicesEnabled?: boolean;
   defaultConsultationSlotDurationMinutes?: number;
+  totalBeds?: number;
+  occupiedBeds?: number;
 };
 
 export type DepartmentStatus =
@@ -105,8 +112,11 @@ export type InvoiceCategory = "Consultation" | "Laboratory" | "Medicine" | "Othe
 
 export type PaymentMethod =
   | "Cash"
+  | "Credit Card"
+  | "Debit Card"
   | "Card"
   | "UPI"
+  | "Net Banking"
   | "Bank Transfer"
   | "Demo Payment";
 
@@ -235,11 +245,14 @@ export type LabRequestRecord = {
   organizationId: string;
   patientName: string;
   familyMemberId?: string;
+  appointmentId?: string;
   testId: string;
   testName: string;
   departmentId: string;
   requestedDate: string;
   requestedTime: string;
+  clinicalNotes?: string;
+  orderedByUserId?: string;
   status: LabRequestStatus;
   createdAt: string;
 };
@@ -365,12 +378,84 @@ export type InvoiceRecord = {
   createdAt: string;
   dueDate?: string;
   subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
   totalCents: number;
   amountPaidCents: number;
   amountDueCents: number;
   paymentStatus: InvoiceStatus;
   items: InvoiceItemRecord[];
   payments: PaymentRecord[];
+};
+
+export type SupplierStatus = "Active" | "Inactive";
+
+export type SupplierRecord = {
+  id: string;
+  organizationId: string;
+  supplierName: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  status: SupplierStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PurchaseOrderStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
+
+export type PurchaseOrderItemRecord = {
+  id: string;
+  purchaseOrderId: string;
+  organizationId: string;
+  medicineId?: string;
+  medicineName: string;
+  quantity: number;
+  unitCostCents: number;
+  lineTotalCents: number;
+  receivedQuantity?: number;
+  receivedUnitCostCents?: number;
+  receivedBatchNumber?: string;
+  receivedExpiryDate?: string;
+  displayOrder: number;
+};
+
+export type PurchaseOrderRecord = {
+  id: string;
+  purchaseOrderNumber: string;
+  organizationId: string;
+  supplierId: string;
+  supplierName?: string;
+  orderDate: string;
+  expectedDate?: string;
+  status: PurchaseOrderStatus;
+  notes?: string;
+  createdBy?: {
+    id?: string;
+    name?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+  receivedAt?: string;
+  receivedBy?: {
+    id?: string;
+    name?: string;
+  };
+  items: PurchaseOrderItemRecord[];
+};
+
+export type DoctorRatingRecord = {
+  id: string;
+  organizationId: string;
+  appointmentId: string;
+  patientId: string;
+  familyMemberId?: string;
+  doctorId: string;
+  rating: number;
+  reviewComment?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type InventoryItemRecord = {
@@ -666,13 +751,13 @@ export type AppointmentDraft = {
 };
 
 export type LabRequestDraft = {
+  patientId?: string;
+  appointmentId?: string;
   testId: string;
   requestedDate: string;
   requestedTime: string;
   familyMemberId?: string;
-  // Only used when a doctor orders a lab test on behalf of one of their patients.
-  patientId?: string;
-  appointmentId?: string;
+  clinicalNotes?: string;
 };
 
 export type EmergencyVisitDraft = {
@@ -761,6 +846,7 @@ export type FamilyMemberDraft = {
 };
 
 export type MedicalHistoryEntryDraft = {
+  patientId?: string;
   category: MedicalHistoryEntryCategory;
   title: string;
   details?: string;
@@ -769,6 +855,7 @@ export type MedicalHistoryEntryDraft = {
 };
 
 export type ClinicalAttachmentDraft = {
+  patientId?: string;
   label: string;
   fileName: string;
   contentType: "application/pdf" | "image/png" | "image/jpeg";

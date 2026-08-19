@@ -38,6 +38,8 @@ function buildSettingsDraft({
     eveningSessionCapacity:
       bookingCapacity.sessions.find((session) => session.id === "evening")?.maxAppointments ?? 1,
     defaultLabSlotCapacity: bookingCapacity.labSlotCapacity,
+    totalBeds: organization.totalBeds ?? 0,
+    occupiedBeds: organization.occupiedBeds ?? 0,
   };
 }
 
@@ -58,6 +60,7 @@ type SettingsFieldProps = {
   value: string | number;
   error?: string;
   type?: "text" | "email" | "tel" | "number";
+  min?: number;
   placeholder?: string;
   onChange: (value: string) => void;
 };
@@ -69,6 +72,7 @@ function SettingsField({
   value,
   error,
   type = "text",
+  min,
   placeholder,
   onChange,
 }: SettingsFieldProps) {
@@ -83,7 +87,7 @@ function SettingsField({
         value={value}
         disabled={!editing}
         placeholder={placeholder}
-        min={type === "number" ? 1 : undefined}
+        min={type === "number" ? (min ?? 1) : undefined}
         onChange={(event) => onChange(event.target.value)}
       />
       {error ? <p className="text-sm text-rose-600 dark:text-rose-300">{error}</p> : null}
@@ -289,6 +293,46 @@ export default function AdminSettingsPage() {
 
         <Card className="space-y-5">
           <div className="space-y-1">
+            <h2 className="text-xl font-semibold">Bed Capacity</h2>
+            <p className="text-sm text-[color:var(--muted-foreground)]">
+              Maintain current bed availability for hospital operations and administrative visibility.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <SettingsField
+              field="totalBeds"
+              label="Total Beds"
+              editing={editing}
+              value={effectiveDraft.totalBeds}
+              error={fieldErrors.totalBeds}
+              type="number"
+              min={0}
+              onChange={(value) => updateField("totalBeds", Number(value) || 0)}
+            />
+            <SettingsField
+              field="occupiedBeds"
+              label="Occupied Beds"
+              editing={editing}
+              value={effectiveDraft.occupiedBeds}
+              error={fieldErrors.occupiedBeds}
+              type="number"
+              min={0}
+              onChange={(value) => updateField("occupiedBeds", Number(value) || 0)}
+            />
+            <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] px-4 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-foreground)]">
+                Available Beds
+              </p>
+              <p className="mt-2 text-2xl font-semibold">
+                {Math.max(0, effectiveDraft.totalBeds - effectiveDraft.occupiedBeds)}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="space-y-5">
+          <div className="space-y-1">
             <h2 className="text-xl font-semibold">Preferences</h2>
             <p className="text-sm text-[color:var(--muted-foreground)]">
               Manage timezone, language, and emergency service availability.
@@ -411,6 +455,8 @@ export default function AdminSettingsPage() {
                     emergencyServicesEnabled: draft.emergencyServicesEnabled,
                     defaultConsultationSlotDurationMinutes:
                       draft.defaultConsultationSlotDurationMinutes,
+                    totalBeds: draft.totalBeds,
+                    occupiedBeds: draft.occupiedBeds,
                   },
                 });
                 setFieldErrors({});

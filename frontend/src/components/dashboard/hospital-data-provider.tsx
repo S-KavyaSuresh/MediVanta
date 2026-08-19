@@ -157,7 +157,6 @@ type HospitalMutationPatch = {
   medicalHistoryEntries?: HospitalState["medicalHistoryEntries"];
   clinicalAttachments?: HospitalState["clinicalAttachments"];
   telemedicineSessions?: HospitalState["telemedicineSessions"];
-  doctors?: HospitalState["doctors"];
   meta?: HospitalMeta;
 };
 
@@ -189,14 +188,6 @@ type HospitalContextValue = {
     queueEntryId: string,
     priority: QueuePriority,
   ) => Promise<{ ok: boolean; message?: string }>;
-  assignQueueDoctor: (
-    queueEntryId: string,
-    doctorId: string,
-  ) => Promise<{ ok: boolean; message?: string }>;
-  setDoctorStatus: (
-    doctorId: string,
-    status: "Available" | "On break" | "Off duty",
-  ) => Promise<{ ok: boolean; message?: string }>;
   fetchPatientJourney: (token: string) => Promise<{
     ok: boolean;
     journey?: PatientJourneyRecord;
@@ -205,7 +196,6 @@ type HospitalContextValue = {
   fetchDoctorHandoff: (input: {
     appointmentId?: string;
     patientId?: string;
-    familyMemberId?: string;
   }) => Promise<{
     ok: boolean;
     handoff?: DoctorHandoffSummary;
@@ -314,6 +304,15 @@ type HospitalContextValue = {
     invoiceId: string,
     draft: PaymentDraft,
   ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  updateInvoiceAdjustments: (
+    invoiceId: string,
+    draft: {
+      discount: number;
+      discountType: "Amount" | "Percentage";
+      tax: number;
+      taxType: "Amount" | "Percentage";
+    },
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
   createInventoryItem: (
     draft: InventoryItemDraft,
   ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
@@ -366,6 +365,7 @@ type HospitalApiResponse = {
   meta?: HospitalMeta;
   session?: AuthSession;
   patch?: HospitalMutationPatch;
+  invoice?: HospitalState["invoices"][number];
   analytics?: OperationalAnalytics;
   journey?: PatientJourneyRecord;
   handoff?: DoctorHandoffSummary;
@@ -436,7 +436,26 @@ export function HospitalDataProvider({
             current.telemedicineSessions ?? [],
             response.patch?.telemedicineSessions,
           ),
-          doctors: mergeById(current.doctors ?? [], response.patch?.doctors),
+        }),
+      );
+    } else if (response.invoice) {
+      const updatedInvoice = response.invoice;
+      setState((current) =>
+        normalizeHospitalState({
+          ...current,
+          invoices: current.invoices.map((invoice) =>
+            invoice.id === updatedInvoice.id
+              ? {
+                  ...invoice,
+                  ...updatedInvoice,
+                  items: updatedInvoice.items.length > 0 ? updatedInvoice.items : invoice.items,
+                  payments:
+                    updatedInvoice.payments.length > 0
+                      ? updatedInvoice.payments
+                      : invoice.payments,
+                }
+              : invoice,
+          ),
         }),
       );
     }
@@ -558,56 +577,6 @@ export function HospitalDataProvider({
     [updateFromResponse],
   );
 
-  const assignQueueDoctor = useCallback(
-    async (queueEntryId: string, doctorId: string) => {
-      try {
-        const response = await apiRequest<HospitalApiResponse>(
-          `/api/hospital/queue/${queueEntryId}/doctor`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({ doctorId }),
-          },
-        );
-        updateFromResponse(response);
-        return { ok: true };
-      } catch (error) {
-        return {
-          ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "The doctor could not be assigned.",
-        };
-      }
-    },
-    [updateFromResponse],
-  );
-
-  const setDoctorStatus = useCallback(
-    async (doctorId: string, status: "Available" | "On break" | "Off duty") => {
-      try {
-        const response = await apiRequest<HospitalApiResponse>(
-          `/api/hospital/doctors/${doctorId}/status`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({ status }),
-          },
-        );
-        updateFromResponse(response);
-        return { ok: true };
-      } catch (error) {
-        return {
-          ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "The status could not be updated.",
-        };
-      }
-    },
-    [updateFromResponse],
-  );
-
   const fetchPatientJourney = useCallback(async (token: string) => {
     try {
       const response = await apiRequest<HospitalApiResponse>(
@@ -626,7 +595,7 @@ export function HospitalDataProvider({
   }, []);
 
   const fetchDoctorHandoff = useCallback(
-    async (input: { appointmentId?: string; patientId?: string; familyMemberId?: string }) => {
+    async (input: { appointmentId?: string; patientId?: string }) => {
       try {
         const search = new URLSearchParams();
         if (input.appointmentId) {
@@ -634,9 +603,6 @@ export function HospitalDataProvider({
         }
         if (input.patientId) {
           search.set("patientId", input.patientId);
-        }
-        if (input.familyMemberId) {
-          search.set("familyMemberId", input.familyMemberId);
         }
 
         const response = await apiRequest<HospitalApiResponse>(
@@ -1031,6 +997,34 @@ export function HospitalDataProvider({
     [updateFromResponse],
   );
 
+  const updateInvoiceAdjustments = useCallback(
+    async (
+      invoiceId: string,
+      draft: {
+        discount: number;
+        discountType: "Amount" | "Percentage";
+        tax: number;
+        taxType: "Amount" | "Percentage";
+      },
+    ) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/invoices/${invoiceId}/adjustments`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(draft),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return { ok: false, message: maybeError.message, fieldErrors: maybeError.fieldErrors };
+      }
+    },
+    [updateFromResponse],
+  );
+
   const createInventoryItem = useCallback(
     async (draft: InventoryItemDraft) => {
       try {
@@ -1282,8 +1276,6 @@ export function HospitalDataProvider({
       fetchOperationalAnalytics,
       createEmergencyVisit,
       updateQueuePriority,
-      assignQueueDoctor,
-      setDoctorStatus,
       fetchPatientJourney,
       fetchDoctorHandoff,
       createDepartment,
@@ -1303,6 +1295,7 @@ export function HospitalDataProvider({
       updateHospitalSettings,
       dispensePrescription,
       recordInvoicePayment,
+      updateInvoiceAdjustments,
       createInventoryItem,
       updateInventoryItem,
       markNotificationRead,
@@ -1343,6 +1336,7 @@ export function HospitalDataProvider({
       updateHospitalSettings,
       dispensePrescription,
       recordInvoicePayment,
+      updateInvoiceAdjustments,
       createInventoryItem,
       updateInventoryItem,
       markNotificationRead,
@@ -1358,8 +1352,6 @@ export function HospitalDataProvider({
       setAppointmentStatus,
       state,
       updateQueuePriority,
-      assignQueueDoctor,
-      setDoctorStatus,
       updateLabRequestStatus,
       updateAppointment,
     ],

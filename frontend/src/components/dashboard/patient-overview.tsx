@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bell, CalendarClock, FileHeart, ReceiptText } from "lucide-react";
@@ -11,17 +12,16 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
+import {
+  getPatientUpcomingAppointments,
+  type PatientJourneyRecord,
+} from "@/lib/hospital-data";
 
 export function PatientOverview() {
   const { fetchPatientJourney, getDepartmentName, getDoctorName, state } = useHospitalData();
-  const appointments = [...state.appointments].sort((left, right) =>
-    `${left.appointmentDate}${left.appointmentTime}`.localeCompare(
-      `${right.appointmentDate}${right.appointmentTime}`,
-    ),
-  );
-  const upcomingAppointment = appointments.find(
-    (appointment) => appointment.status !== "Completed" && appointment.status !== "Cancelled",
-  );
+  const now = new Date();
+  const upcomingAppointments = getPatientUpcomingAppointments(state.appointments, now);
+  const upcomingAppointment = upcomingAppointments[0];
   const activeQueueEntry = upcomingAppointment
     ? state.queueEntries.find((entry) => entry.appointmentId === upcomingAppointment.id)
     : undefined;
@@ -35,9 +35,10 @@ export function PatientOverview() {
   const activeFamilyMemberName = upcomingAppointment?.familyMemberId
     ? state.familyMembers?.find((member) => member.id === upcomingAppointment.familyMemberId)?.fullName
     : null;
-  const journey = upcomingAppointment
-    ? state.patientJourneys?.find((item) => item.appointmentId === upcomingAppointment.id)
-    : undefined;
+  const activeJourney = state.patientJourneys?.find((item) =>
+    upcomingAppointment ? item.appointmentId === upcomingAppointment.id : false,
+  );
+  const journey: PatientJourneyRecord | undefined = activeJourney;
   const [journeyStatus, setJourneyStatus] = useState<{
     loading: boolean;
     currentStep?: string;
@@ -46,6 +47,8 @@ export function PatientOverview() {
     departmentName?: string;
     doctorName?: string;
   }>({ loading: false });
+  const [journeyLink, setJourneyLink] = useState("");
+  const [journeyQr, setJourneyQr] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -85,10 +88,44 @@ export function PatientOverview() {
     };
   }, [fetchPatientJourney, journey?.token]);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadQr = async () => {
+      if (!journey?.token || typeof window === "undefined") {
+        setJourneyLink("");
+        setJourneyQr("");
+        return;
+      }
+
+      const nextLink = `${window.location.origin}/dashboard/patient/journey?token=${encodeURIComponent(journey.token)}`;
+      setJourneyLink(nextLink);
+      const QRCode = await import("qrcode");
+      const dataUrl = await QRCode.toDataURL(nextLink, {
+        margin: 1,
+        width: 160,
+        color: {
+          dark: "#0f172a",
+          light: "#ffffff",
+        },
+      });
+
+      if (active) {
+        setJourneyQr(dataUrl);
+      }
+    };
+
+    void loadQr();
+
+    return () => {
+      active = false;
+    };
+  }, [journey?.token]);
+
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="My Dashboard"
+        eyebrow="Patient Dashboard"
         title="Your appointments, records, and hospital updates"
         description="Keep track of your upcoming visit, care documents, and the latest progress connected to your account."
       />
@@ -96,9 +133,13 @@ export function PatientOverview() {
         <StatCard
           label="Upcoming appointments"
           value={String(
-            appointments.filter((appointment) => appointment.status === "Scheduled").length,
+            upcomingAppointments.length,
           )}
-          delta={upcomingAppointment ? upcomingAppointment.id : "No scheduled visit"}
+          delta={
+            upcomingAppointment
+              ? `${upcomingAppointment.appointmentDate} at ${upcomingAppointment.appointmentTime}`
+              : "No upcoming appointments"
+          }
           icon={CalendarClock}
         />
         <StatCard
@@ -196,14 +237,44 @@ export function PatientOverview() {
                   <p>Doctor: {journeyStatus.doctorName ?? journey.doctorName ?? "Doctor pending"}</p>
                   <p>Queue estimate: {journeyStatus.estimatedWait ?? journey.estimatedWait ?? "Not available yet"}</p>
                 </div>
+                <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
+                  <p className="text-sm font-semibold">Hospital Journey QR</p>
+                  <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                    Scan to view your hospital journey.
+                  </p>
+                  {journeyQr ? (
+                    <img
+                      src={journeyQr}
+                      alt="Hospital journey QR"
+                      className="mt-4 h-40 w-40 rounded-2xl border border-[color:var(--border)] bg-white p-3"
+                    />
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={async () => {
+                        if (!journeyLink) {
+                          return;
+                        }
+                        await navigator.clipboard.writeText(journeyLink);
+                      }}
+                    >
+                      Copy Journey Link
+                    </Button>
+                    <Link href={`/dashboard/patient/journey?token=${encodeURIComponent(journey.token)}`}>
+                      <Button type="button">View Journey</Button>
+                    </Link>
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>
         </Card>
       ) : (
         <EmptyState
-          title="No appointments linked to this account"
-          description="When a visit is scheduled for you, appointment details and related updates will appear here."
+          title="No upcoming appointment"
+          description="When a future visit is scheduled or an active visit is in progress, appointment details and related updates will appear here."
         />
       )}
     </div>

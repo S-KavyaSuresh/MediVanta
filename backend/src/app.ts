@@ -1,8 +1,10 @@
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import swaggerUi from "swagger-ui-express";
 
 import { env } from "./config/env.js";
+import { openApiDocument } from "./docs/openapi.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { requireTrustedOrigin } from "./middleware/origin-check.js";
@@ -36,6 +38,11 @@ app.get("/", (_request, response) => {
   });
 });
 
+app.get("/api/openapi.json", (_request, response) => {
+  response.json(openApiDocument);
+});
+
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
 app.use("/api", apiRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -10,7 +10,6 @@ import type {
   ClinicalAttachmentRecord,
   DepartmentRecord,
   DepartmentStatus,
-  DoctorRecord,
   DoctorStatus,
   EmergencyVisitDraft,
   EmergencyVisitRecord,
@@ -75,7 +74,6 @@ import {
   upsertHospitalSettings,
   updateAppointmentRecord,
   updateAppointmentStatusById,
-  updateDoctorStatusById,
   updateInventoryItemRecord,
   updateLabRequestStatusById,
   updateMedicalRecordDetails,
@@ -83,13 +81,20 @@ import {
   updateEmergencyVisitRecord,
   updatePatientJourneyRecord,
   updateQueueEntryById,
-  updateQueueEntryDoctor,
   updateQueueEntriesForAppointment,
   updateQueueStatusesByAppointment,
 } from "../repositories/postgres-store.js";
 
 function asString(value: unknown) {
   return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown) {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  return Number(value);
 }
 
 function getCurrentLocalTimeValue(now = new Date()) {
@@ -316,6 +321,106 @@ function getPatientDisplayName(user: SafeUser) {
   return user.patientName ?? user.displayName;
 }
 
+function resolveClinicalPatientContext(
+  state: HospitalState,
+  user: SafeUser,
+  input: {
+    patientId?: string;
+    familyMemberId?: string;
+    appointmentId?: string;
+  },
+) {
+  if (user.role === "patient") {
+    if (input.patientId && input.patientId !== user.id) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    const familyMember = getFamilyMemberById(state, input.familyMemberId);
+    if (
+      input.familyMemberId &&
+      (!familyMember || familyMember.primaryPatientUserId !== user.id)
+    ) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    return {
+      patientUserId: user.id,
+      patientName: familyMember?.fullName ?? getPatientDisplayName(user),
+      familyMember,
+      appointment: undefined,
+    };
+  }
+
+  if (!input.patientId?.trim()) {
+    throw createHttpError(400, "A patient context is required for this update.");
+  }
+
+  const patientUserId = input.patientId.trim();
+  const familyMember = getFamilyMemberById(state, input.familyMemberId);
+
+  if (
+    familyMember &&
+    familyMember.primaryPatientUserId !== patientUserId
+  ) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  const appointment = input.appointmentId?.trim()
+    ? getAppointmentById(state, input.appointmentId.trim())
+    : undefined;
+
+  if (appointment && appointment.patientId !== patientUserId) {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+
+  if (user.role === "doctor") {
+    const matchingAppointments = state.appointments.filter(
+      (currentAppointment) =>
+        currentAppointment.organizationId === user.organizationId &&
+        currentAppointment.doctorId === user.doctorId &&
+        currentAppointment.patientId === patientUserId,
+    );
+
+    if (matchingAppointments.length === 0) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    if (appointment && appointment.doctorId !== user.doctorId) {
+      throw createHttpError(403, "You do not have access to this workspace.");
+    }
+
+    if (familyMember) {
+      const familyAppointmentMatch = appointment
+        ? appointment.familyMemberId === familyMember.id
+        : matchingAppointments.some(
+            (currentAppointment) => currentAppointment.familyMemberId === familyMember.id,
+          );
+
+      if (!familyAppointmentMatch) {
+        throw createHttpError(403, "You do not have access to this workspace.");
+      }
+    }
+
+    return {
+      patientUserId,
+      patientName: familyMember?.fullName ?? appointment?.patientName ?? "Patient",
+      familyMember,
+      appointment,
+    };
+  }
+
+  if (user.role === "administrator") {
+    return {
+      patientUserId,
+      patientName: familyMember?.fullName ?? appointment?.patientName ?? "Patient",
+      familyMember,
+      appointment,
+    };
+  }
+
+  throw createHttpError(403, "You do not have access to this workspace.");
+}
+
 function canPatientManageAppointment(appointment: AppointmentRecord, now = new Date()) {
   return (
     appointment.status === "Scheduled" &&
@@ -364,19 +469,25 @@ function validateFamilyMemberDraft(draft: FamilyMemberDraft) {
   };
 }
 
-function validateMedicalHistoryDraft(draft: MedicalHistoryEntryDraft) {
+function validateMedicalHistoryDraft(user: SafeUser, draft: MedicalHistoryEntryDraft) {
   const errors: Record<string, string> = {};
+  const categoryLabel = draft.category === "Surgery" ? "surgery" : "vaccination";
 
-  if (draft.title.trim().length < 3) {
-    errors.title = "Enter a clear title.";
+  if (user.role !== "patient" && !draft.patientId?.trim()) {
+    errors.patientId = "Select a patient.";
   }
 
-  if (!draft.recordedDate || draft.recordedDate > getCurrentLocalDateIso()) {
-    errors.recordedDate = "Recorded date cannot be in the future.";
+  if (!draft.recordedDate.trim()) {
+    errors.recordedDate = `Select the ${categoryLabel} date.`;
+  } else if (draft.recordedDate > getCurrentLocalDateIso()) {
+    errors.recordedDate = `The ${categoryLabel} date cannot be in the future.`;
   }
 
-  if (draft.details?.trim() && draft.details.trim().length < 3) {
-    errors.details = "Enter more detail or leave this field blank.";
+  if (!draft.title.trim()) {
+    errors.title =
+      draft.category === "Surgery"
+        ? "Enter the surgery/procedure name."
+        : "Enter the vaccine name.";
   }
 
   return {
@@ -1470,6 +1581,8 @@ function buildInvoiceRecord(input: {
     createdAt: new Date().toISOString(),
     dueDate: input.dueDate,
     subtotalCents,
+    discountCents: 0,
+    taxCents: 0,
     totalCents: subtotalCents,
     amountPaidCents: 0,
     amountDueCents: subtotalCents,
@@ -1866,6 +1979,10 @@ function validateLabRequestDraft(state: HospitalState, draft: LabRequestDraft) {
     errors.requestedTime = "Select a future lab time.";
   } else if (draft.requestedDate && isLabSlotFullyBooked(state, draft.requestedDate, draft.requestedTime)) {
     errors.requestedTime = "This lab slot is fully booked. Please choose another time.";
+  }
+
+  if (draft.clinicalNotes && draft.clinicalNotes.trim().length > 500) {
+    errors.clinicalNotes = "Clinical notes must be 500 characters or fewer.";
   }
 
   return {
@@ -2376,7 +2493,44 @@ function validateSharedProfileDraft(role: UserRole, draft: UserProfileDraft) {
 }
 
 function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): HospitalState {
-  if (role === "administrator" || role === "receptionist") {
+  if (role === "administrator") {
+    return {
+      ...state,
+      medicalRecords: state.medicalRecords.filter(
+        (record) => record.organizationId === user.organizationId,
+      ),
+      prescriptions: state.prescriptions.filter(
+        (prescription) => prescription.organizationId === user.organizationId,
+      ),
+      labTests: state.labTests.filter((test) => test.organizationId === user.organizationId),
+      labRequests: state.labRequests.filter((request) => request.organizationId === user.organizationId),
+      labReports: state.labReports.filter((report) => report.organizationId === user.organizationId),
+      invoices: [],
+      inventoryItems:
+        state.inventoryItems.filter((item) => item.organizationId === user.organizationId),
+      familyMembers: (state.familyMembers ?? []).filter(
+        (member) => member.organizationId === user.organizationId,
+      ),
+      medicalHistoryEntries: (state.medicalHistoryEntries ?? []).filter(
+        (entry) => entry.organizationId === user.organizationId,
+      ),
+      clinicalAttachments: (state.clinicalAttachments ?? []).filter(
+        (attachment) => attachment.organizationId === user.organizationId,
+      ),
+      telemedicineSessions: (state.telemedicineSessions ?? []).filter(
+        (session) => session.organizationId === user.organizationId,
+      ),
+      emergencyVisits: (state.emergencyVisits ?? []).filter(
+        (visit) => visit.organizationId === user.organizationId,
+      ),
+      patientJourneys: (state.patientJourneys ?? []).filter(
+        (journey) => journey.organizationId === user.organizationId,
+      ),
+      notifications: getScopedNotificationsForUser(user, state),
+    };
+  }
+
+  if (role === "receptionist") {
     return {
       ...state,
       medicalRecords: state.medicalRecords.filter(
@@ -2389,10 +2543,7 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       labRequests: state.labRequests.filter((request) => request.organizationId === user.organizationId),
       labReports: state.labReports.filter((report) => report.organizationId === user.organizationId),
       invoices: getScopedInvoicesForUser(user, state),
-      inventoryItems:
-        role === "administrator"
-          ? state.inventoryItems.filter((item) => item.organizationId === user.organizationId)
-          : [],
+      inventoryItems: [],
       familyMembers: (state.familyMembers ?? []).filter(
         (member) => member.organizationId === user.organizationId,
       ),
@@ -2423,31 +2574,11 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
     const patientIds = new Set(
       appointments.map((appointment) => appointment.patientId).filter(Boolean) as string[],
     );
-    // Unassigned walk-in/emergency queue entries (no doctorId, no appointmentId yet) are not
-    // tied to any appointment, so they must be surfaced by department instead. Any doctor
-    // working in that department (in particular emergency-duty doctors) needs visibility into
-    // them, otherwise emergency-priority intake never reaches a doctor's scoped queue.
-    const selfDoctorRecord = state.doctors.find((doctor) => doctor.id === user.doctorId);
-    const unassignedDepartmentQueueEntries = selfDoctorRecord
-      ? state.queueEntries.filter(
-          (entry) =>
-            !entry.doctorId &&
-            !entry.appointmentId &&
-            entry.organizationId === user.organizationId &&
-            entry.departmentId === selfDoctorRecord.departmentId,
-        )
-      : [];
     const queueEntries = state.queueEntries.filter(
       (entry) =>
-        entry.doctorId === user.doctorId ||
-        (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false) ||
-        unassignedDepartmentQueueEntries.some((unassigned) => unassigned.id === entry.id),
+        entry.doctorId === user.doctorId || (entry.appointmentId ? appointmentIds.has(entry.appointmentId) : false),
     );
-    const queueEntryIds = new Set(queueEntries.map((entry) => entry.id));
     const departmentIds = new Set(appointments.map((appointment) => appointment.departmentId));
-    if (selfDoctorRecord && unassignedDepartmentQueueEntries.length > 0) {
-      departmentIds.add(selfDoctorRecord.departmentId);
-    }
     const patientNames = new Set(appointments.map((appointment) => appointment.patientName));
 
     return {
@@ -2490,8 +2621,7 @@ function withScopedState(role: UserRole, user: SafeUser, state: HospitalState): 
       emergencyVisits: (state.emergencyVisits ?? []).filter(
         (visit) =>
           visit.organizationId === user.organizationId &&
-          ((visit.patientId ? patientIds.has(visit.patientId) : patientNames.has(visit.patientName)) ||
-            (visit.queueEntryId ? queueEntryIds.has(visit.queueEntryId) : false)),
+          (visit.patientId ? patientIds.has(visit.patientId) : patientNames.has(visit.patientName)),
       ),
       patientJourneys: (state.patientJourneys ?? []).filter((journey) =>
         journey.organizationId === user.organizationId &&
@@ -2724,11 +2854,609 @@ export async function getOperationalAnalytics(
   };
 }
 
+type AdminBillingDaySort =
+  | "newest"
+  | "oldest"
+  | "highest-revenue"
+  | "highest-outstanding"
+  | "most-invoices";
+
+type AdminBillingInvoiceSort = "newest" | "oldest" | "highest-total" | "highest-due";
+
+async function getOrganizationTimezone(organizationId: string) {
+  const result = await query<{ timezone: string | null }>(
+    "select timezone from organizations where id = $1",
+    [organizationId],
+  );
+
+  return result.rows[0]?.timezone || "Asia/Calcutta";
+}
+
+function ensureAdminUser(user: SafeUser) {
+  if (user.role !== "administrator") {
+    throw createHttpError(403, "You do not have access to this workspace.");
+  }
+}
+
+export async function getAdminBillingDaySummaries(
+  user: SafeUser,
+  input: {
+    page: number;
+    pageSize: number;
+    sort: AdminBillingDaySort;
+    dateFrom?: string;
+    dateTo?: string;
+  },
+) {
+  ensureAdminUser(user);
+
+  const dateFrom = input.dateFrom?.trim() ?? "";
+  const dateTo = input.dateTo?.trim() ?? "";
+
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    throw createHttpError(400, "Please review the billing date range.", {
+      errors: {
+        dateFrom: "From date cannot be later than To date.",
+        dateTo: "To date cannot be earlier than From date.",
+      },
+    });
+  }
+
+  const timezone = await measurePerfStep("admin-billing.timezone", () =>
+    getOrganizationTimezone(user.organizationId),
+  );
+
+  const orderByMap: Record<AdminBillingDaySort, string> = {
+    newest: 'billing_day desc',
+    oldest: 'billing_day asc',
+    'highest-revenue': 'total_billed_cents desc, billing_day desc',
+    'highest-outstanding': 'outstanding_cents desc, billing_day desc',
+    'most-invoices': 'invoice_count desc, billing_day desc',
+  };
+
+  const offset = (input.page - 1) * input.pageSize;
+
+  const [countResult, rowsResult] = await Promise.all([
+    measurePerfStep("admin-billing.days-count", () =>
+      query<{ total_days: number }>(
+        `
+          select count(*)::int as total_days
+          from (
+            select to_char(created_at at time zone $2, 'YYYY-MM-DD') as billing_day
+            from invoices
+            where organization_id = $1
+              and ($3 = '' or (created_at at time zone $2)::date >= $3::date)
+              and ($4 = '' or (created_at at time zone $2)::date <= $4::date)
+            group by billing_day
+          ) day_groups
+        `,
+        [user.organizationId, timezone, dateFrom, dateTo],
+      ),
+    ),
+    measurePerfStep("admin-billing.days-query", () =>
+      query<{
+        billing_day: string;
+        invoice_count: number;
+        total_billed_cents: number;
+        total_collected_cents: number;
+        outstanding_cents: number;
+        paid_count: number;
+        pending_partial_count: number;
+        consultation_revenue_cents: number;
+        lab_revenue_cents: number;
+        pharmacy_revenue_cents: number;
+      }>(
+        `
+          with day_invoice_base as (
+            select
+              i.id,
+              to_char(i.created_at at time zone $2, 'YYYY-MM-DD') as billing_day,
+              i.total_cents,
+              i.amount_paid_cents,
+              i.amount_due_cents,
+              i.payment_status
+            from invoices i
+            where i.organization_id = $1
+              and ($3 = '' or (i.created_at at time zone $2)::date >= $3::date)
+              and ($4 = '' or (i.created_at at time zone $2)::date <= $4::date)
+          ),
+          day_invoice_summary as (
+            select
+              billing_day,
+              count(*)::int as invoice_count,
+              coalesce(sum(total_cents), 0)::bigint as total_billed_cents,
+              coalesce(sum(amount_paid_cents), 0)::bigint as total_collected_cents,
+              coalesce(sum(amount_due_cents), 0)::bigint as outstanding_cents,
+              count(*) filter (where payment_status = 'Paid')::int as paid_count,
+              count(*) filter (where payment_status in ('Pending', 'Partially Paid'))::int as pending_partial_count
+            from day_invoice_base
+            group by billing_day
+          ),
+          day_category_summary as (
+            select
+              to_char(i.created_at at time zone $2, 'YYYY-MM-DD') as billing_day,
+              coalesce(sum(case when ii.category = 'Consultation' then ii.total_amount_cents else 0 end), 0)::bigint as consultation_revenue_cents,
+              coalesce(sum(case when ii.category = 'Laboratory' then ii.total_amount_cents else 0 end), 0)::bigint as lab_revenue_cents,
+              coalesce(sum(case when ii.category = 'Medicine' then ii.total_amount_cents else 0 end), 0)::bigint as pharmacy_revenue_cents
+            from invoices i
+            left join invoice_items ii on ii.invoice_id = i.id
+            where i.organization_id = $1
+              and ($3 = '' or (i.created_at at time zone $2)::date >= $3::date)
+              and ($4 = '' or (i.created_at at time zone $2)::date <= $4::date)
+            group by billing_day
+          )
+          select
+            summary.billing_day,
+            summary.invoice_count,
+            summary.total_billed_cents,
+            summary.total_collected_cents,
+            summary.outstanding_cents,
+            summary.paid_count,
+            summary.pending_partial_count,
+            category.consultation_revenue_cents,
+            category.lab_revenue_cents,
+            category.pharmacy_revenue_cents
+          from day_invoice_summary summary
+          left join day_category_summary category on category.billing_day = summary.billing_day
+          order by ${orderByMap[input.sort]}
+          limit $5 offset $6
+        `,
+        [user.organizationId, timezone, dateFrom, dateTo, input.pageSize, offset],
+      ),
+    ),
+  ]);
+
+  return {
+    summary: {
+      page: input.page,
+      pageSize: input.pageSize,
+      totalDays: asNumber(countResult.rows[0]?.total_days ?? 0),
+      sort: input.sort,
+      rows: rowsResult.rows.map((row) => ({
+        date: row.billing_day,
+        invoiceCount: asNumber(row.invoice_count),
+        totalBilledCents: asNumber(row.total_billed_cents),
+        totalCollectedCents: asNumber(row.total_collected_cents),
+        outstandingCents: asNumber(row.outstanding_cents),
+        paidCount: asNumber(row.paid_count),
+        pendingPartialCount: asNumber(row.pending_partial_count),
+        consultationRevenueCents: asNumber(row.consultation_revenue_cents),
+        labRevenueCents: asNumber(row.lab_revenue_cents),
+        pharmacyRevenueCents: asNumber(row.pharmacy_revenue_cents),
+      })),
+    },
+  };
+}
+
+export async function getAdminBillingDayDetails(
+  user: SafeUser,
+  input: {
+    billingDate: string;
+    page: number;
+    pageSize: number;
+    sort: AdminBillingInvoiceSort;
+    queryText?: string;
+    paymentStatus?: "All" | "Pending" | "Partially Paid" | "Paid" | "Cancelled";
+    sourceType?: "All" | "appointment" | "lab-request" | "prescription" | "other";
+  },
+) {
+  ensureAdminUser(user);
+
+  const timezone = await measurePerfStep("admin-billing.timezone", () =>
+    getOrganizationTimezone(user.organizationId),
+  );
+  const offset = (input.page - 1) * input.pageSize;
+  const trimmedQuery = input.queryText?.trim() ?? "";
+  const searchLike = trimmedQuery ? `%${trimmedQuery}%` : "";
+  const paymentStatus = input.paymentStatus ?? "All";
+  const sourceType = input.sourceType ?? "All";
+
+  const orderByMap: Record<AdminBillingInvoiceSort, string> = {
+    newest: "i.created_at desc, i.invoice_number desc",
+    oldest: "i.created_at asc, i.invoice_number asc",
+    "highest-total": "i.total_cents desc, i.created_at desc",
+    "highest-due": "i.amount_due_cents desc, i.created_at desc",
+  };
+
+  const summaryResult = await measurePerfStep("admin-billing.day-summary", () =>
+    query<{
+      invoice_count: number;
+      total_billed_cents: number;
+      total_collected_cents: number;
+      outstanding_cents: number;
+      paid_count: number;
+      pending_partial_count: number;
+      consultation_revenue_cents: number;
+      lab_revenue_cents: number;
+      pharmacy_revenue_cents: number;
+    }>(
+      `
+        with scoped_invoices as (
+          select id, total_cents, amount_paid_cents, amount_due_cents, payment_status
+          from invoices
+          where organization_id = $1
+            and to_char(created_at at time zone $2, 'YYYY-MM-DD') = $3
+        )
+        select
+          count(*)::int as invoice_count,
+          coalesce(sum(total_cents), 0)::bigint as total_billed_cents,
+          coalesce(sum(amount_paid_cents), 0)::bigint as total_collected_cents,
+          coalesce(sum(amount_due_cents), 0)::bigint as outstanding_cents,
+          count(*) filter (where payment_status = 'Paid')::int as paid_count,
+          count(*) filter (where payment_status in ('Pending', 'Partially Paid'))::int as pending_partial_count,
+          coalesce(sum(case when ii.category = 'Consultation' then ii.total_amount_cents else 0 end), 0)::bigint as consultation_revenue_cents,
+          coalesce(sum(case when ii.category = 'Laboratory' then ii.total_amount_cents else 0 end), 0)::bigint as lab_revenue_cents,
+          coalesce(sum(case when ii.category = 'Medicine' then ii.total_amount_cents else 0 end), 0)::bigint as pharmacy_revenue_cents
+        from scoped_invoices invoices
+        left join invoice_items ii on ii.invoice_id = invoices.id
+      `,
+      [user.organizationId, timezone, input.billingDate],
+    ),
+  );
+
+  const [countResult, rowsResult] = await Promise.all([
+    measurePerfStep("admin-billing.day-count", () =>
+      query<{ total_invoices: number }>(
+        `
+          select count(*)::int as total_invoices
+          from invoices i
+          where i.organization_id = $1
+            and to_char(i.created_at at time zone $2, 'YYYY-MM-DD') = $3
+            and ($4 = '' or i.invoice_number ilike $4 or i.patient_name ilike $4)
+            and ($5 = 'All' or i.payment_status = $5)
+            and ($6 = 'All' or coalesce(i.source_type, 'other') = $6)
+        `,
+        [user.organizationId, timezone, input.billingDate, searchLike, paymentStatus, sourceType],
+      ),
+    ),
+    measurePerfStep("admin-billing.day-query", () =>
+      query<{
+        id: string;
+        invoice_number: string;
+        patient_name: string;
+        family_member_id: string | null;
+        source_type: string | null;
+        created_at: string;
+        total_cents: number;
+        amount_paid_cents: number;
+        amount_due_cents: number;
+        payment_status: string;
+        latest_payment_method: string | null;
+      }>(
+        `
+          select
+            i.id,
+            i.invoice_number,
+            i.patient_name,
+            i.family_member_id,
+            coalesce(i.source_type, 'other') as source_type,
+            i.created_at,
+            i.total_cents,
+            i.amount_paid_cents,
+            i.amount_due_cents,
+            i.payment_status,
+            latest_payment.method as latest_payment_method
+          from invoices i
+          left join lateral (
+            select p.method
+            from payments p
+            where p.invoice_id = i.id
+            order by p.paid_at desc
+            limit 1
+          ) latest_payment on true
+          where i.organization_id = $1
+            and to_char(i.created_at at time zone $2, 'YYYY-MM-DD') = $3
+            and ($4 = '' or i.invoice_number ilike $4 or i.patient_name ilike $4)
+            and ($5 = 'All' or i.payment_status = $5)
+            and ($6 = 'All' or coalesce(i.source_type, 'other') = $6)
+          order by ${orderByMap[input.sort]}
+          limit $7 offset $8
+        `,
+        [
+          user.organizationId,
+          timezone,
+          input.billingDate,
+          searchLike,
+          paymentStatus,
+          sourceType,
+          input.pageSize,
+          offset,
+        ],
+      ),
+    ),
+  ]);
+
+  const summaryRow = summaryResult.rows[0];
+
+  return {
+    day: {
+      date: input.billingDate,
+      page: input.page,
+      pageSize: input.pageSize,
+      sort: input.sort,
+      totalInvoices: asNumber(countResult.rows[0]?.total_invoices ?? 0),
+      summary: {
+        invoiceCount: asNumber(summaryRow?.invoice_count ?? 0),
+        totalBilledCents: asNumber(summaryRow?.total_billed_cents ?? 0),
+        totalCollectedCents: asNumber(summaryRow?.total_collected_cents ?? 0),
+        outstandingCents: asNumber(summaryRow?.outstanding_cents ?? 0),
+        paidCount: asNumber(summaryRow?.paid_count ?? 0),
+        pendingPartialCount: asNumber(summaryRow?.pending_partial_count ?? 0),
+        consultationRevenueCents: asNumber(summaryRow?.consultation_revenue_cents ?? 0),
+        labRevenueCents: asNumber(summaryRow?.lab_revenue_cents ?? 0),
+        pharmacyRevenueCents: asNumber(summaryRow?.pharmacy_revenue_cents ?? 0),
+      },
+      rows: rowsResult.rows.map((row) => ({
+        id: row.id,
+        invoiceNumber: row.invoice_number,
+        patientName: row.patient_name,
+        familyMemberId: row.family_member_id ?? undefined,
+        sourceType: row.source_type ?? "other",
+        createdAt: row.created_at,
+        totalCents: asNumber(row.total_cents),
+        amountPaidCents: asNumber(row.amount_paid_cents),
+        amountDueCents: asNumber(row.amount_due_cents),
+        paymentStatus: row.payment_status,
+        paymentMethod: row.latest_payment_method ?? undefined,
+      })),
+    },
+  };
+}
+
+export async function getAdminBillingInvoice(
+  user: SafeUser,
+  invoiceId: string,
+) {
+  ensureAdminUser(user);
+
+  const [invoiceResult, itemResult, paymentResult] = await Promise.all([
+    query<{
+      id: string;
+      invoice_number: string;
+      patient_id: string;
+      patient_name: string;
+      family_member_id: string | null;
+      organization_id: string;
+      hospital_id: string;
+      source_type: string | null;
+      source_id: string | null;
+      created_at: string;
+      due_date: string | null;
+      subtotal_cents: number;
+      total_cents: number;
+      amount_paid_cents: number;
+      amount_due_cents: number;
+      payment_status: string;
+    }>(
+      `
+        select *
+        from invoices
+        where id = $1 and organization_id = $2
+        limit 1
+      `,
+      [invoiceId, user.organizationId],
+    ),
+    query<{
+      id: string;
+      invoice_id: string;
+      organization_id: string;
+      description: string;
+      category: string;
+      quantity: number;
+      unit_amount_cents: number;
+      total_amount_cents: number;
+      source_type: string | null;
+      source_id: string | null;
+    }>(
+      `
+        select *
+        from invoice_items
+        where invoice_id = $1 and organization_id = $2
+        order by id asc
+      `,
+      [invoiceId, user.organizationId],
+    ),
+    query<{
+      id: string;
+      invoice_id: string;
+      patient_id: string;
+      organization_id: string;
+      amount_cents: number;
+      method: string;
+      reference_number: string | null;
+      paid_at: string;
+      recorded_by_id: string | null;
+      recorded_by_name: string | null;
+    }>(
+      `
+        select *
+        from payments
+        where invoice_id = $1 and organization_id = $2
+        order by paid_at desc
+      `,
+      [invoiceId, user.organizationId],
+    ),
+  ]);
+
+  const invoiceRow = invoiceResult.rows[0];
+
+  if (!invoiceRow) {
+    throw createHttpError(404, "Invoice not found.");
+  }
+
+  return {
+    invoice: {
+      id: invoiceRow.id,
+      invoiceNumber: invoiceRow.invoice_number,
+      patientId: invoiceRow.patient_id,
+      patientName: invoiceRow.patient_name,
+      familyMemberId: invoiceRow.family_member_id ?? undefined,
+      organizationId: invoiceRow.organization_id,
+      hospitalId: invoiceRow.hospital_id,
+      sourceType: invoiceRow.source_type ?? undefined,
+      sourceId: invoiceRow.source_id ?? undefined,
+      createdAt: invoiceRow.created_at,
+      dueDate: invoiceRow.due_date ?? undefined,
+      subtotalCents: asNumber(invoiceRow.subtotal_cents),
+      totalCents: asNumber(invoiceRow.total_cents),
+      amountPaidCents: asNumber(invoiceRow.amount_paid_cents),
+      amountDueCents: asNumber(invoiceRow.amount_due_cents),
+      paymentStatus: invoiceRow.payment_status,
+      items: itemResult.rows.map((row) => ({
+        id: row.id,
+        invoiceId: row.invoice_id,
+        organizationId: row.organization_id,
+        description: row.description,
+        category: row.category,
+        quantity: asNumber(row.quantity),
+        unitAmountCents: asNumber(row.unit_amount_cents),
+        totalAmountCents: asNumber(row.total_amount_cents),
+        sourceType: row.source_type ?? undefined,
+        sourceId: row.source_id ?? undefined,
+      })),
+      payments: paymentResult.rows.map((row) => ({
+        id: row.id,
+        invoiceId: row.invoice_id,
+        patientId: row.patient_id,
+        organizationId: row.organization_id,
+        amountCents: asNumber(row.amount_cents),
+        method: row.method,
+        referenceNumber: row.reference_number ?? undefined,
+        paidAt: row.paid_at,
+        recordedBy:
+          row.recorded_by_id && row.recorded_by_name
+            ? {
+                id: row.recorded_by_id,
+                name: row.recorded_by_name,
+              }
+            : undefined,
+      })),
+    },
+  };
+}
+
+export async function getAdminEmergencyActivity(
+  user: SafeUser,
+  input: {
+    page: number;
+    pageSize: number;
+    sort: "newest" | "oldest";
+    severity?: "All" | "Priority" | "Emergency";
+    status?: "All" | "Active" | "In consultation" | "Transferred" | "Completed";
+    queryText?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  },
+) {
+  ensureAdminUser(user);
+
+  const offset = (input.page - 1) * input.pageSize;
+  const trimmedQuery = input.queryText?.trim() ?? "";
+  const searchLike = trimmedQuery ? `%${trimmedQuery}%` : "";
+  const severity = input.severity ?? "All";
+  const status = input.status ?? "All";
+  const dateFrom = input.dateFrom?.trim() ?? "";
+  const dateTo = input.dateTo?.trim() ?? "";
+  const orderBy = input.sort === "oldest" ? "ev.created_at asc" : "ev.created_at desc";
+
+  const filters = `
+    ev.organization_id = $1
+    and ($2 = 'All' or ev.severity = $2)
+    and ($3 = 'All' or ev.status = $3)
+    and ($4 = '' or ev.created_at::date >= $4::date)
+    and ($5 = '' or ev.created_at::date <= $5::date)
+    and ($6 = '' or ev.patient_name ilike $6 or ev.emergency_reason ilike $6)
+  `;
+
+  const params = [user.organizationId, severity, status, dateFrom, dateTo, searchLike];
+
+  const [countResult, rowsResult] = await Promise.all([
+    query<{ total_items: number }>(
+      `
+        select count(*)::int as total_items
+        from emergency_visits ev
+        where ${filters}
+      `,
+      params,
+    ),
+    query<{
+      id: string;
+      patient_name: string;
+      family_member_id: string | null;
+      severity: string;
+      status: string;
+      emergency_reason: string;
+      contact_name: string | null;
+      contact_phone: string | null;
+      allergies: string | null;
+      medical_conditions: string | null;
+      blood_group: string | null;
+      created_at: string;
+      doctor_id: string | null;
+      doctor_name: string | null;
+    }>(
+      `
+        select
+          ev.id,
+          ev.patient_name,
+          ev.family_member_id,
+          ev.severity,
+          ev.status,
+          ev.emergency_reason,
+          ev.contact_name,
+          ev.contact_phone,
+          ev.allergies,
+          ev.medical_conditions,
+          ev.blood_group,
+          ev.created_at,
+          qe.doctor_id,
+          d.name as doctor_name
+        from emergency_visits ev
+        left join queue_entries qe
+          on qe.id = ev.queue_entry_id
+         and qe.organization_id = ev.organization_id
+        left join doctors d
+          on d.id = qe.doctor_id
+         and d.organization_id = ev.organization_id
+        where ${filters}
+        order by ${orderBy}
+        limit $7 offset $8
+      `,
+      [...params, input.pageSize, offset],
+    ),
+  ]);
+
+  return {
+    activity: {
+      page: input.page,
+      pageSize: input.pageSize,
+      sort: input.sort,
+      totalItems: asNumber(countResult.rows[0]?.total_items ?? 0),
+      rows: rowsResult.rows.map((row) => ({
+        id: row.id,
+        patientName: row.patient_name,
+        familyMemberId: row.family_member_id ?? undefined,
+        severity: row.severity,
+        status: row.status,
+        emergencyReason: row.emergency_reason,
+        contactName: row.contact_name ?? undefined,
+        contactPhone: row.contact_phone ?? undefined,
+        allergies: row.allergies ?? undefined,
+        medicalConditions: row.medical_conditions ?? undefined,
+        bloodGroup: row.blood_group ?? undefined,
+        intakeTime: row.created_at,
+        assignedDoctorId: row.doctor_id ?? undefined,
+        assignedDoctorName: row.doctor_name ?? undefined,
+      })),
+    },
+  };
+}
+
 export async function createEmergencyVisitForOperations(
   user: SafeUser,
   draft: EmergencyVisitDraft,
 ) {
-  if (!["administrator", "receptionist"].includes(user.role)) {
+  if (user.role !== "receptionist") {
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
@@ -2917,228 +3645,6 @@ export async function updateQueuePriority(
   };
 }
 
-export async function assignQueueDoctor(
-  user: SafeUser,
-  queueEntryId: string,
-  doctorId: string,
-) {
-  if (!["administrator", "receptionist"].includes(user.role)) {
-    throw createHttpError(403, "You do not have access to this workspace.");
-  }
-
-  const state = await loadHospitalState();
-  const queueEntry = state.queueEntries.find((entry) => entry.id === queueEntryId);
-
-  if (!queueEntry) {
-    throw createHttpError(404, "Queue entry not found.");
-  }
-
-  if (queueEntry.organizationId !== user.organizationId) {
-    throw createHttpError(403, "You do not have access to this workspace.");
-  }
-
-  const doctor = state.doctors.find(
-    (candidate) => candidate.id === doctorId && candidate.organizationId === user.organizationId,
-  );
-
-  if (!doctor) {
-    throw createHttpError(400, "The selected doctor could not be found.");
-  }
-
-  if (doctor.status === "Off duty") {
-    throw createHttpError(400, "This doctor is off duty and cannot be assigned right now.");
-  }
-
-  if (queueEntry.status === "Completed") {
-    throw createHttpError(400, "This visit has already been completed.");
-  }
-
-  const updatedAt = new Date().toISOString();
-
-  await updateQueueEntryDoctor({
-    queueEntryId,
-    organizationId: queueEntry.organizationId,
-    doctorId,
-    updatedAt,
-  });
-
-  const updatedQueueEntry = {
-    ...queueEntry,
-    doctorId,
-    updatedAt,
-  };
-
-  await writeAuditLog({
-    organizationId: user.organizationId,
-    actorUserId: user.id,
-    action: "queue.doctor-assigned",
-    entityType: "queue-entry",
-    entityId: queueEntryId,
-    metadata: {
-      doctorId,
-    },
-  });
-
-  const users = await loadUsers();
-  const doctorUser = users.find(
-    (currentUser) => currentUser.role === "doctor" && currentUser.doctorId === doctorId,
-  );
-  const notifications = doctorUser
-    ? await notifyUsers({
-        organizationId: user.organizationId,
-        userIds: [doctorUser.id],
-        title: "Emergency patient assigned",
-        message: `${queueEntry.patientName} has been assigned to you in the immediate-care queue.`,
-        category: "Emergency",
-        relatedEntityType: "queue-entry",
-        relatedEntityId: queueEntryId,
-      })
-    : [];
-
-  return {
-    patch: {
-      queueEntries: [updatedQueueEntry],
-      notifications: notifications.filter((notification) => notification.userId === user.id),
-    },
-  };
-}
-
-const DOCTOR_SELF_MANAGED_STATUSES: DoctorStatus[] = ["Available", "On break", "Off duty"];
-
-/**
- * Doctor operational status. Doctors may manually switch between Available,
- * On break, and Off duty from their own dashboard. "Consulting" and
- * "Emergency duty" are set automatically by the consultation/queue workflow
- * and are not directly selectable here to avoid the operational status
- * drifting out of sync with what the doctor is actually doing.
- */
-export async function setDoctorStatus(
-  user: SafeUser,
-  doctorId: string,
-  status: DoctorStatus,
-) {
-  const isSelf = user.role === "doctor" && user.doctorId === doctorId;
-  const isAdmin = user.role === "administrator";
-
-  if (!isSelf && !isAdmin) {
-    throw createHttpError(403, "You do not have access to update this doctor's status.");
-  }
-
-  if (!DOCTOR_SELF_MANAGED_STATUSES.includes(status)) {
-    throw createHttpError(400, "That status cannot be set manually.");
-  }
-
-  const state = await loadHospitalState();
-  const doctor = state.doctors.find(
-    (candidate) => candidate.id === doctorId && candidate.organizationId === user.organizationId,
-  );
-
-  if (!doctor) {
-    throw createHttpError(404, "Doctor not found.");
-  }
-
-  await updateDoctorStatusById({
-    doctorId,
-    organizationId: user.organizationId,
-    status,
-  });
-
-  await writeAuditLog({
-    organizationId: user.organizationId,
-    actorUserId: user.id,
-    action: "doctor.status-updated",
-    entityType: "doctor",
-    entityId: doctorId,
-    metadata: { status },
-  });
-
-  return {
-    patch: {
-      doctors: [{ ...doctor, status }],
-    },
-  };
-}
-
-/**
- * Automatically moves a doctor's operational status as consultations start
- * and finish. Never overrides a status the doctor deliberately chose (On
- * break / Off duty) outside of the expected Consulting -> Available handoff.
- */
-async function applyAutomaticDoctorStatus(
-  state: HospitalState,
-  doctorId: string | undefined,
-  organizationId: string,
-  appointmentStatus: "In consultation" | "Completed",
-): Promise<DoctorRecord | null> {
-  if (!doctorId) {
-    return null;
-  }
-
-  const doctor = state.doctors.find(
-    (candidate) => candidate.id === doctorId && candidate.organizationId === organizationId,
-  );
-
-  if (!doctor) {
-    return null;
-  }
-
-  if (appointmentStatus === "In consultation" && doctor.status !== "Off duty") {
-    const nextStatus: DoctorStatus = "Consulting";
-    if (doctor.status === nextStatus) {
-      return null;
-    }
-    await updateDoctorStatusById({ doctorId, organizationId, status: nextStatus });
-    return { ...doctor, status: nextStatus };
-  }
-
-  if (appointmentStatus === "Completed" && doctor.status === "Consulting") {
-    const nextStatus: DoctorStatus = "Available";
-    await updateDoctorStatusById({ doctorId, organizationId, status: nextStatus });
-    return { ...doctor, status: nextStatus };
-  }
-
-  return null;
-}
-
-const ACTIVE_QUEUE_WAIT_STATUSES: QueueStatus[] = ["Waiting", "Called"];
-
-/**
- * Builds the patient-facing wait message. Deliberately avoids showing a computed
- * minute estimate when there is no live operational queue context for the visit
- * yet (e.g. a future-dated appointment), since that number would be misleading.
- */
-function getPatientFacingWaitEstimate(
-  state: HospitalState,
-  appointment: AppointmentRecord | undefined,
-  queueEntry: QueueEntryRecord | undefined,
-): string {
-  if (appointment && appointment.status !== "Completed" && appointment.status !== "Cancelled") {
-    const today = getCurrentLocalDateIso();
-    if (appointment.appointmentDate > today) {
-      return "Available on appointment day";
-    }
-  }
-
-  if (appointment?.status === "Completed" || queueEntry?.status === "Completed") {
-    return "Visit completed";
-  }
-
-  if (appointment?.status === "Cancelled") {
-    return "Appointment cancelled";
-  }
-
-  if (queueEntry?.status === "In consultation") {
-    return "Currently in consultation";
-  }
-
-  if (queueEntry && ACTIVE_QUEUE_WAIT_STATUSES.includes(queueEntry.status)) {
-    const estimate = getQueueWaitEstimate(state, queueEntry);
-    return `~${estimate.estimatedMinutes} min · ${estimate.summary}`;
-  }
-
-  return "Available once you check in";
-}
-
 export async function getJourneyByToken(user: SafeUser, token: string) {
   const state = await reconcileNoShowAppointments(await loadHospitalState());
   const journey = (state.patientJourneys ?? []).find((item) => item.token === token);
@@ -3175,122 +3681,57 @@ export async function getJourneyByToken(user: SafeUser, token: string) {
           : queueEntry
             ? state.departments.find((department) => department.id === queueEntry.departmentId)?.name
             : undefined,
-      estimatedWait: getPatientFacingWaitEstimate(state, appointment, queueEntry),
+      estimatedWait: queueEntry ? getQueueWaitEstimate(state, queueEntry) : undefined,
     },
   };
 }
 
 export async function getDoctorHandoffSummary(
   user: SafeUser,
-  input: { appointmentId?: string; patientId?: string; familyMemberId?: string },
+  input: { appointmentId?: string; patientId?: string },
 ) {
   if (!["doctor", "administrator"].includes(user.role)) {
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
-  const [rawState, users] = await Promise.all([loadHospitalState(), loadUsers()]);
-  const state = await reconcileNoShowAppointments(rawState);
+  const state = await reconcileNoShowAppointments(await loadHospitalState());
   const scopedState = withScopedState(user.role, user, state);
   const appointment = input.appointmentId
     ? scopedState.appointments.find((item) => item.id === input.appointmentId)
     : undefined;
   const patientId = input.patientId ?? appointment?.patientId;
-  // The exact subject of this handoff: undefined means the primary patient account,
-  // a defined id means a specific dependent. This must be matched exactly (not just
-  // patientId) everywhere below, otherwise a parent's and their dependents' clinical
-  // data can bleed into a single handoff.
-  const familyMemberId = appointment ? appointment.familyMemberId : input.familyMemberId;
 
   if (!appointment && !patientId) {
     throw createHttpError(400, "Select a patient visit to generate the handoff.");
   }
 
-  const matchesSubject = (recordPatientId?: string, recordFamilyMemberId?: string) => {
-    if (patientId && recordPatientId !== patientId) {
-      return false;
-    }
-    if (!patientId && appointment) {
-      // No linked patient account (e.g. a walk-in captured by name only): fall back to
-      // the exact appointment so we never widen the match to other same-named patients.
-      return false;
-    }
-    return (recordFamilyMemberId ?? undefined) === (familyMemberId ?? undefined);
-  };
-
   const medicalRecords = scopedState.medicalRecords
-    .filter((record) =>
-      patientId
-        ? matchesSubject(record.patientId, record.familyMemberId)
-        : appointment
-          ? record.appointmentId === appointment.id
-          : false,
-    )
+    .filter((record) => (patientId ? record.patientId === patientId : appointment ? record.appointmentId === appointment.id : false))
     .sort((left, right) => `${right.visitDate}${right.createdAt}`.localeCompare(`${left.visitDate}${left.createdAt}`));
   const prescriptions = scopedState.prescriptions
-    .filter((prescription) =>
-      patientId
-        ? matchesSubject(prescription.patientId, prescription.familyMemberId)
-        : appointment
-          ? prescription.appointmentId === appointment.id
-          : false,
-    )
+    .filter((prescription) => (patientId ? prescription.patientId === patientId : appointment ? prescription.appointmentId === appointment.id : false))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const labRequests = scopedState.labRequests
-    .filter((request) =>
-      patientId
-        ? matchesSubject(request.patientId, request.familyMemberId)
-        : appointment
-          ? request.patientName === appointment.patientName && !appointment.familyMemberId
-          : false,
-    )
+    .filter((request) => (patientId ? request.patientId === patientId : appointment ? request.patientName === appointment.patientName : false))
     .sort((left, right) => `${right.requestedDate}${right.requestedTime}`.localeCompare(`${left.requestedDate}${left.requestedTime}`));
   const latestRecord = medicalRecords[0];
   const latestPrescription = prescriptions[0];
-  const linkedFamilyMember = familyMemberId
-    ? scopedState.familyMembers?.find((member) => member.id === familyMemberId)
-    : undefined;
+  const linkedFamilyMember =
+    appointment?.familyMemberId
+      ? scopedState.familyMembers?.find((member) => member.id === appointment.familyMemberId)
+      : undefined;
   const patientProfile =
     patientId
-      ? users.find((currentUser) => currentUser.id === patientId)
+      ? (await loadUsers()).find((currentUser) => currentUser.id === patientId)
       : undefined;
-  // Emergency intake often has no linked appointment record (walk-ins), so the reason
-  // for visit, visit status, allergies, and conditions may only exist on the emergency
-  // visit itself. Only ever match the exact same subject (patientId + familyMemberId).
-  const relatedEmergencyVisit = [...(scopedState.emergencyVisits ?? [])]
-    .filter((visit) =>
-      patientId
-        ? matchesSubject(visit.patientId, visit.familyMemberId)
-        : appointment
-          ? visit.appointmentId === appointment.id
-          : false,
-    )
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
 
   const summary = {
-    patient:
-      linkedFamilyMember?.fullName ??
-      appointment?.patientName ??
-      relatedEmergencyVisit?.patientName ??
-      patientProfile?.patientName ??
-      patientProfile?.displayName ??
-      "Not recorded",
+    patient: appointment?.patientName ?? patientProfile?.patientName ?? patientProfile?.displayName ?? "Not recorded",
     patientContext: linkedFamilyMember ? linkedFamilyMember.relationship : "Primary patient",
-    reasonForVisit: appointment?.reasonForAppointment || relatedEmergencyVisit?.emergencyReason || "Not recorded",
-    allergies:
-      linkedFamilyMember?.allergies ??
-      (!familyMemberId ? patientProfile?.allergies : undefined) ??
-      relatedEmergencyVisit?.allergies ??
-      "Not recorded",
-    chronicConditions:
-      linkedFamilyMember?.medicalConditions ??
-      (!familyMemberId ? patientProfile?.medicalConditions : undefined) ??
-      relatedEmergencyVisit?.medicalConditions ??
-      "Not recorded",
-    bloodGroup:
-      linkedFamilyMember?.bloodGroup ??
-      (!familyMemberId ? patientProfile?.bloodGroup : undefined) ??
-      relatedEmergencyVisit?.bloodGroup ??
-      "Not recorded",
+    reasonForVisit: appointment?.reasonForAppointment || "Not recorded",
+    allergies: linkedFamilyMember?.allergies ?? patientProfile?.allergies ?? "Not recorded",
+    chronicConditions: linkedFamilyMember?.medicalConditions ?? patientProfile?.medicalConditions ?? "Not recorded",
+    bloodGroup: linkedFamilyMember?.bloodGroup ?? patientProfile?.bloodGroup ?? "Not recorded",
     latestDiagnosis: latestRecord?.diagnosis ?? "Not recorded",
     latestClinicalNote: latestRecord?.clinicalNotes ?? "Not recorded",
     recentLabFindings:
@@ -3304,7 +3745,7 @@ export async function getDoctorHandoffSummary(
     pendingLabs:
       labRequests.filter((request) => request.status !== "Completed").map((request) => request.testName).join(", ") ||
       "No data available",
-    visitStatus: appointment?.status ?? relatedEmergencyVisit?.status ?? "Not recorded",
+    visitStatus: appointment?.status ?? "Not recorded",
     followUp: latestPrescription?.followUpDate ?? "Not recorded",
   };
 
@@ -3314,14 +3755,12 @@ export async function getDoctorHandoffSummary(
     action: "handoff.viewed",
     entityType: "patient-handoff",
     entityId: appointment?.id ?? patientId,
-    metadata: familyMemberId ? { familyMemberId } : undefined,
   });
 
   return {
     handoff: summary,
   };
 }
-
 
 function buildHistoryDateRange(
   preset: string,
@@ -5029,10 +5468,6 @@ export async function setAppointmentStatus(
       await insertInvoiceItems(createdInvoice.items);
     }
   });
-  const updatedDoctor =
-    status === "In consultation" || status === "Completed"
-      ? await applyAutomaticDoctorStatus(state, appointment.doctorId, appointment.organizationId, status)
-      : null;
   const patientNotificationTarget = appointment.patientId ?? user.id;
   const createdNotifications = await notifyUsers({
     organizationId: appointment.organizationId,
@@ -5089,7 +5524,6 @@ export async function setAppointmentStatus(
             ]
           : [],
       invoices: createdInvoice ? [createdInvoice] : [],
-      doctors: updatedDoctor ? [updatedDoctor] : [],
       notifications: [...createdNotifications, ...billingNotifications].filter(
         (notification) => notification.userId === user.id,
       ),
@@ -5184,15 +5618,10 @@ export async function advanceQueue(
       status,
     },
   });
-  const updatedDoctor =
-    status === "In consultation" || status === "Completed"
-      ? await applyAutomaticDoctorStatus(state, queueEntry.doctorId, queueEntry.organizationId, status)
-      : null;
   return {
     patch: {
       queueEntries: [updatedQueueEntry],
       appointments: updatedAppointment ? [updatedAppointment] : [],
-      doctors: updatedDoctor ? [updatedDoctor] : [],
       emergencyVisits:
         linkedEmergencyVisit
           ? [
@@ -5238,6 +5667,8 @@ type HospitalSettingsDraft = {
   afternoonSessionCapacity: number;
   eveningSessionCapacity: number;
   defaultLabSlotCapacity: number;
+  totalBeds: number;
+  occupiedBeds: number;
 };
 
 type StaffDraft = {
@@ -5354,6 +5785,16 @@ function validateHospitalSettingsDraft(draft: HospitalSettingsDraft) {
     if (!Number.isInteger(value) || value < 1) {
       errors[field] = "Enter a value of at least 1.";
     }
+  }
+
+  if (!Number.isInteger(draft.totalBeds) || draft.totalBeds < 0) {
+    errors.totalBeds = "Enter a valid total bed count.";
+  }
+
+  if (!Number.isInteger(draft.occupiedBeds) || draft.occupiedBeds < 0) {
+    errors.occupiedBeds = "Enter a valid occupied bed count.";
+  } else if (draft.occupiedBeds > draft.totalBeds) {
+    errors.occupiedBeds = "Occupied beds cannot exceed total beds.";
   }
 
   return {
@@ -5491,6 +5932,8 @@ export async function updateHospitalSettings(user: SafeUser, draft: HospitalSett
       defaultLanguage: draft.defaultLanguage.trim(),
       emergencyServicesEnabled: draft.emergencyServicesEnabled,
       defaultConsultationSlotDurationMinutes: draft.defaultConsultationSlotDurationMinutes,
+      totalBeds: draft.totalBeds,
+      occupiedBeds: draft.occupiedBeds,
     },
     bookingCapacity: {
       ...state.bookingCapacity,
@@ -5514,6 +5957,8 @@ export async function updateHospitalSettings(user: SafeUser, draft: HospitalSett
       labSlotCapacity: nextState.bookingCapacity.labSlotCapacity,
       configuredSupportLines: nextState.configuredSupportLines,
       sessions: nextState.bookingCapacity.sessions,
+      totalBeds: nextState.organization.totalBeds ?? 0,
+      occupiedBeds: nextState.organization.occupiedBeds ?? 0,
     }),
   );
   return {
@@ -5540,7 +5985,7 @@ export async function recordInvoicePayment(
     throw createHttpError(404, "Invoice not found.");
   }
 
-  const canManageBilling = user.role === "administrator" || user.role === "receptionist";
+  const canManageBilling = user.role === "receptionist";
   const isPatientOwner = user.role === "patient" && invoice.patientId === user.id;
 
   if (!canManageBilling && !isPatientOwner) {
@@ -5818,11 +6263,11 @@ export async function markAllUserNotificationsRead(user: SafeUser) {
 }
 
 export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
-  if (user.role !== "patient" && user.role !== "doctor") {
-    throw createHttpError(403, "You do not have access to create lab test requests.");
+  if (!["patient", "doctor"].includes(user.role)) {
+    throw createHttpError(403, "You do not have access to create laboratory requests.");
   }
 
-  const [state, users] = await Promise.all([loadHospitalState(), loadUsers()]);
+  const state = await loadHospitalState();
   const validation = validateLabRequestDraft(state, draft);
 
   if (!validation.isValid) {
@@ -5836,199 +6281,131 @@ export async function createLabRequest(user: SafeUser, draft: LabRequestDraft) {
     throw createHttpError(400, "The selected lab test could not be found.");
   }
 
+  const resolvedContext = resolveClinicalPatientContext(state, user, {
+    patientId: draft.patientId,
+    familyMemberId: draft.familyMemberId,
+    appointmentId: draft.appointmentId,
+  });
+
   if ((selectedTest.priceCents ?? 0) <= 0) {
     throw createHttpError(400, "Billing price is not configured for this service.", {
       errors: { testId: "Billing price is not configured for this service." },
     });
   }
 
-  let patientId: string;
-  let familyMemberId: string | undefined;
-  let patientName: string;
-  let orderingAppointment: AppointmentRecord | undefined;
-
-  if (user.role === "doctor") {
-    // A clinical order must be tied to a patient/dependent the doctor is actually
-    // treating — never an arbitrary organization-wide patientId.
-    const doctorAppointments = state.appointments.filter(
-      (appointment) => appointment.doctorId === user.doctorId,
-    );
-
-    orderingAppointment = draft.appointmentId
-      ? doctorAppointments.find((appointment) => appointment.id === draft.appointmentId)
-      : undefined;
-
-    if (draft.appointmentId && !orderingAppointment) {
-      throw createHttpError(403, "You do not have access to this workspace.");
-    }
-
-    const resolvedPatientId = draft.patientId?.trim() || orderingAppointment?.patientId;
-    if (!resolvedPatientId) {
-      throw createHttpError(400, "Select a patient to order this lab test for.", {
-        errors: { testId: "Select a patient before ordering a lab test." },
-      });
-    }
-
-    const isKnownPatient = doctorAppointments.some(
-      (appointment) => appointment.patientId === resolvedPatientId,
-    );
-    if (!isKnownPatient) {
-      throw createHttpError(403, "You do not have access to this workspace.");
-    }
-
-    const resolvedFamilyMemberId =
-      draft.familyMemberId?.trim() || orderingAppointment?.familyMemberId;
-    const familyMember = getFamilyMemberById(state, resolvedFamilyMemberId);
-    if (
-      resolvedFamilyMemberId &&
-      (!familyMember ||
-        familyMember.organizationId !== user.organizationId ||
-        familyMember.primaryPatientUserId !== resolvedPatientId)
-    ) {
-      throw createHttpError(403, "You do not have access to this workspace.");
-    }
-    // The dependent/patient must actually be someone this doctor has seen.
-    if (
-      resolvedFamilyMemberId &&
-      !doctorAppointments.some((appointment) => appointment.familyMemberId === resolvedFamilyMemberId)
-    ) {
-      throw createHttpError(403, "You do not have access to this workspace.");
-    }
-
-    const patientUser = users.find(
-      (currentUser) =>
-        currentUser.id === resolvedPatientId && currentUser.organizationId === user.organizationId,
-    );
-    if (!patientUser) {
-      throw createHttpError(400, "The selected patient could not be found.");
-    }
-
-    patientId = resolvedPatientId;
-    familyMemberId = resolvedFamilyMemberId;
-    patientName = familyMember?.fullName ?? patientUser.patientName ?? patientUser.displayName;
-  } else {
-    const familyMember = getFamilyMemberById(state, draft.familyMemberId);
-    if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== user.id)) {
-      throw createHttpError(403, "You do not have access to this workspace.");
-    }
-
-    patientId = user.id;
-    familyMemberId = draft.familyMemberId?.trim() || undefined;
-    patientName = familyMember?.fullName ?? (user.patientName ?? user.displayName);
-  }
-
-    const request: LabRequestRecord = {
+  const request: LabRequestRecord = {
     id: createLabRequestId(state),
-    patientId,
+    patientId: resolvedContext.patientUserId,
     hospitalId: user.organizationId,
     organizationId: user.organizationId,
-    patientName,
-    familyMemberId,
+    patientName: resolvedContext.patientName,
+    familyMemberId: resolvedContext.familyMember?.id,
+    appointmentId: resolvedContext.appointment?.id,
     testId: selectedTest.id,
     testName: selectedTest.name,
     departmentId: "dept-laboratory",
     requestedDate: draft.requestedDate,
     requestedTime: draft.requestedTime,
+    clinicalNotes: draft.clinicalNotes?.trim() || undefined,
+    orderedByUserId: user.id,
     status: "Requested",
-      createdAt: new Date().toISOString(),
-    };
+    createdAt: new Date().toISOString(),
+  };
 
-    const invoice =
-      state.invoices.find(
-        (currentInvoice) =>
-          currentInvoice.organizationId === request.organizationId &&
-          currentInvoice.sourceType === "lab-request" &&
-          currentInvoice.sourceId === request.id,
-      ) ??
-      buildInvoiceRecord({
-        patientId: request.patientId,
-        patientName: request.patientName,
-        organizationId: request.organizationId,
-        hospitalId: request.hospitalId,
-        sourceType: "lab-request",
-        sourceId: request.id,
-        dueDate: request.requestedDate,
-        items: [
-          {
-            description: request.testName,
-            category: "Laboratory",
-            quantity: 1,
-            unitAmountCents: selectedTest.priceCents ?? 0,
-          },
-        ],
-      });
-
-    const nextState: HospitalState = {
-      ...state,
-      labRequests: [request, ...state.labRequests],
-      invoices: state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
-        ? state.invoices
-        : [invoice, ...state.invoices],
-    };
-
-    await measurePerfStep("lab-request.create.write", () => insertLabRequest(request));
-    if (!state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)) {
-      await insertInvoice(invoice);
-      await insertInvoiceItems(invoice.items);
-    }
-    const labUserIds = users
-      .filter(
-        (currentUser) =>
-          currentUser.role === "laboratory" &&
-          currentUser.organizationId === request.organizationId,
-      )
-      .map((currentUser) => currentUser.id);
-    const isDoctorOrder = user.role === "doctor";
-    const recipientUserIds = isDoctorOrder
-      ? [user.id, ...labUserIds, ...(patientId !== user.id ? [patientId] : [])]
-      : [user.id, ...labUserIds];
-    const createdNotifications = await notifyUsers({
+  const invoice =
+    state.invoices.find(
+      (currentInvoice) =>
+        currentInvoice.organizationId === request.organizationId &&
+        currentInvoice.sourceType === "lab-request" &&
+        currentInvoice.sourceId === request.id,
+    ) ??
+    buildInvoiceRecord({
+      patientId: request.patientId,
+      patientName: request.patientName,
       organizationId: request.organizationId,
-      userIds: recipientUserIds,
-      title: isDoctorOrder ? "Lab test ordered by your doctor" : "Laboratory request booked",
-      message: isDoctorOrder
-        ? `Your doctor ordered ${request.testName} for ${request.requestedDate} at ${request.requestedTime}.`
-        : `${request.testName} was requested for ${request.requestedDate} at ${request.requestedTime}.`,
-      category: "Laboratory",
-      relatedEntityType: "lab-request",
-      relatedEntityId: request.id,
+      hospitalId: request.hospitalId,
+      sourceType: "lab-request",
+      sourceId: request.id,
+      dueDate: request.requestedDate,
+      items: [
+        {
+          description: request.testName,
+          category: "Laboratory",
+          quantity: 1,
+          unitAmountCents: selectedTest.priceCents ?? 0,
+        },
+      ],
     });
-    const billingNotifications = !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
-      ? await notifyUsers({
-          organizationId: request.organizationId,
-          userIds: [patientId],
-          title: "Invoice generated",
-          message: `Invoice ${invoice.invoiceNumber} was created for ${request.testName}.`,
-          category: "Billing",
-          relatedEntityType: "invoice",
-          relatedEntityId: invoice.id,
-        })
-      : [];
-    await writeAuditLog({
-      organizationId: user.organizationId,
-      actorUserId: user.id,
+
+  const nextState: HospitalState = {
+    ...state,
+    labRequests: [request, ...state.labRequests],
+    invoices: state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+      ? state.invoices
+      : [invoice, ...state.invoices],
+  };
+
+  await measurePerfStep("lab-request.create.write", () => insertLabRequest(request));
+  if (!state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)) {
+    await insertInvoice(invoice);
+    await insertInvoiceItems(invoice.items);
+  }
+  const users = await loadUsers();
+  const labUserIds = users
+    .filter(
+      (currentUser) =>
+        currentUser.role === "laboratory" &&
+        currentUser.organizationId === request.organizationId,
+    )
+    .map((currentUser) => currentUser.id);
+  const notificationUserIds = [...new Set([request.patientId, user.id, ...labUserIds])];
+  const createdNotifications = await notifyUsers({
+    organizationId: request.organizationId,
+    userIds: notificationUserIds,
+    title: user.role === "doctor" ? "Laboratory request ordered" : "Laboratory request booked",
+    message:
+      user.role === "doctor"
+        ? `${request.testName} was ordered for ${request.patientName} on ${request.requestedDate} at ${request.requestedTime}.`
+        : `${request.testName} was requested for ${request.requestedDate} at ${request.requestedTime}.`,
+    category: "Laboratory",
+    relatedEntityType: "lab-request",
+    relatedEntityId: request.id,
+  });
+  const billingNotifications = !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+    ? await notifyUsers({
+        organizationId: request.organizationId,
+        userIds: [request.patientId],
+        title: "Invoice generated",
+        message: `Invoice ${invoice.invoiceNumber} was created for ${request.testName}.`,
+        category: "Billing",
+        relatedEntityType: "invoice",
+        relatedEntityId: invoice.id,
+      })
+    : [];
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
     action: "lab-request.created",
     entityType: "lab-request",
     entityId: request.id,
     metadata: {
       testId: request.testId,
-      orderedByRole: user.role,
-      patientId,
-      familyMemberId,
+      patientId: request.patientId,
+      appointmentId: request.appointmentId ?? "",
     },
   });
   return {
-      patch: {
-        labRequests: [request],
-        invoices: !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
-          ? [invoice]
-          : [],
-        notifications: [...createdNotifications, ...billingNotifications].filter(
-          (notification) => notification.userId === user.id,
-        ),
-        meta: {
-          labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
-        },
+    patch: {
+      labRequests: [request],
+      invoices: !state.invoices.some((currentInvoice) => currentInvoice.sourceId === request.id)
+        ? [invoice]
+        : [],
+      notifications: [...createdNotifications, ...billingNotifications].filter(
+        (notification) => notification.userId === user.id,
+      ),
+      meta: {
+        labSlotLoads: getLabSlotLoads(nextState, request.organizationId),
+      },
     },
   };
 }
@@ -6565,29 +6942,24 @@ export async function createMedicalHistoryEntry(
     throw createHttpError(403, "You do not have access to update clinical history.");
   }
 
-  const validation = validateMedicalHistoryDraft(draft);
+  const validation = validateMedicalHistoryDraft(user, draft);
   if (!validation.isValid) {
     throw createHttpError(400, "Please review the clinical history details provided.", {
       errors: validation.errors,
     });
   }
 
-  const patientUserId = user.role === "patient" ? user.id : undefined;
-  if (!patientUserId) {
-    throw createHttpError(400, "A patient context is required for this update.");
-  }
-
   const state = await loadHospitalState();
-  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
-  if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== patientUserId)) {
-    throw createHttpError(403, "You do not have access to this workspace.");
-  }
+  const resolvedContext = resolveClinicalPatientContext(state, user, {
+    patientId: draft.patientId,
+    familyMemberId: draft.familyMemberId,
+  });
 
   const entry: MedicalHistoryEntryRecord = {
     id: `HIST-${Date.now()}-${randomBytes(3).toString("hex")}`,
     organizationId: user.organizationId,
-    patientUserId,
-    familyMemberId: draft.familyMemberId?.trim() || undefined,
+    patientUserId: resolvedContext.patientUserId,
+    familyMemberId: resolvedContext.familyMember?.id,
     category: draft.category,
     title: draft.title.trim(),
     details: draft.details?.trim() || undefined,
@@ -6642,22 +7014,17 @@ export async function createClinicalAttachment(
     });
   }
 
-  const patientUserId = user.role === "patient" ? user.id : undefined;
-  if (!patientUserId) {
-    throw createHttpError(400, "A patient context is required for this upload.");
-  }
-
   const state = await loadHospitalState();
-  const familyMember = getFamilyMemberById(state, draft.familyMemberId);
-  if (draft.familyMemberId && (!familyMember || familyMember.primaryPatientUserId !== patientUserId)) {
-    throw createHttpError(403, "You do not have access to this workspace.");
-  }
+  const resolvedContext = resolveClinicalPatientContext(state, user, {
+    patientId: draft.patientId,
+    familyMemberId: draft.familyMemberId,
+  });
 
   const attachment: ClinicalAttachmentRecord = {
     id: `ATT-${Date.now()}-${randomBytes(3).toString("hex")}`,
     organizationId: user.organizationId,
-    patientUserId,
-    familyMemberId: draft.familyMemberId?.trim() || undefined,
+    patientUserId: resolvedContext.patientUserId,
+    familyMemberId: resolvedContext.familyMember?.id,
     medicalRecordId: draft.medicalRecordId?.trim() || undefined,
     label: draft.label.trim(),
     fileName: sanitizeAttachmentFileName(draft.fileName.trim()),

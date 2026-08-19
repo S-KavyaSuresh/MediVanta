@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppointmentFormModal } from "@/components/dashboard/appointment-form-modal";
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
@@ -10,11 +10,17 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
-import { getTelemedicineJoinAvailability, sortPatientAppointments } from "@/lib/hospital-data";
+import { useToast } from "@/components/providers/toast-provider";
+import { apiRequest } from "@/lib/api";
+import type { DoctorRatingRecord } from "@/lib/hospital-data";
+import { comparePatientAppointments, getTelemedicineJoinAvailability } from "@/lib/hospital-data";
 
 export function PatientAppointmentsView() {
   const { session } = useAuth();
+  const { pushToast } = useToast();
   const {
     createAppointment,
     getDepartmentName,
@@ -27,16 +33,50 @@ export function PatientAppointmentsView() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [ratings, setRatings] = useState<Record<string, DoctorRatingRecord>>({});
+  const [ratingAppointmentId, setRatingAppointmentId] = useState<string | null>(null);
+  const [ratingValue, setRatingValue] = useState("5");
+  const [ratingComment, setRatingComment] = useState("");
 
   const editingAppointment =
     state.appointments.find((appointment) => appointment.id === editingId) ?? null;
   const now = new Date();
-  const orderedAppointments = sortPatientAppointments(state.appointments);
+  const activeRating = ratingAppointmentId ? ratings[ratingAppointmentId] : undefined;
+
+  useEffect(() => {
+    let active = true;
+
+    const loadRatings = async () => {
+      try {
+        const response = await apiRequest<{ ratings: DoctorRatingRecord[] }>("/api/hospital/doctor-ratings/mine");
+        if (!active) {
+          return;
+        }
+        setRatings(
+          Object.fromEntries(response.ratings.map((rating) => [rating.appointmentId, rating])),
+        );
+      } catch {
+        if (active) {
+          setRatings({});
+        }
+      }
+    };
+
+    void loadRatings();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const sortedAppointments = [...state.appointments].sort((left, right) =>
+    comparePatientAppointments(left, right, now),
+  );
 
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="My Dashboard"
+        eyebrow="Appointments"
         title="My Appointments"
         description="Review scheduled visits, reschedule eligible bookings, and join your online consultations from one place."
         action={
@@ -51,9 +91,9 @@ export function PatientAppointmentsView() {
           </Button>
         }
       />
-      {orderedAppointments.length > 0 ? (
+      {sortedAppointments.length > 0 ? (
         <div className="space-y-4">
-          {orderedAppointments.map((appointment) => {
+          {sortedAppointments.map((appointment) => {
             const joinAvailability = getTelemedicineJoinAvailability(appointment);
             const canManageAppointment =
               appointment.status === "Scheduled" &&
@@ -129,6 +169,31 @@ export function PatientAppointmentsView() {
                   </Link>
                 </div>
               ) : null}
+              {appointment.status === "Completed" ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {ratings[appointment.id]
+                        ? `Your rating: ${ratings[appointment.id].rating}/5`
+                        : "Rate this doctor"}
+                    </p>
+                    <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                      Share a brief review after a completed consultation.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setRatingAppointmentId(appointment.id);
+                      setRatingValue(String(ratings[appointment.id]?.rating ?? 5));
+                      setRatingComment(ratings[appointment.id]?.reviewComment ?? "");
+                    }}
+                  >
+                    {ratings[appointment.id] ? "Edit Rating" : "Rate Doctor"}
+                  </Button>
+                </div>
+              ) : null}
               </Card>
             );
           })}
@@ -169,6 +234,73 @@ export function PatientAppointmentsView() {
               })
         }
       />
+      <Modal
+        open={Boolean(ratingAppointmentId)}
+        onClose={() => {
+          setRatingAppointmentId(null);
+          setRatingValue("5");
+          setRatingComment("");
+        }}
+        title="Rate doctor"
+        description="Ratings are available after a completed appointment and are saved per appointment."
+      >
+        <form
+          className="space-y-4"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!ratingAppointmentId) {
+              return;
+            }
+            try {
+              const response = await apiRequest<{
+                rating: DoctorRatingRecord;
+              }>("/api/hospital/doctor-ratings", {
+                method: "POST",
+                body: JSON.stringify({
+                  appointmentId: ratingAppointmentId,
+                  rating: Number(ratingValue),
+                  reviewComment: ratingComment || undefined,
+                }),
+              });
+              setRatings((current) => ({
+                ...current,
+                [response.rating.appointmentId]: response.rating,
+              }));
+              pushToast("Rating saved", "Your doctor rating has been recorded.");
+              setRatingAppointmentId(null);
+              setRatingValue("5");
+              setRatingComment("");
+            } catch (submitError) {
+              pushToast(
+                "Unable to save rating",
+                submitError instanceof Error ? submitError.message : "Please review the rating details.",
+              );
+            }
+          }}
+        >
+          <div>
+            <label className="mb-2 block text-sm font-medium">Rating</label>
+            <Input
+              type="number"
+              min="1"
+              max="5"
+              value={ratingValue}
+              onChange={(event) => setRatingValue(event.target.value)}
+            />
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Review</label>
+            <Input
+              value={ratingComment}
+              onChange={(event) => setRatingComment(event.target.value)}
+              placeholder="Optional review"
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit">{activeRating ? "Save changes" : "Submit rating"}</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
