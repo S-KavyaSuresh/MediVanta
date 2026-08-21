@@ -12,10 +12,6 @@ import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/api";
 import { getSafeLandingPath, normalizeAuthSession, type AuthSession } from "@/lib/auth";
 
-const googleOAuthUrl = `${(
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000"
-).replace(/\/+$/, "")}/api/auth/google`;
-
 export function LoginForm() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
@@ -138,7 +134,7 @@ export function LoginForm() {
           {submitting ? "Signing in..." : "Sign in"}
         </Button>
         <a
-          href={googleOAuthUrl}
+          href="/api/auth/google"
           className="flex h-12 w-full items-center justify-center rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] px-4 text-sm font-semibold text-[color:var(--foreground)] transition hover:bg-[color:var(--surface-muted)]"
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" className="mr-2 h-5 w-5">
