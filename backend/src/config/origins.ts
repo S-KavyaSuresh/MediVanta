@@ -1,5 +1,11 @@
 import { env } from "./env.js";
 
+const BUILT_IN_CLIENT_ORIGINS = [
+  "https://medi-vanta-frontend.vercel.app",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+
 function normalizeOrigin(origin: string) {
   return origin.replace(/\/+$/, "").toLowerCase();
 }
@@ -12,8 +18,7 @@ export function getAllowedClientOrigins() {
         .split(",")
         .map((origin) => origin.trim())
         .filter(Boolean),
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
+      ...BUILT_IN_CLIENT_ORIGINS,
     ].map(normalizeOrigin),
   );
 }
