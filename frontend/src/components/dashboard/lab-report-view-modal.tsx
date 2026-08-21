@@ -53,6 +53,16 @@ function saveLabReportDownload(report: LabReportRecord, organizationName: string
     return;
   }
 
+  if (report.attachment?.storageUrl) {
+    const anchor = document.createElement("a");
+    anchor.href = report.attachment.storageUrl;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.download = report.attachment.fileName;
+    anchor.click();
+    return;
+  }
+
   const fallbackContents = [
     `Report: ${report.reportTitle}`,
     `Test: ${report.testName}`,
@@ -70,7 +80,7 @@ function saveLabReportDownload(report: LabReportRecord, organizationName: string
 }
 
 async function resolveReportForDownload(report: LabReportRecord) {
-  if (report.attachment?.contentBase64) {
+  if (report.attachment?.contentBase64 || report.attachment?.storageUrl) {
     return report;
   }
 

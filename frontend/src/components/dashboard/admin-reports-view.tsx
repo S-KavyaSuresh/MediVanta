@@ -39,6 +39,7 @@ export function AdminReportsView() {
   const [scope, setScope] = useState<AnalyticsScope>("today");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [analytics, setAnalytics] = useState<
     Awaited<ReturnType<typeof fetchOperationalAnalytics>>["analytics"]
   >(undefined);
@@ -71,7 +72,7 @@ export function AdminReportsView() {
     return () => {
       mounted = false;
     };
-  }, [fetchOperationalAnalytics, scope]);
+  }, [fetchOperationalAnalytics, retryCount, scope]);
 
   const trendPeak = useMemo(
     () => Math.max(...(analytics?.trends.map((item) => item.appointments) ?? [1])),
@@ -109,7 +110,15 @@ export function AdminReportsView() {
           description="Preparing the latest operational metrics for this hospital workspace."
         />
       ) : error || !analytics ? (
-        <EmptyState title="Analytics unavailable" description={error ?? "No analytics data available."} />
+        <EmptyState
+          title="Analytics unavailable"
+          description={error ?? "No analytics data available."}
+          action={
+            <Button type="button" onClick={() => setRetryCount((current) => current + 1)}>
+              Retry
+            </Button>
+          }
+        />
       ) : (
         <>
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">

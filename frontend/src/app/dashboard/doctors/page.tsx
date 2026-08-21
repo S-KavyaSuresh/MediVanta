@@ -4,16 +4,21 @@ import { useMemo, useState } from "react";
 
 import { useHospitalData } from "@/components/dashboard/hospital-data-provider";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
+import { useAuth } from "@/components/providers/auth-provider";
 
 export default function DashboardDoctorsPage() {
-  const { getDepartmentName, state } = useHospitalData();
+  const { session } = useAuth();
+  const { getDepartmentName, state, updateDoctorBranch } = useHospitalData();
   const [query, setQuery] = useState("");
   const [departmentId, setDepartmentId] = useState("all");
   const [status, setStatus] = useState("all");
+  const [branchSelections, setBranchSelections] = useState<Record<string, string>>({});
+  const [savingBranchId, setSavingBranchId] = useState<string | null>(null);
 
   const doctors = useMemo(() => {
     return state.doctors.filter((doctor) => {
@@ -29,6 +34,22 @@ export default function DashboardDoctorsPage() {
       return matchesQuery && matchesDepartment && matchesStatus;
     });
   }, [departmentId, query, state.doctors, status]);
+  const branchesById = useMemo(
+    () => new Map((state.branches ?? []).map((branch) => [branch.id, branch.name] as const)),
+    [state.branches],
+  );
+  const activeBranches = useMemo(() => (state.branches ?? []).filter((branch) => branch.active), [state.branches]);
+  const canManageBranches =
+    session.user.role === "administrator" || session.permissions.includes("branch:manage");
+
+  async function saveDoctorBranch(doctorId: string) {
+    setSavingBranchId(doctorId);
+    try {
+      await updateDoctorBranch(doctorId, branchSelections[doctorId] || undefined);
+    } finally {
+      setSavingBranchId(null);
+    }
+  }
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -96,6 +117,43 @@ export default function DashboardDoctorsPage() {
               <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
                 {doctor.shiftLabel}
               </p>
+            </div>
+
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] px-4 py-4">
+              <p className="text-sm font-semibold">Hospital Branch</p>
+              {canManageBranches ? (
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <Select
+                    value={branchSelections[doctor.id] ?? doctor.branchId ?? ""}
+                    onChange={(event) =>
+                      setBranchSelections((current) => ({
+                        ...current,
+                        [doctor.id]: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Not assigned</option>
+                    {activeBranches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void saveDoctorBranch(doctor.id)}
+                    disabled={savingBranchId === doctor.id}
+                    className="shrink-0"
+                  >
+                    {savingBranchId === doctor.id ? "Saving..." : "Save Branch"}
+                  </Button>
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-[color:var(--muted-foreground)]">
+                  {doctor.branchId ? branchesById.get(doctor.branchId) ?? "Not assigned" : "Not assigned"}
+                </p>
+              )}
             </div>
           </Card>
         ))}

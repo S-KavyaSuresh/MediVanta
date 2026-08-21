@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/providers/auth-provider";
@@ -76,18 +77,12 @@ export function ProfileSecurityPanel() {
   const [devCode, setDevCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function loadSessions() {
-    setLoadingSessions(true);
-
-    try {
-      const response = await apiRequest<{ sessions: ActiveSession[] }>("/api/auth/sessions");
-      setSessions(response.sessions);
-    } catch {
-      setSessions([]);
-    } finally {
-      setLoadingSessions(false);
-    }
-  }
+  const sortedSessions = [...sessions].sort((left, right) =>
+    (right.lastUsedAt || right.createdAt || "").localeCompare(left.lastUsedAt || left.createdAt || ""),
+  );
+  const activeSessionCount = sessions.length;
+  const currentSession = sortedSessions.find((activeSession) => activeSession.current);
+  const recentSession = currentSession ?? sortedSessions[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -145,7 +140,7 @@ export function ProfileSecurityPanel() {
                 variant="secondary"
                 disabled={busy}
                 onClick={async () => {
-                setBusy(true);
+                  setBusy(true);
                   setMessage("");
 
                   try {
@@ -210,52 +205,45 @@ export function ProfileSecurityPanel() {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Active Sessions</h2>
           <p className="text-sm text-[color:var(--muted-foreground)]">
-            Review recent signed-in devices and close any session you do not recognize.
+            Review your signed-in devices and close any session you do not recognize.
           </p>
         </div>
         {loadingSessions ? (
           <p className="text-sm text-[color:var(--muted-foreground)]">Loading sessions...</p>
         ) : (
           <div className="space-y-3">
-            {sessions.map((activeSession) => (
-              <div
-                key={activeSession.id}
-                className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)]/50 p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-1">
-                    <p className="text-sm font-semibold">
-                      {getHumanReadableDeviceLabel(activeSession)}
-                    </p>
-                    <p className="text-sm text-[color:var(--muted-foreground)]">
-                      {activeSession.current ? "Current device" : "Signed-in device"}
-                    </p>
-                    <p className="text-xs text-[color:var(--muted-foreground)]">
-                      Last active: {formatDate(activeSession.lastUsedAt)}
-                    </p>
-                  </div>
-                  {activeSession.current ? (
-                    <Badge variant="info">Current</Badge>
+            <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)]/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-semibold">
+                    {activeSessionCount === 1
+                      ? "1 active session/device"
+                      : `${activeSessionCount} active sessions/devices`}
+                  </p>
+                  {recentSession ? (
+                    <>
+                      <p className="text-sm text-[color:var(--muted-foreground)]">
+                        {getHumanReadableDeviceLabel(recentSession)}
+                      </p>
+                      <p className="text-xs text-[color:var(--muted-foreground)]">
+                        Last active: {formatDate(recentSession.lastUsedAt)}
+                      </p>
+                    </>
                   ) : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={async () => {
-                        await apiRequest(`/api/auth/sessions/${activeSession.id}`, {
-                          method: "DELETE",
-                        });
-                        await loadSessions();
-                      }}
-                    >
-                      Revoke
-                    </Button>
+                    <p className="text-sm text-[color:var(--muted-foreground)]">
+                      No active sessions found.
+                    </p>
                   )}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-4 text-xs text-[color:var(--muted-foreground)]">
-                  <span>Signed in: {formatDate(activeSession.createdAt)}</span>
-                </div>
+                {recentSession?.current ? <Badge variant="info">Current</Badge> : null}
               </div>
-            ))}
+            </div>
+            <Link
+              href="/dashboard/profile/sessions"
+              className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-2.5 text-sm font-semibold text-[color:var(--foreground)] transition duration-200 hover:bg-[color:var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]"
+            >
+              View Active Sessions
+            </Link>
           </div>
         )}
       </Card>

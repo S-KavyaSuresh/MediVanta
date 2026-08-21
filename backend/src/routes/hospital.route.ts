@@ -6,6 +6,7 @@ import {
   createAppointment,
   createClinicalAttachment,
   createInventoryBatch,
+  createHospitalBranch,
   createDepartment,
   createEmergencyVisitForOperations,
   createFamilyMember,
@@ -28,7 +29,9 @@ import {
   getLabReportForUser,
   getLabRequestsForUser,
   getJourneyByToken,
+  loadScopedNotificationsForUser,
   getOperationalAnalytics,
+  listHospitalBranches,
   getScopedHospitalStateForUser,
   getTelemedicineMessages,
   getTelemedicineSessionForAppointment,
@@ -43,6 +46,8 @@ import {
   setTelemedicineSessionStatus,
   unlinkFamilyMember,
   updateFamilyMember,
+  updateDoctorBranch,
+  updateHospitalBranch,
   updateUserAccountStatus,
   updateHospitalSettings,
   updateInventoryBatch,
@@ -73,17 +78,23 @@ import {
   requireCapabilities,
   requireVerifiedEmail,
 } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 const hospitalRouter = Router();
 
 const appointmentDraftSchema = z.object({
   patientName: z.string(),
   familyMemberId: z.string().optional(),
+  branchId: z.string().optional(),
   doctorId: z.string(),
   appointmentDate: z.string(),
   appointmentTime: z.string(),
   reasonForAppointment: z.string(),
   consultationMode: z.enum(["In Person", "Online"]).default("In Person"),
+  paymentMethod: z
+    .enum(["UPI", "Credit Card", "Debit Card", "Net Banking"])
+    .optional(),
+  paymentReferenceNumber: z.string().optional(),
 });
 
 const appointmentStatusSchema = z.object({
@@ -106,12 +117,54 @@ const departmentDraftSchema = z.object({
   location: z.string(),
 });
 
+const branchDraftSchema = z.object({
+  code: z.string().optional(),
+  name: z.string(),
+  address: z.string(),
+  city: z.string(),
+  state: z.string().optional(),
+  postalCode: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  active: z.boolean().optional(),
+});
+
+const branchQuerySchema = z.object({
+  q: z.string().optional(),
+  status: z.preprocess((value) => {
+    if (typeof value !== "string" || !value.trim()) {
+      return "All";
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "active") {
+      return "Active";
+    }
+    if (normalized === "inactive") {
+      return "Inactive";
+    }
+    if (normalized === "all") {
+      return "All";
+    }
+    return value;
+  }, z.enum(["All", "Active", "Inactive"])).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
+});
+
+const doctorBranchDraftSchema = z.object({
+  branchId: z.string().optional(),
+});
+
 const staffDraftSchema = z.object({
   displayName: z.string(),
   email: z.string(),
-  role: z.enum(["doctor", "receptionist", "laboratory", "pharmacist"]),
+  temporaryPassword: z.string(),
+  role: z.enum(["doctor", "receptionist", "laboratory", "pharmacist", "administrator"]),
   departmentId: z.string().optional(),
+  branchId: z.string().optional(),
   specialization: z.string().optional(),
+  consultationFee: z.string().optional(),
   status: z.string(),
 });
 
@@ -126,7 +179,7 @@ const labRequestDraftSchema = z.object({
 });
 
 const labRequestStatusSchema = z.object({
-  status: z.enum(["Requested", "Scheduled", "Sample Collected", "Processing"]),
+  status: z.enum(["Requested", "Scheduled", "Sample Collected", "Processing", "Missed"]),
 });
 
 const labReportDraftSchema = z.object({
@@ -555,6 +608,99 @@ hospitalRouter.get(
 );
 
 hospitalRouter.get(
+  "/admin/analytics",
+  requireCapabilities("reports:view"),
+  async (request, response, next) => {
+    try {
+      const { scope } = analyticsQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await getOperationalAnalytics(request.authUser!, scope)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
+  "/branches",
+  requireCapabilities("branch:view"),
+  async (request, response, next) => {
+    try {
+      const query = branchQuerySchema.parse(request.query);
+      response.json({
+        success: true,
+        ...(await listHospitalBranches(request.authUser!, {
+          query: query.q,
+          status: query.status,
+          page: query.page,
+          pageSize: query.pageSize,
+        })),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.post(
+  "/branches",
+  rateLimit({ key: "branch-create", limit: 30, windowMs: 60_000 }),
+  requireVerifiedEmail,
+  requireCapabilities("branch:manage"),
+  async (request, response, next) => {
+    try {
+      const draft = branchDraftSchema.parse(request.body);
+      response.status(201).json({
+        success: true,
+        ...(await createHospitalBranch(request.authUser!, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/branches/:branchId",
+  rateLimit({ key: "branch-update", limit: 60, windowMs: 60_000 }),
+  requireVerifiedEmail,
+  requireCapabilities("branch:manage"),
+  async (request, response, next) => {
+    try {
+      const branchId = getRouteParam(request.params.branchId);
+      const draft = branchDraftSchema.parse(request.body);
+      response.json({
+        success: true,
+        ...(await updateHospitalBranch(request.authUser!, branchId, draft)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.patch(
+  "/doctors/:doctorId/branch",
+  rateLimit({ key: "doctor-branch-update", limit: 60, windowMs: 60_000 }),
+  requireVerifiedEmail,
+  requireCapabilities("branch:manage"),
+  async (request, response, next) => {
+    try {
+      const doctorId = getRouteParam(request.params.doctorId);
+      const draft = doctorBranchDraftSchema.parse(request.body);
+      response.json({
+        success: true,
+        ...(await updateDoctorBranch(request.authUser!, doctorId, draft.branchId)),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+hospitalRouter.get(
   "/admin/emergency-visits",
   requireCapabilities("operations:view"),
   async (request, response, next) => {
@@ -853,6 +999,7 @@ hospitalRouter.post(
 
 hospitalRouter.post(
   "/clinical-attachments",
+  rateLimit({ key: "clinical-attachment-upload", limit: 30, windowMs: 60_000 }),
   requireCapabilities("clinical-attachment:create"),
   async (request, response, next) => {
     try {
@@ -937,6 +1084,7 @@ hospitalRouter.patch(
 
 hospitalRouter.post(
   "/invoices/:invoiceId/payments",
+  rateLimit({ key: "invoice-payment", limit: 60, windowMs: 60_000 }),
   async (request, response, next) => {
     try {
       const draft = paymentDraftSchema.parse(request.body);
@@ -987,6 +1135,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/suppliers",
+  rateLimit({ key: "supplier-create", limit: 40, windowMs: 60_000 }),
   requireCapabilities("supplier:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1004,6 +1153,7 @@ hospitalRouter.post(
 
 hospitalRouter.patch(
   "/suppliers/:supplierId",
+  rateLimit({ key: "supplier-update", limit: 80, windowMs: 60_000 }),
   requireCapabilities("supplier:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1038,6 +1188,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/purchase-orders",
+  rateLimit({ key: "purchase-order-create", limit: 40, windowMs: 60_000 }),
   requireCapabilities("purchase-order:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1055,6 +1206,7 @@ hospitalRouter.post(
 
 hospitalRouter.patch(
   "/purchase-orders/:purchaseOrderId",
+  rateLimit({ key: "purchase-order-update", limit: 80, windowMs: 60_000 }),
   requireCapabilities("purchase-order:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1073,6 +1225,7 @@ hospitalRouter.patch(
 
 hospitalRouter.post(
   "/purchase-orders/:purchaseOrderId/receive",
+  rateLimit({ key: "purchase-order-receive", limit: 40, windowMs: 60_000 }),
   requireCapabilities("purchase-order:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1091,6 +1244,7 @@ hospitalRouter.post(
 
 hospitalRouter.post(
   "/inventory-items",
+  rateLimit({ key: "inventory-create", limit: 60, windowMs: 60_000 }),
   requireCapabilities("inventory:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1108,6 +1262,7 @@ hospitalRouter.post(
 
 hospitalRouter.patch(
   "/inventory-items/:inventoryItemId",
+  rateLimit({ key: "inventory-update", limit: 90, windowMs: 60_000 }),
   requireCapabilities("inventory:manage"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1157,6 +1312,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/doctor-ratings",
+  rateLimit({ key: "doctor-rating", limit: 40, windowMs: 60_000 }),
   requireCapabilities("doctor-rating:create"),
   requireVerifiedEmail,
   async (request, response, next) => {
@@ -1188,8 +1344,65 @@ hospitalRouter.patch(
   },
 );
 
+hospitalRouter.get(
+  "/notifications/stream",
+  requireCapabilities("notifications:view"),
+  async (request, response) => {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.write(": connected\n\n");
+
+    let closed = false;
+    let lastPayload = "";
+
+    const sendNotifications = async () => {
+      if (closed) {
+        return;
+      }
+
+      try {
+        const notifications = await loadScopedNotificationsForUser(request.authUser!);
+        const payload = JSON.stringify({ notifications });
+
+        if (payload !== lastPayload) {
+          response.write("event: notifications\n");
+          response.write(`data: ${payload}\n\n`);
+          lastPayload = payload;
+        }
+      } catch {
+        response.write("event: error\n");
+        response.write('data: {"message":"Notifications are not available right now."}\n\n');
+      }
+    };
+
+    await sendNotifications();
+    const interval = setInterval(() => {
+      void sendNotifications();
+    }, 5000);
+    const heartbeat = setInterval(() => {
+      if (!closed) {
+        response.write(": heartbeat\n\n");
+      }
+    }, 15000);
+
+    request.on("close", () => {
+      closed = true;
+      clearInterval(interval);
+      clearInterval(heartbeat);
+      if (!response.destroyed) {
+        response.end();
+      }
+    });
+  },
+);
+
 hospitalRouter.post(
   "/notifications/read-all",
+  rateLimit({ key: "notifications-read-all", limit: 60, windowMs: 60_000 }),
   requireCapabilities("notifications:view"),
   async (request, response, next) => {
     try {
@@ -1221,6 +1434,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/telemedicine/appointments/:appointmentId/join",
+  rateLimit({ key: "telemedicine-join", limit: 40, windowMs: 60_000 }),
   requireCapabilities("telemedicine:join"),
   async (request, response, next) => {
     try {
@@ -1253,6 +1467,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/telemedicine/sessions/:sessionId/messages",
+  rateLimit({ key: "telemedicine-message", limit: 120, windowMs: 60_000 }),
   requireCapabilities("telemedicine:join"),
   async (request, response, next) => {
     try {
@@ -1287,6 +1502,7 @@ hospitalRouter.get(
 
 hospitalRouter.post(
   "/telemedicine/sessions/:sessionId/signals",
+  rateLimit({ key: "telemedicine-signal", limit: 240, windowMs: 60_000 }),
   requireCapabilities("telemedicine:join"),
   async (request, response, next) => {
     try {

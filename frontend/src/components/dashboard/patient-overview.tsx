@@ -32,6 +32,13 @@ export function PatientOverview() {
     (sum, invoice) => sum + invoice.amountDueCents,
     0,
   );
+  const completedConsultations = state.appointments.filter(
+    (appointment) => appointment.status === "Completed",
+  ).length;
+  const pendingLabs = state.labRequests.filter(
+    (request) => request.status !== "Completed",
+  ).length;
+  const completedLabReports = state.labReports.length;
   const activeFamilyMemberName = upcomingAppointment?.familyMemberId
     ? state.familyMembers?.find((member) => member.id === upcomingAppointment.familyMemberId)?.fullName
     : null;
@@ -125,7 +132,7 @@ export function PatientOverview() {
   return (
     <div className="space-y-6 md:space-y-8">
       <PageHeader
-        eyebrow="Patient Dashboard"
+        eyebrow="My Dashboard"
         title="Your appointments, records, and hospital updates"
         description="Keep track of your upcoming visit, care documents, and the latest progress connected to your account."
       />
@@ -277,6 +284,27 @@ export function PatientOverview() {
           description="When a future visit is scheduled or an active visit is in progress, appointment details and related updates will appear here."
         />
       )}
+
+      <Card className="space-y-4">
+        <h2 className="text-xl font-semibold">Health statistics</h2>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Total visits", state.appointments.length],
+            ["Completed consultations", completedConsultations],
+            ["Active prescriptions", issuedPrescriptionCount],
+            ["Pending lab tests", pendingLabs],
+            ["Completed lab reports", completedLabReports],
+          ].map(([label, value]) => (
+            <div
+              key={String(label)}
+              className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] px-4 py-3"
+            >
+              <p className="text-sm text-[color:var(--muted-foreground)]">{label}</p>
+              <p className="mt-1 text-2xl font-semibold">{value}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

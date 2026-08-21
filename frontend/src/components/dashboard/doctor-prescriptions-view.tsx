@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { PrescriptionViewModal } from "@/components/dashboard/prescription-view-modal";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -264,6 +265,9 @@ function validatePrescriptionDraft(draft: PrescriptionDraft, patientId: string) 
 }
 
 export function DoctorPrescriptionsView() {
+  const searchParams = useSearchParams();
+  const appointmentIdFromConsultation = searchParams.get("appointmentId") ?? "";
+  const returnToConsultation = searchParams.get("returnTo") ?? "";
   const { createPrescription, meta, state, updatePrescription } = useHospitalData();
   const [message, setMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -361,6 +365,7 @@ export function DoctorPrescriptionsView() {
     followUpDate: undefined,
   });
   const [medicineSearch, setMedicineSearch] = useState<string[]>([""]);
+  const appliedConsultationAppointmentRef = useRef("");
 
   const activePatientId =
     draft.patientId && patientOptions.some((patient) => patient.patientId === draft.patientId)
@@ -387,6 +392,35 @@ export function DoctorPrescriptionsView() {
     prescriptions.find((prescription) => prescription.id === selectedPrescriptionId) ?? null;
   const editingPrescription =
     prescriptions.find((prescription) => prescription.id === editingPrescriptionId) ?? null;
+
+  useEffect(() => {
+    if (
+      !appointmentIdFromConsultation ||
+      appliedConsultationAppointmentRef.current === appointmentIdFromConsultation ||
+      editingPrescriptionId
+    ) {
+      return;
+    }
+
+    const appointment = state.appointments.find(
+      (entry) => entry.id === appointmentIdFromConsultation,
+    );
+
+    if (!appointment?.patientId) {
+      return;
+    }
+
+    appliedConsultationAppointmentRef.current = appointmentIdFromConsultation;
+    const timer = window.setTimeout(() => {
+      setDraft((current) => ({
+        ...current,
+        patientId: appointment.patientId ?? "",
+        appointmentId: appointment.id,
+      }));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [appointmentIdFromConsultation, editingPrescriptionId, state.appointments]);
 
   useEffect(() => {
     if (!message) {
@@ -466,9 +500,32 @@ export function DoctorPrescriptionsView() {
     <div className="space-y-6 md:space-y-8">
       <PageHeader
         eyebrow="Doctor Workspace"
-      title="Prescriptions"
-      description="Issue prescriptions for patients already within your scoped consultation list and keep recent medication orders easy to review."
+        title="Prescriptions"
+        description="Issue prescriptions for patients already within your scoped consultation list and keep recent medication orders easy to review."
+        action={
+          returnToConsultation ? (
+            <Link href={returnToConsultation}>
+              <Button type="button" variant="secondary">
+                Back to Consultation
+              </Button>
+            </Link>
+          ) : undefined
+        }
       />
+
+      {returnToConsultation ? (
+        <Card className="flex flex-wrap items-center justify-between gap-3 border-[color:var(--accent)]/25 bg-[color:var(--accent)]/8">
+          <div>
+            <p className="font-semibold">Consultation in progress</p>
+            <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+              Return to the online consultation after saving this prescription.
+            </p>
+          </div>
+          <Link href={returnToConsultation}>
+            <Button type="button">Back to Consultation</Button>
+          </Link>
+        </Card>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.35fr)]">
         <Card className="space-y-4">

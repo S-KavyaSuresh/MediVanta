@@ -41,6 +41,25 @@ export function DoctorOverview() {
     .sort((left, right) =>
       left.appointmentTime.localeCompare(right.appointmentTime),
     )[0];
+  const doctorAppointments = state.appointments.filter(
+    (appointment) => appointment.doctorId === session.user.doctorId,
+  );
+  const doctorPrescriptions = state.prescriptions.filter(
+    (prescription) => prescription.doctorId === session.user.doctorId,
+  );
+  const doctorPendingLabFollowUps = state.labRequests.filter(
+    (request) =>
+      request.orderedByUserId === session.user.id &&
+      request.status !== "Completed",
+  ).length;
+  const uniquePatientsTreated = new Set(
+    doctorAppointments
+      .filter((appointment) => appointment.status === "Completed")
+      .map((appointment) => appointment.familyMemberId ?? appointment.patientId ?? appointment.patientName),
+  ).size;
+  const completedConsultations = doctorAppointments.filter(
+    (appointment) => appointment.status === "Completed",
+  ).length;
 
   useEffect(() => {
     let active = true;
@@ -150,6 +169,26 @@ export function DoctorOverview() {
           description="Your upcoming consultation schedule will appear here as appointments are assigned."
         />
       )}
+
+      <Card className="space-y-4">
+        <h2 className="text-xl font-semibold">Patient statistics</h2>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Unique patients treated", uniquePatientsTreated],
+            ["Completed consultations", completedConsultations],
+            ["Prescriptions issued", doctorPrescriptions.length],
+            ["Pending lab follow-ups", doctorPendingLabFollowUps],
+          ].map(([label, value]) => (
+            <div
+              key={String(label)}
+              className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] px-4 py-3"
+            >
+              <p className="text-sm text-[color:var(--muted-foreground)]">{label}</p>
+              <p className="mt-1 text-2xl font-semibold">{value}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

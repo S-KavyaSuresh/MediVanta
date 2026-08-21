@@ -21,6 +21,8 @@ export type Capability =
   | "user:manage"
   | "reports:view"
   | "settings:view"
+  | "branch:view"
+  | "branch:manage"
   | "profile:view"
   | "notifications:view"
   | "health-records:view"
@@ -102,7 +104,8 @@ export type LabRequestStatus =
   | "Scheduled"
   | "Sample Collected"
   | "Processing"
-  | "Completed";
+  | "Completed"
+  | "Missed";
 
 export type PrescriptionStatus = "Issued" | "Dispensed";
 
@@ -139,6 +142,22 @@ export type DepartmentRecord = {
   location: string;
 };
 
+export type HospitalBranchRecord = {
+  id: string;
+  organizationId: string;
+  code: string;
+  name: string;
+  address: string;
+  city: string;
+  state?: string;
+  postalCode?: string;
+  phone?: string;
+  email?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DoctorRecord = {
   id: string;
   organizationId: string;
@@ -148,6 +167,12 @@ export type DoctorRecord = {
   status: DoctorStatus;
   availability: string;
   shiftLabel: string;
+  branchId?: string;
+  breakWindows?: Array<{
+    label: string;
+    startTime: string;
+    endTime: string;
+  }>;
 };
 
 export type AppointmentRecord = {
@@ -262,6 +287,12 @@ export type LabReportAttachmentRecord = {
   contentType: "application/pdf";
   fileSize: number;
   contentBase64?: string;
+  storageProvider?: "cloudinary" | "local";
+  storageUrl?: string;
+  storagePublicId?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  storageSize?: number;
 };
 
 export type LabReportRecord = {
@@ -535,6 +566,12 @@ export type ClinicalAttachmentRecord = {
   contentType: "application/pdf" | "image/png" | "image/jpeg";
   fileSize: number;
   contentBase64?: string;
+  storageProvider?: "cloudinary" | "local";
+  storageUrl?: string;
+  storagePublicId?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  storageSize?: number;
   uploadedByUserId: string;
   uploadedByName: string;
   createdAt: string;
@@ -608,6 +645,7 @@ export type LabSlotLoadRecord = {
 export type HospitalState = {
   organization: OrganizationRecord;
   departments: DepartmentRecord[];
+  branches?: HospitalBranchRecord[];
   doctors: DoctorRecord[];
   medicineCatalog: MedicineCatalogRecord[];
   appointments: AppointmentRecord[];
@@ -743,11 +781,14 @@ export type HospitalStateResponse = {
 export type AppointmentDraft = {
   patientName: string;
   familyMemberId?: string;
+  branchId?: string;
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
   consultationMode?: "In Person" | "Online";
+  paymentMethod?: PaymentMethod;
+  paymentReferenceNumber?: string;
 };
 
 export type LabRequestDraft = {

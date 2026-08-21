@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/providers/toast-provider";
 import { roleLabels } from "@/lib/auth";
 
-const supportedRoles = ["doctor", "receptionist", "laboratory", "pharmacist"] as const;
+const supportedRoles = ["doctor", "receptionist", "laboratory", "pharmacist", "administrator"] as const;
 
 function getDepartmentUnitLabel(user: {
   role: string;
@@ -59,6 +59,10 @@ export function AdminUsersView() {
     useState<(typeof supportedRoles)[number]>("doctor");
   const users = (meta?.users ?? []).filter((user) => user.role !== "patient");
   const departmentOptions = state.departments.filter((department) => {
+    if (selectedRole === "administrator") {
+      return false;
+    }
+
     if (selectedRole === "doctor") {
       return department.id !== "dept-laboratory";
     }
@@ -76,7 +80,10 @@ export function AdminUsersView() {
         ? "Department / Desk"
         : selectedRole === "laboratory"
           ? "Laboratory / Department"
-          : "Pharmacy / Department";
+          : selectedRole === "pharmacist"
+            ? "Pharmacy / Department"
+            : "Administrative Unit";
+  const activeBranches = (state.branches ?? []).filter((branch) => branch.active);
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -191,20 +198,33 @@ export function AdminUsersView() {
           setSelectedRole("doctor");
         }}
         title="Add staff"
-        description="Create a hospital staff account with the appropriate role and department."
+        description="Create a hospital account with the appropriate role."
       >
         <form
           className="space-y-4"
+          autoComplete="off"
           onSubmit={async (event) => {
             event.preventDefault();
             setFieldErrors({});
             const formData = new FormData(event.currentTarget);
             const payload = {
               displayName: String(formData.get("displayName") ?? ""),
-              email: String(formData.get("email") ?? ""),
+              email: String(formData.get("staffEmail") ?? ""),
+              temporaryPassword: String(formData.get("temporaryPassword") ?? ""),
               role: String(formData.get("role") ?? "") as (typeof supportedRoles)[number],
-              departmentId: String(formData.get("departmentId") ?? "") || undefined,
+              departmentId:
+                selectedRole === "administrator"
+                  ? undefined
+                  : String(formData.get("departmentId") ?? "") || undefined,
+              branchId:
+                selectedRole === "doctor"
+                  ? String(formData.get("branchId") ?? "") || undefined
+                  : undefined,
               specialization: String(formData.get("specialization") ?? "") || undefined,
+              consultationFee:
+                selectedRole === "doctor"
+                  ? String(formData.get("consultationFee") ?? "") || undefined
+                  : undefined,
               status: String(formData.get("status") ?? ""),
             };
 
@@ -221,13 +241,21 @@ export function AdminUsersView() {
         >
           <div>
             <label className="mb-2 block text-sm font-medium">Full Name</label>
-            <Input name="displayName" />
+            <Input name="displayName" autoComplete="off" />
             {fieldErrors.displayName ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.displayName}</p> : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium">Email</label>
-            <Input name="email" type="email" />
+            <Input name="staffEmail" type="email" autoComplete="off" defaultValue="" />
             {fieldErrors.email ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.email}</p> : null}
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Temporary Password</label>
+            <Input name="temporaryPassword" type="password" autoComplete="new-password" />
+            <p className="mt-2 text-xs text-[color:var(--muted-foreground)]">
+              The staff member should change this password after first sign in.
+            </p>
+            {fieldErrors.temporaryPassword ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.temporaryPassword}</p> : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium">Role</label>
@@ -242,8 +270,14 @@ export function AdminUsersView() {
               <option value="receptionist">Receptionist</option>
               <option value="laboratory">Laboratory Staff</option>
               <option value="pharmacist">Pharmacist</option>
+              <option value="administrator">Administrator</option>
             </Select>
           </div>
+          {selectedRole === "administrator" ? (
+            <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4 text-sm text-[color:var(--muted-foreground)]">
+              Department / Unit: Administration
+            </div>
+          ) : (
           <div>
             <label className="mb-2 block text-sm font-medium">{departmentLabel}</label>
             <Select name="departmentId" defaultValue="">
@@ -262,12 +296,32 @@ export function AdminUsersView() {
             </Select>
             {fieldErrors.departmentId ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.departmentId}</p> : null}
           </div>
+          )}
           {selectedRole === "doctor" ? (
-            <div>
-              <label className="mb-2 block text-sm font-medium">Specialization</label>
-              <Input name="specialization" placeholder="Cardiology, Pediatrics, General Medicine" />
-              {fieldErrors.specialization ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.specialization}</p> : null}
-            </div>
+            <>
+              <div>
+                <label className="mb-2 block text-sm font-medium">Hospital Branch</label>
+                <Select name="branchId" defaultValue="">
+                  <option value="">Select branch where applicable</option>
+                  {activeBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </Select>
+                {fieldErrors.branchId ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.branchId}</p> : null}
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium">Specialization / Clinical Focus</label>
+                <Input name="specialization" placeholder="Leave blank to use the selected department" />
+                {fieldErrors.specialization ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.specialization}</p> : null}
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium">Consultation Fee</label>
+                <Input name="consultationFee" placeholder="INR 900" />
+                {fieldErrors.consultationFee ? <p className="mt-2 text-sm text-[color:var(--danger)]">{fieldErrors.consultationFee}</p> : null}
+              </div>
+            </>
           ) : null}
           <div>
             <label className="mb-2 block text-sm font-medium">Status</label>

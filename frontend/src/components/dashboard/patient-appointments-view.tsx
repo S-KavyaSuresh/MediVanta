@@ -148,26 +148,27 @@ export function PatientAppointmentsView() {
                   >
                     {submittingId === appointment.id ? "Cancelling..." : "Cancel appointment"}
                   </Button>
-                  {appointment.consultationMode === "Online" ? (
-                    joinAvailability.allowed ? (
-                      <Link href={`/dashboard/patient/consultations/${appointment.id}`}>
-                        <Button type="button">Join Consultation</Button>
-                      </Link>
-                    ) : (
-                      <Button type="button" variant="secondary" disabled title={joinAvailability.reason}>
-                        {joinAvailability.reason}
-                      </Button>
-                    )
-                  ) : null}
                 </div>
               ) : null}
               {appointment.consultationMode === "Online" &&
-              appointment.status === "In consultation" ? (
-                <div className="flex justify-end">
-                  <Link href={`/dashboard/patient/consultations/${appointment.id}`}>
-                    <Button type="button">Rejoin Consultation</Button>
-                  </Link>
-                </div>
+              ["Scheduled", "Checked in", "In consultation"].includes(appointment.status) ? (
+                joinAvailability.allowed ? (
+                  <div className="flex justify-end">
+                    <Link href={`/dashboard/patient/consultations/${appointment.id}`}>
+                      <Button type="button">
+                        {appointment.status === "In consultation"
+                          ? "Rejoin Consultation"
+                          : "Join Consultation"}
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="flex justify-end">
+                    <Button type="button" variant="secondary" disabled title={joinAvailability.reason}>
+                      {joinAvailability.reason}
+                    </Button>
+                  </div>
+                )
               ) : null}
               {appointment.status === "Completed" ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
@@ -210,6 +211,7 @@ export function PatientAppointmentsView() {
         organizationName={state.organization.name}
         bookingCapacity={state.bookingCapacity}
         appointmentSlotLoads={meta?.appointmentSlotLoads ?? []}
+        branches={state.branches}
         departments={state.departments.filter((department) => department.id !== "dept-laboratory")}
         doctors={state.doctors.filter((doctor) => doctor.departmentId !== "dept-laboratory")}
         appointments={state.appointments}

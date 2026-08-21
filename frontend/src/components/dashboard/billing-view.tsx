@@ -183,6 +183,12 @@ const staffPaymentMethods: PaymentMethod[] = [
   "Net Banking",
   "Bank Transfer",
 ];
+const patientDemoPaymentMethods: PaymentMethod[] = [
+  "UPI",
+  "Credit Card",
+  "Debit Card",
+  "Net Banking",
+];
 
 type AdjustmentType = "Amount" | "Percentage";
 
@@ -208,7 +214,7 @@ export function BillingView({
   const [activeInvoiceId, setActiveInvoiceId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
-    canManagePayments ? "Cash" : "Demo Payment",
+    canManagePayments ? "Cash" : "UPI",
   );
   const [paymentReference, setPaymentReference] = useState("");
   const [discountType, setDiscountType] = useState<AdjustmentType>("Amount");
@@ -295,7 +301,7 @@ export function BillingView({
                     onClick={() => {
                       setActiveInvoiceId(invoice.id);
                       setPaymentAmount(getDefaultPaymentAmount(invoice));
-                      setPaymentMethod(canManagePayments ? "Cash" : "Demo Payment");
+                      setPaymentMethod(canManagePayments ? "Cash" : "UPI");
                       setPaymentReference("");
                       setDiscountType("Amount");
                       setDiscountAmount((invoice.discountCents / 100).toFixed(2));
@@ -348,13 +354,13 @@ export function BillingView({
           setDiscountAmount("");
           setTaxType("Amount");
           setTaxAmount("");
-          setPaymentMethod(canManagePayments ? "Cash" : "Demo Payment");
+          setPaymentMethod(canManagePayments ? "Cash" : "UPI");
         }}
         title={activeInvoice?.invoiceNumber ?? "Invoice"}
         description={
           canManagePayments
             ? "Review itemized charges and record payments received at the hospital."
-            : "Review itemized charges and complete a demo payment entry for local evaluation."
+            : "Review itemized charges and complete a simulated payment entry."
         }
       >
         {activeInvoice ? (
@@ -537,8 +543,14 @@ export function BillingView({
                 }}
               >
                 <p className="text-sm font-semibold">
-                  {canManagePayments ? "Record Payment" : "Demo Payment"}
+                  {canManagePayments ? "Record Payment" : "Pay Now"}
                 </p>
+                {!canManagePayments ? (
+                  <p className="rounded-2xl border border-[color:var(--accent)]/20 bg-[color:var(--accent)]/8 px-4 py-3 text-sm text-[color:var(--muted-foreground)]">
+                    This is a simulated payment for project demonstration. No real financial
+                    transaction will occur.
+                  </p>
+                ) : null}
                 <div>
                   <label className="mb-2 block text-sm font-medium">Amount</label>
                   <Input
@@ -558,7 +570,7 @@ export function BillingView({
                   >
                     {(canManagePayments
                       ? staffPaymentMethods
-                      : (["Demo Payment"] as PaymentMethod[])).map((method) => (
+                      : patientDemoPaymentMethods).map((method) => (
                       <option key={method} value={method}>
                         {method}
                       </option>
@@ -570,7 +582,11 @@ export function BillingView({
                   <Input
                     value={paymentReference}
                     onChange={(event) => setPaymentReference(event.target.value)}
-                    placeholder="Optional"
+                    placeholder={
+                      canManagePayments
+                        ? "Optional"
+                        : "Optional demo reference"
+                    }
                   />
                 </div>
                 <div className="flex flex-wrap justify-end gap-3">
@@ -582,7 +598,7 @@ export function BillingView({
                     Print invoice
                   </Button>
                   <Button type="submit" disabled={activeInvoice.amountDueCents <= 0}>
-                    {canManagePayments ? "Record Payment" : "Pay with Demo Payment"}
+                    {canManagePayments ? "Record Payment" : "Confirm Demo Payment"}
                   </Button>
                 </div>
               </form>

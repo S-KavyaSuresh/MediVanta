@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
+import { useRef } from "react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,20 @@ const emptyDraft: LabReportDraft = {
   resultSummary: "",
 };
 
+function validateReportFile(file: File) {
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf) {
+    return "Only PDF report files are supported.";
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    return "PDF reports must be 2 MB or smaller.";
+  }
+
+  return "";
+}
+
 function readFileAsBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -52,6 +67,7 @@ export function LabReportFormModal({
   const [errors, setErrors] = useState<Partial<Record<keyof LabReportDraft, string>>>({});
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!request) {
     return null;
@@ -65,6 +81,9 @@ export function LabReportFormModal({
         setFile(null);
         setErrors({});
         setMessage("");
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
         onClose();
       }}
       title={`Add Report for ${request.testName}`}
@@ -84,6 +103,13 @@ export function LabReportFormModal({
             };
 
             if (file) {
+              const fileError = validateReportFile(file);
+              if (fileError) {
+                setSubmitting(false);
+                setErrors({ attachment: fileError });
+                return;
+              }
+
               nextDraft.attachment = {
                 fileName: file.name,
                 contentType: "application/pdf",
@@ -99,6 +125,9 @@ export function LabReportFormModal({
             if (result.ok) {
               setDraft(emptyDraft);
               setFile(null);
+              if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+              }
               onClose();
               return;
             }
@@ -150,13 +179,28 @@ export function LabReportFormModal({
           <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
             Optional PDF report
           </label>
-          <Input
+          <input
+            ref={fileInputRef}
+            className="sr-only"
+            id="lab-report-pdf"
             type="file"
             accept="application/pdf"
             onChange={(event: ChangeEvent<HTMLInputElement>) =>
               setFile(event.target.files?.[0] ?? null)
             }
           />
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {file ? "Change PDF" : "Choose PDF"}
+            </Button>
+            <span className="min-w-0 flex-1 truncate text-sm text-[color:var(--foreground)]">
+              {file?.name ?? "No PDF selected"}
+            </span>
+          </div>
           <p className="mt-2 text-xs text-[color:var(--muted-foreground)]">
             PDF only, up to 2 MB.
           </p>

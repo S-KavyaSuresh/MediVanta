@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { apiRequest } from "@/lib/api";
+import { profilePathByRole } from "@/lib/auth";
+import { useAuth } from "@/components/providers/auth-provider";
 
 type ActiveSession = {
   id: string;
@@ -16,6 +21,8 @@ type ActiveSession = {
   deviceLabel?: string;
   userAgent?: string;
 };
+
+const pageSize = 8;
 
 function getHumanReadableDeviceLabel(session: ActiveSession) {
   const source = `${session.deviceLabel ?? ""} ${session.userAgent ?? ""}`.toLowerCase();
@@ -64,49 +71,46 @@ function formatDate(value: string) {
   }).format(date);
 }
 
-/**
- * Single shared implementation of the active-sessions list, reused by every role's
- * dedicated /profile/sessions page. Only ever renders device/browser labels, the
- * current-device indicator, timestamps, and a revoke action for other sessions —
- * never raw user agents, session IDs, or token material.
- */
-export function ActiveSessionsView() {
-  const [sessions, setSessions] = useState<ActiveSession[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [revokingId, setRevokingId] = useState<string | null>(null);
+function shortSessionId(id: string) {
+  return id.length > 10 ? `${id.slice(0, 6)}...${id.slice(-4)}` : id;
+}
 
-  async function loadSessions() {
-    setLoading(true);
-    try {
-      const response = await apiRequest<{ sessions: ActiveSession[] }>("/api/auth/sessions");
-      setSessions(response.sessions);
-    } catch {
-      setSessions([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+export function ActiveSessionsView() {
+  const { session } = useAuth();
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busySessionId, setBusySessionId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    apiRequest<{ sessions: ActiveSession[] }>("/api/auth/sessions")
+    void apiRequest<{ sessions: ActiveSession[] }>("/api/auth/sessions")
       .then((response) => {
         if (cancelled) {
           return;
         }
+
         setSessions(response.sessions);
       })
-      .catch(() => {
+      .catch((nextError) => {
         if (cancelled) {
           return;
         }
+
         setSessions([]);
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Unable to load active sessions.",
+        );
       })
       .finally(() => {
         if (cancelled) {
           return;
         }
+
         setLoading(false);
       });
 
@@ -115,66 +119,129 @@ export function ActiveSessionsView() {
     };
   }, []);
 
+  const sortedSessions = useMemo(
+    () =>
+      [...sessions].sort((left, right) =>
+        (right.lastUsedAt || right.createdAt || "").localeCompare(
+          left.lastUsedAt || left.createdAt || "",
+        ),
+      ),
+    [sessions],
+  );
+  const pageCount = Math.max(1, Math.ceil(sortedSessions.length / pageSize));
+  const visibleSessions = sortedSessions.slice((page - 1) * pageSize, page * pageSize);
+
   return (
-    <Card className="space-y-4">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Active Sessions</h2>
-        <p className="text-sm text-[color:var(--muted-foreground)]">
-          Review recent signed-in devices and close any session you do not recognize.
-        </p>
+    <div className="space-y-6 md:space-y-8">
+      <PageHeader
+        eyebrow="Profile"
+        title="Active Sessions"
+        description="Review your signed-in devices and close sessions you do not recognize."
+      />
+
+      <div>
+        <Link
+          href={profilePathByRole[session.user.role]}
+          className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] px-4 py-2.5 text-sm font-semibold text-[color:var(--foreground)] transition duration-200 hover:bg-[color:var(--surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]"
+        >
+          Back to Profile
+        </Link>
       </div>
 
       {loading ? (
-        <p className="text-sm text-[color:var(--muted-foreground)]">Loading sessions...</p>
-      ) : sessions.length === 0 ? (
-        <p className="text-sm text-[color:var(--muted-foreground)]">No active sessions found.</p>
+        <Card>
+          <p className="text-sm text-[color:var(--muted-foreground)]">Loading sessions...</p>
+        </Card>
+      ) : error ? (
+        <EmptyState title="Sessions unavailable" description={error} />
+      ) : visibleSessions.length === 0 ? (
+        <EmptyState title="No active sessions" description="No active signed-in devices were found." />
       ) : (
-        <div className="space-y-3">
-          {sessions.map((activeSession) => (
+        <Card className="space-y-4">
+          {visibleSessions.map((activeSession) => (
             <div
               key={activeSession.id}
               className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)]/50 p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-semibold">{getHumanReadableDeviceLabel(activeSession)}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold">
+                      {getHumanReadableDeviceLabel(activeSession)}
+                    </p>
+                    {activeSession.current ? <Badge variant="info">Current</Badge> : null}
+                  </div>
                   <p className="text-sm text-[color:var(--muted-foreground)]">
-                    {activeSession.current ? "Current device" : "Signed-in device"}
+                    Session: {shortSessionId(activeSession.id)}
                   </p>
                   <p className="text-xs text-[color:var(--muted-foreground)]">
-                    Last active: {formatDate(activeSession.lastUsedAt)}
+                    Signed in: {formatDate(activeSession.createdAt)}
+                  </p>
+                  <p className="text-xs text-[color:var(--muted-foreground)]">
+                    Last activity: {formatDate(activeSession.lastUsedAt)}
                   </p>
                 </div>
-                {activeSession.current ? (
-                  <Badge variant="info">Current</Badge>
-                ) : (
+                {!activeSession.current ? (
                   <Button
                     type="button"
                     variant="ghost"
-                    disabled={revokingId === activeSession.id}
+                    disabled={busySessionId === activeSession.id}
                     onClick={async () => {
-                      setRevokingId(activeSession.id);
+                      setBusySessionId(activeSession.id);
+                      setError("");
+
                       try {
                         await apiRequest(`/api/auth/sessions/${activeSession.id}`, {
                           method: "DELETE",
                         });
-                        await loadSessions();
+                        setSessions((current) =>
+                          current.filter((entry) => entry.id !== activeSession.id),
+                        );
+                      } catch (nextError) {
+                        setError(
+                          nextError instanceof Error
+                            ? nextError.message
+                            : "Unable to revoke this session.",
+                        );
                       } finally {
-                        setRevokingId(null);
+                        setBusySessionId(null);
                       }
                     }}
                   >
-                    Revoke
+                    {busySessionId === activeSession.id ? "Revoking..." : "Revoke Session"}
                   </Button>
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-xs text-[color:var(--muted-foreground)]">
-                <span>Signed in: {formatDate(activeSession.createdAt)}</span>
+                ) : null}
               </div>
             </div>
           ))}
-        </div>
+
+          {pageCount > 1 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <p className="text-sm text-[color:var(--muted-foreground)]">
+                Page {page} of {pageCount}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={page >= pageCount}
+                  onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
       )}
-    </Card>
+    </div>
   );
 }

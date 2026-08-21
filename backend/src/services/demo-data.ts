@@ -227,6 +227,22 @@ export function createDemoHospitalState(): HospitalState {
         location: "Emergency Entrance, Ground Floor",
       },
     ],
+    branches: [
+      {
+        id: "branch-medivanta-general-main",
+        organizationId: DEMO_ORGANIZATION.id,
+        code: "MAIN",
+        name: "MediVanta General Hospital",
+        address: DEMO_ORGANIZATION.address ?? "221 Care Avenue",
+        city: DEMO_ORGANIZATION.city ?? "Chennai",
+        state: DEMO_ORGANIZATION.state,
+        phone: DEMO_ORGANIZATION.contactPhone,
+        email: DEMO_ORGANIZATION.contactEmail,
+        active: true,
+        createdAt: "2026-08-01T08:00:00.000Z",
+        updatedAt: "2026-08-01T08:00:00.000Z",
+      },
+    ],
     doctors: [
       {
         id: "doc-anaya-sharma",
@@ -237,6 +253,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Consulting",
         availability: "Consulting today",
         shiftLabel: "08:00 - 14:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Morning break", startTime: "10:30", endTime: "11:00" }],
       },
       {
         id: "doc-rohan-mehta",
@@ -247,6 +265,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Emergency duty",
         availability: "On emergency rotation",
         shiftLabel: "07:00 - 19:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Meal break", startTime: "13:30", endTime: "14:00" }],
       },
       {
         id: "doc-meera-iqbal",
@@ -257,6 +277,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Available",
         availability: "Follow-up clinic open",
         shiftLabel: "10:00 - 18:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Lunch break", startTime: "13:00", endTime: "14:00" }],
       },
       {
         id: "doc-vivek-menon",
@@ -267,6 +289,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Available",
         availability: "Next clinic session tomorrow",
         shiftLabel: "09:00 - 17:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Lunch break", startTime: "12:30", endTime: "13:30" }],
       },
       {
         id: "doc-neha-sen",
@@ -277,6 +301,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Consulting",
         availability: "Imaging sessions in progress",
         shiftLabel: "08:00 - 16:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Reporting break", startTime: "12:30", endTime: "13:00" }],
       },
       {
         id: "doc-kiran-iyer",
@@ -287,6 +313,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "On break",
         availability: "Returns at 13:00",
         shiftLabel: "08:00 - 16:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Break", startTime: "12:00", endTime: "13:00" }],
       },
       {
         id: "doc-sana-reddy",
@@ -297,6 +325,7 @@ export function createDemoHospitalState(): HospitalState {
         status: "Off duty",
         availability: "Next clinic tomorrow",
         shiftLabel: "Off duty today",
+        branchId: "branch-medivanta-general-main",
       },
       {
         id: "doc-arjun-roy",
@@ -307,6 +336,8 @@ export function createDemoHospitalState(): HospitalState {
         status: "Available",
         availability: "Review clinic active",
         shiftLabel: "11:00 - 19:00",
+        branchId: "branch-medivanta-general-main",
+        breakWindows: [{ label: "Evening break", startTime: "15:30", endTime: "16:00" }],
       },
     ],
     medicineCatalog: [...demoMedicineCatalog],

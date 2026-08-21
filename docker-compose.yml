@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: medivanta
+      POSTGRES_USER: medivanta
+      POSTGRES_PASSWORD: medivanta_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - medivanta-postgres:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://medivanta:medivanta_local@postgres:5432/medivanta
+      PORT: 4000
+      CLIENT_ORIGIN: http://localhost:3000
+      SESSION_SECRET: replace-with-a-strong-session-secret
+      JWT_ACCESS_SECRET: replace-with-a-strong-access-secret
+      JWT_REFRESH_SECRET: replace-with-a-strong-refresh-secret
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      GOOGLE_OAUTH_CLIENT_ID: ""
+      GOOGLE_OAUTH_CLIENT_SECRET: ""
+      GOOGLE_OAUTH_REDIRECT_URI: http://localhost:4000/api/auth/google/callback
+      CLOUDINARY_CLOUD_NAME: ""
+      CLOUDINARY_API_KEY: ""
+      CLOUDINARY_API_SECRET: ""
+    depends_on:
+      - postgres
+    ports:
+      - "4000:4000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  medivanta-postgres:

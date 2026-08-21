@@ -15,7 +15,14 @@ export const app = express();
 
 app.use(
   cors({
-    origin: env.CLIENT_ORIGIN,
+    origin(origin, callback) {
+      const allowedOrigins = new Set([
+        env.CLIENT_ORIGIN,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+      ]);
+      callback(null, !origin || allowedOrigins.has(origin) ? origin : env.CLIENT_ORIGIN);
+    },
     credentials: true,
   }),
 );

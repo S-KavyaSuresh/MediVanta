@@ -10,11 +10,13 @@ import type {
   ClinicalAttachmentRecord,
   DepartmentRecord,
   DepartmentStatus,
+  DoctorRecord,
   DoctorStatus,
   EmergencyVisitDraft,
   EmergencyVisitRecord,
   FamilyMemberDraft,
   FamilyMemberRecord,
+  HospitalBranchRecord,
   HospitalState,
   HospitalStateResponse,
   InventoryItemDraft,
@@ -48,14 +50,16 @@ import type {
   UserRecord,
 } from "../domain/types.js";
 import { getPasswordPolicyErrors, hashPassword } from "../auth/password.js";
-import { query, withTransaction } from "../db/client.js";
+import { isDatabaseConfigured, query, withTransaction } from "../db/client.js";
 import { loadHospitalState, loadUsers, saveHospitalState, saveUsers } from "./seed-service.js";
 import { writeAuditLog } from "./audit-service.js";
-import { DEMO_ACCOUNT_PASSWORD } from "./demo-data.js";
+import {
+  type StoredClinicalFile,
+  uploadClinicalFileToCloudinary,
+} from "./cloudinary-storage-service.js";
 import { getCurrentLocalDateIso } from "../utils/date.js";
 import { measurePerfStep } from "../utils/perf-trace.js";
 import {
-  insertAppointment,
   insertInvoice,
   insertInvoiceItems,
   insertInventoryItem,
@@ -64,7 +68,6 @@ import {
   insertMedicalRecord,
   insertNotifications,
   insertEmergencyVisit,
-  insertPatientJourney,
   insertPrescription,
   insertQueueEntry,
   loadLabReportById,
@@ -101,7 +104,11 @@ function getCurrentLocalTimeValue(now = new Date()) {
   return now.getHours() * 60 + now.getMinutes();
 }
 
-function getSlotTimeValue(value: string) {
+function getSlotTimeValue(value?: string) {
+  if (!value) {
+    return Number.NaN;
+  }
+
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
 }
@@ -111,15 +118,19 @@ function isCapacityConsumingAppointment(status: AppointmentStatus) {
 }
 
 function isCapacityConsumingLabRequest(status: LabRequestRecord["status"]) {
-  return status !== "Completed";
+  return status !== "Completed" && status !== "Missed";
 }
 
 function getSessionForTime(state: HospitalState, time: string) {
+  const timeValue = getSlotTimeValue(time);
+
   return (
     state.bookingCapacity.sessions.find(
       (session) =>
-        getSlotTimeValue(time) >= getSlotTimeValue(session.startTime) &&
-        getSlotTimeValue(time) <= getSlotTimeValue(session.endTime),
+        Number.isFinite(getSlotTimeValue(session.startTime)) &&
+        Number.isFinite(getSlotTimeValue(session.endTime)) &&
+        timeValue >= getSlotTimeValue(session.startTime) &&
+        timeValue <= getSlotTimeValue(session.endTime),
     ) ?? null
   );
 }
@@ -215,6 +226,37 @@ function isDoctorSessionFullyBooked(
   );
 }
 
+function isDoctorOnBreakAtSlot(doctor: DoctorRecord | undefined, appointmentTime: string) {
+  if (!doctor?.breakWindows?.length) {
+    return false;
+  }
+
+  const slotValue = getSlotTimeValue(appointmentTime);
+  if (!Number.isFinite(slotValue)) {
+    return false;
+  }
+
+  return doctor.breakWindows.some((breakWindow) => {
+    const startValue = getSlotTimeValue(breakWindow.startTime);
+    const endValue = getSlotTimeValue(breakWindow.endTime);
+
+    return (
+      Number.isFinite(startValue) &&
+      Number.isFinite(endValue) &&
+      slotValue >= startValue &&
+      slotValue < endValue
+    );
+  });
+}
+
+function isClosedAppointmentTimeSlot(appointmentTime: string) {
+  return appointmentTime === "13:00" || appointmentTime === "13:30";
+}
+
+function isActiveStaffUser(user: SafeUser | UserRecord) {
+  return user.staffStatus?.trim().toLowerCase() !== "deactivated";
+}
+
 function getLabSlotBookingCount(
   state: HospitalState,
   requestedDate: string,
@@ -258,22 +300,42 @@ function shouldBecomeNoShow(appointment: AppointmentRecord, now = new Date()) {
     return false;
   }
 
-  return appointment.appointmentDate < getCurrentLocalDateIso(now);
+  return isAppointmentPastCloseWindow(appointment, now);
+}
+
+function isAppointmentPastCloseWindow(appointment: AppointmentRecord, now = new Date()) {
+  const appointmentTime = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime}:00`);
+  if (Number.isNaN(appointmentTime.getTime())) {
+    return false;
+  }
+
+  return now.getTime() > appointmentTime.getTime() + 30 * 60 * 1000;
+}
+
+function shouldAutoCloseOpenAppointment(appointment: AppointmentRecord, now = new Date()) {
+  return (
+    (appointment.status === "Checked in" || appointment.status === "In consultation") &&
+    isAppointmentPastCloseWindow(appointment, now)
+  );
 }
 
 async function reconcileNoShowAppointments(state: HospitalState, now = new Date()) {
   const staleAppointments = state.appointments.filter((appointment) => shouldBecomeNoShow(appointment, now));
+  const openExpiredAppointments = state.appointments.filter((appointment) =>
+    shouldAutoCloseOpenAppointment(appointment, now),
+  );
+  const appointmentsToClose = [...staleAppointments, ...openExpiredAppointments];
 
-  if (staleAppointments.length === 0) {
+  if (appointmentsToClose.length === 0) {
     return state;
   }
 
   await Promise.all(
-    staleAppointments.flatMap((appointment) => [
+    appointmentsToClose.flatMap((appointment) => [
       updateAppointmentStatusById({
         appointmentId: appointment.id,
         organizationId: appointment.organizationId,
-        status: "No Show",
+        status: shouldBecomeNoShow(appointment, now) ? "No Show" : "Completed",
       }),
       updateQueueStatusesByAppointment({
         organizationId: appointment.organizationId,
@@ -290,13 +352,55 @@ async function reconcileNoShowAppointments(state: HospitalState, now = new Date(
     appointments: state.appointments.map<AppointmentRecord>((appointment) =>
       shouldBecomeNoShow(appointment, now)
         ? { ...appointment, status: "No Show" as AppointmentStatus }
+        : shouldAutoCloseOpenAppointment(appointment, now)
+          ? { ...appointment, status: "Completed" as AppointmentStatus }
         : appointment,
     ),
     queueEntries: state.queueEntries.map<QueueEntryRecord>((entry) =>
-      staleAppointments.some((appointment) => appointment.id === entry.appointmentId) &&
+      appointmentsToClose.some((appointment) => appointment.id === entry.appointmentId) &&
       entry.status !== "Completed"
         ? { ...entry, status: "Completed" as QueueStatus }
         : entry,
+    ),
+  };
+}
+
+function shouldBecomeMissedLabRequest(request: LabRequestRecord, now = new Date()) {
+  if (request.status !== "Requested" && request.status !== "Scheduled") {
+    return false;
+  }
+
+  const requestedAt = new Date(`${request.requestedDate}T${request.requestedTime}:00`);
+  if (Number.isNaN(requestedAt.getTime())) {
+    return false;
+  }
+
+  return now.getTime() > requestedAt.getTime() + 30 * 60 * 1000;
+}
+
+async function reconcileStaleLabRequests(state: HospitalState, now = new Date()) {
+  const staleRequests = state.labRequests.filter((request) =>
+    shouldBecomeMissedLabRequest(request, now),
+  );
+
+  if (staleRequests.length === 0) {
+    return state;
+  }
+
+  await Promise.all(
+    staleRequests.map((request) =>
+      updateLabRequestStatusById({
+        labRequestId: request.id,
+        organizationId: request.organizationId,
+        status: "Missed",
+      }),
+    ),
+  );
+
+  return {
+    ...state,
+    labRequests: state.labRequests.map<LabRequestRecord>((request) =>
+      shouldBecomeMissedLabRequest(request, now) ? { ...request, status: "Missed" } : request,
     ),
   };
 }
@@ -574,6 +678,14 @@ function isTelemedicineJoinAvailable(appointment: AppointmentRecord, now = new D
     };
   }
 
+  const joinWindowClosesAt = appointmentTime.getTime() + 30 * 60 * 1000;
+  if (now.getTime() > joinWindowClosesAt && appointment.status !== "In consultation") {
+    return {
+      allowed: false,
+      message: "This consultation window has closed.",
+    };
+  }
+
   return { allowed: true };
 }
 
@@ -831,6 +943,23 @@ function isPdfPayload(contentBase64: string) {
   }
 }
 
+async function storeClinicalFileWithFallback(input: {
+  contentBase64: string;
+  fileName: string;
+  contentType: string;
+  folder: string;
+}): Promise<StoredClinicalFile | null> {
+  try {
+    return await uploadClinicalFileToCloudinary(input);
+  } catch (error) {
+    console.warn(
+      `[storage] External file storage unavailable; saving ${input.fileName} with database fallback.`,
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
 function createAppointmentId(state: HospitalState) {
   const nextNumber =
     state.appointments.reduce((max, appointment) => {
@@ -952,6 +1081,14 @@ function getQueueWaitEstimate(
         ? `${patientsAhead} patient${patientsAhead === 1 ? "" : "s"} ahead`
         : "Next in queue",
   };
+}
+
+function formatQueueWaitEstimate(estimate: ReturnType<typeof getQueueWaitEstimate>) {
+  if (estimate.estimatedMinutes <= 0) {
+    return estimate.summary;
+  }
+
+  return `${estimate.summary} · about ${estimate.estimatedMinutes} min`;
 }
 
 function findExistingJourneyForAppointment(state: HospitalState, appointmentId: string) {
@@ -1339,6 +1476,45 @@ function getScopedNotificationsForUser(user: SafeUser, state: HospitalState) {
   );
 }
 
+export async function loadScopedNotificationsForUser(user: SafeUser) {
+  const result = await query<{
+    id: string;
+    user_id: string;
+    organization_id: string;
+    title: string;
+    message: string;
+    category: NotificationRecord["category"];
+    related_entity_type: string | null;
+    related_entity_id: string | null;
+    read: boolean;
+    created_at: string | Date;
+  }>(
+    `select id, user_id, organization_id, title, message, category, related_entity_type,
+            related_entity_id, read, created_at
+       from notifications
+      where organization_id = $1 and user_id = $2
+      order by created_at desc
+      limit 50`,
+    [user.organizationId, user.id],
+  );
+
+  return result.rows.map((row): NotificationRecord => ({
+    id: String(row.id),
+    userId: String(row.user_id),
+    organizationId: String(row.organization_id),
+    title: String(row.title),
+    message: String(row.message),
+    category: row.category,
+    relatedEntityType: row.related_entity_type ?? undefined,
+    relatedEntityId: row.related_entity_id ?? undefined,
+    read: Boolean(row.read),
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at),
+  }));
+}
+
 function buildInvoiceStateWithUpdates(
   state: HospitalState,
   updatedInvoices: InvoiceRecord[],
@@ -1542,6 +1718,7 @@ async function notifyUsersOnceForEntity(input: {
 function buildInvoiceRecord(input: {
   patientId: string;
   patientName: string;
+  familyMemberId?: string;
   organizationId: string;
   hospitalId: string;
   sourceType: InvoiceRecord["sourceType"];
@@ -1553,7 +1730,7 @@ function buildInvoiceRecord(input: {
     quantity: number;
     unitAmountCents: number;
   }>;
-}) {
+}): InvoiceRecord {
   const invoiceId = createInvoiceId();
   const mappedItems: InvoiceItemRecord[] = input.items.map((item) => ({
     id: `INVITEM-${randomBytes(4).toString("hex")}`,
@@ -1574,6 +1751,7 @@ function buildInvoiceRecord(input: {
     invoiceNumber: createInvoiceNumber(),
     patientId: input.patientId,
     patientName: input.patientName,
+    ...(input.familyMemberId ? { familyMemberId: input.familyMemberId } : {}),
     organizationId: input.organizationId,
     hospitalId: input.hospitalId,
     sourceType: input.sourceType,
@@ -1646,6 +1824,15 @@ function validateAppointmentDraft(
     errors.doctorId = "Select a valid doctor.";
   }
 
+  if (draft.branchId) {
+    const branch = (state.branches ?? []).find((item) => item.id === draft.branchId);
+    if (!branch || !branch.active) {
+      errors.branchId = "Select an active hospital branch.";
+    } else if (doctor?.branchId && doctor.branchId !== draft.branchId) {
+      errors.doctorId = "Select a doctor available at this branch.";
+    }
+  }
+
   if (!draft.appointmentDate) {
     errors.appointmentDate = "Select an appointment date.";
   } else if (draft.appointmentDate < getCurrentLocalDateIso()) {
@@ -1658,6 +1845,10 @@ function validateAppointmentDraft(
     errors.appointmentTime = "Select a valid appointment time.";
   } else if (draft.appointmentDate && isPastLocalAppointmentSlot(draft.appointmentDate, draft.appointmentTime)) {
     errors.appointmentTime = "Select a future appointment time.";
+  } else if (isClosedAppointmentTimeSlot(draft.appointmentTime)) {
+    errors.appointmentTime = "This appointment time is not available. Please choose another slot.";
+  } else if (doctor && isDoctorOnBreakAtSlot(doctor, draft.appointmentTime)) {
+    errors.appointmentTime = "This doctor is on break at that time. Please choose another slot.";
   }
 
   if (draft.reasonForAppointment.trim().length < 3) {
@@ -1956,6 +2147,255 @@ function buildOperationalAnalytics(state: HospitalState, scope: "today" | "7d" |
   };
 }
 
+async function buildSqlOperationalAnalytics(organizationId: string, scope: "today" | "7d" | "30d") {
+  const today = getCurrentLocalDateIso();
+  const days = scope === "today" ? 1 : scope === "7d" ? 7 : 30;
+  const startDate = new Date(`${today}T00:00:00`);
+  startDate.setDate(startDate.getDate() - (days - 1));
+  const minDate = getCurrentLocalDateIso(startDate);
+  const nearExpiryDate = getCurrentLocalDateIso(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+
+  const safeAnalyticsQuery = async <T extends object>(
+    label: string,
+    request: Promise<{ rows: T[] }>,
+    fallbackRows: T[],
+  ) => {
+    try {
+      return await request;
+    } catch (error) {
+      console.warn(`[analytics] ${label} query failed`, error);
+      return { rows: fallbackRows };
+    }
+  };
+
+  const [
+    overviewResult,
+    trendResult,
+    doctorResult,
+    departmentResult,
+    laboratoryResult,
+    pharmacyResult,
+    billingResult,
+  ] = await Promise.all([
+    safeAnalyticsQuery("overview", query<{
+      patients_today: string | number;
+      appointments_today: string | number;
+      completed_consultations: string | number;
+      cancelled_appointments: string | number;
+      no_shows: string | number;
+      active_queue: string | number;
+      revenue_today_cents: string | number | null;
+      outstanding_billing_cents: string | number | null;
+      lab_requests_today: string | number;
+      prescriptions_issued: string | number;
+      prescriptions_dispensed: string | number;
+    }>(
+      `select
+        (select count(distinct patient_name) from appointments where organization_id = $1 and appointment_date = $2) as patients_today,
+        (select count(*) from appointments where organization_id = $1 and appointment_date = $2) as appointments_today,
+        (select count(*) from appointments where organization_id = $1 and appointment_date between $3 and $2 and status = 'Completed') as completed_consultations,
+        (select count(*) from appointments where organization_id = $1 and appointment_date between $3 and $2 and status = 'Cancelled') as cancelled_appointments,
+        (select count(*) from appointments where organization_id = $1 and appointment_date between $3 and $2 and status = 'No Show') as no_shows,
+        (select count(*) from queue_entries where organization_id = $1 and status <> 'Completed') as active_queue,
+        (select coalesce(sum(amount_cents), 0) from payments where organization_id = $1 and paid_at::date = $2::date) as revenue_today_cents,
+        (select coalesce(sum(amount_due_cents), 0) from invoices where organization_id = $1) as outstanding_billing_cents,
+        (select count(*) from lab_requests where organization_id = $1 and requested_date = $2) as lab_requests_today,
+        (select count(*) from prescriptions where organization_id = $1 and created_at::date between $3::date and $2::date and status = 'Issued') as prescriptions_issued,
+        (select count(*) from prescriptions where organization_id = $1 and created_at::date between $3::date and $2::date and status = 'Dispensed') as prescriptions_dispensed`,
+      [organizationId, today, minDate],
+    ), []),
+    safeAnalyticsQuery("trends", query<{
+      date: string;
+      appointments: string | number;
+      completed: string | number;
+      cancelled: string | number;
+      no_shows: string | number;
+      online: string | number;
+      in_person: string | number;
+    }>(
+      `select
+        day::date::text as date,
+        count(a.id) as appointments,
+        count(a.id) filter (where a.status = 'Completed') as completed,
+        count(a.id) filter (where a.status = 'Cancelled') as cancelled,
+        count(a.id) filter (where a.status = 'No Show') as no_shows,
+        count(a.id) filter (where coalesce(a.consultation_mode, 'In Person') = 'Online') as online,
+        count(a.id) filter (where coalesce(a.consultation_mode, 'In Person') <> 'Online') as in_person
+       from generate_series($2::date, $3::date, interval '1 day') as day
+       left join appointments a
+         on a.organization_id = $1 and a.appointment_date = day::date::text
+       group by day
+       order by day asc`,
+      [organizationId, minDate, today],
+    ), []),
+    safeAnalyticsQuery("doctor-performance", query<{
+      id: string;
+      name: string;
+      specialization: string;
+      completed_consultations: string | number;
+      current_appointment_count: string | number;
+      patient_load: string | number;
+      active_queue_count: string | number;
+    }>(
+      `select
+        d.id,
+        d.name,
+        d.specialization,
+        (select count(*) from appointments a where a.organization_id = $1 and a.doctor_id = d.id and a.appointment_date between $2 and $3 and a.status = 'Completed') as completed_consultations,
+        (select count(*) from appointments a where a.organization_id = $1 and a.doctor_id = d.id and a.appointment_date between $2 and $3) as current_appointment_count,
+        (select count(distinct a.patient_name) from appointments a where a.organization_id = $1 and a.doctor_id = d.id and a.appointment_date between $2 and $3) as patient_load,
+        (select count(*) from queue_entries q where q.organization_id = $1 and q.doctor_id = d.id and q.status <> 'Completed') as active_queue_count
+       from doctors d
+       where d.organization_id = $1
+       order by d.name asc`,
+      [organizationId, minDate, today],
+    ), []),
+    safeAnalyticsQuery("department-performance", query<{
+      id: string;
+      name: string;
+      doctor_count: string | number;
+      on_duty_doctor_count: string | number;
+      appointment_count: string | number;
+      patient_volume: string | number;
+    }>(
+      `select
+        dep.id,
+        dep.name,
+        (select count(*) from doctors d where d.organization_id = $1 and d.department_id = dep.id) as doctor_count,
+        (select count(*) from doctors d where d.organization_id = $1 and d.department_id = dep.id and d.status <> 'Off duty') as on_duty_doctor_count,
+        (select count(*) from appointments a where a.organization_id = $1 and a.department_id = dep.id and a.appointment_date between $2 and $3) as appointment_count,
+        (select count(distinct a.patient_name) from appointments a where a.organization_id = $1 and a.department_id = dep.id and a.appointment_date between $2 and $3) as patient_volume
+       from departments dep
+       where dep.organization_id = $1
+       order by dep.name asc`,
+      [organizationId, minDate, today],
+    ), []),
+    safeAnalyticsQuery("laboratory", query<{
+      requested: string | number;
+      processing: string | number;
+      completed: string | number;
+      reports_completed: string | number;
+    }>(
+      `select
+        count(*) filter (where status = 'Requested' and requested_date between $2 and $3) as requested,
+        count(*) filter (where status in ('Sample Collected', 'Processing') and requested_date between $2 and $3) as processing,
+        count(*) filter (where status = 'Completed' and requested_date between $2 and $3) as completed,
+        (select count(*) from lab_reports where organization_id = $1 and uploaded_at::date between $2::date and $3::date) as reports_completed
+       from lab_requests
+       where organization_id = $1`,
+      [organizationId, minDate, today],
+    ), []),
+    safeAnalyticsQuery("pharmacy", query<{
+      dispensed: string | number;
+      medicine_value_cents: string | number | null;
+      low_stock_count: string | number;
+      out_of_stock_count: string | number;
+      near_expiry_count: string | number;
+    }>(
+      `select
+        (select count(*) from prescriptions where organization_id = $1 and created_at::date between $2::date and $3::date and status = 'Dispensed') as dispensed,
+        (select coalesce(sum(ii.total_amount_cents), 0)
+         from invoice_items ii
+         inner join invoices i on i.id = ii.invoice_id
+         where ii.organization_id = $1 and ii.category = 'Medicine' and i.created_at::date between $2::date and $3::date) as medicine_value_cents,
+        (select count(*) from inventory_items where organization_id = $1 and quantity_in_stock <= reorder_level and quantity_in_stock > 0) as low_stock_count,
+        (select count(*) from inventory_items where organization_id = $1 and quantity_in_stock <= 0) as out_of_stock_count,
+        (select count(*) from inventory_items where organization_id = $1 and expiry_date >= $3 and expiry_date <= $4) as near_expiry_count`,
+      [organizationId, minDate, today, nearExpiryDate],
+    ), []),
+    safeAnalyticsQuery("billing", query<{
+      revenue_cents: string | number | null;
+      paid_invoices: string | number;
+      unpaid_invoices: string | number;
+      outstanding_amount_cents: string | number | null;
+      consultation_revenue_cents: string | number | null;
+      lab_revenue_cents: string | number | null;
+      pharmacy_revenue_cents: string | number | null;
+    }>(
+      `select
+        (select coalesce(sum(amount_cents), 0) from payments where organization_id = $1 and paid_at::date between $2::date and $3::date) as revenue_cents,
+        count(*) filter (where payment_status = 'Paid' and created_at::date between $2::date and $3::date) as paid_invoices,
+        count(*) filter (where payment_status <> 'Paid' and created_at::date between $2::date and $3::date) as unpaid_invoices,
+        coalesce(sum(amount_due_cents) filter (where created_at::date between $2::date and $3::date), 0) as outstanding_amount_cents,
+        (select coalesce(sum(ii.total_amount_cents), 0) from invoice_items ii inner join invoices i on i.id = ii.invoice_id where ii.organization_id = $1 and ii.category = 'Consultation' and i.created_at::date between $2::date and $3::date) as consultation_revenue_cents,
+        (select coalesce(sum(ii.total_amount_cents), 0) from invoice_items ii inner join invoices i on i.id = ii.invoice_id where ii.organization_id = $1 and ii.category = 'Laboratory' and i.created_at::date between $2::date and $3::date) as lab_revenue_cents,
+        (select coalesce(sum(ii.total_amount_cents), 0) from invoice_items ii inner join invoices i on i.id = ii.invoice_id where ii.organization_id = $1 and ii.category = 'Medicine' and i.created_at::date between $2::date and $3::date) as pharmacy_revenue_cents
+       from invoices
+       where organization_id = $1`,
+      [organizationId, minDate, today],
+    ), []),
+  ]);
+
+  const overview = overviewResult.rows[0];
+  const laboratory = laboratoryResult.rows[0];
+  const pharmacy = pharmacyResult.rows[0];
+  const billing = billingResult.rows[0];
+
+  return {
+    overview: {
+      patientsToday: asNumber(overview?.patients_today ?? 0),
+      appointmentsToday: asNumber(overview?.appointments_today ?? 0),
+      completedConsultations: asNumber(overview?.completed_consultations ?? 0),
+      cancelledAppointments: asNumber(overview?.cancelled_appointments ?? 0),
+      noShows: asNumber(overview?.no_shows ?? 0),
+      activeQueue: asNumber(overview?.active_queue ?? 0),
+      revenueTodayCents: asNumber(overview?.revenue_today_cents ?? 0),
+      outstandingBillingCents: asNumber(overview?.outstanding_billing_cents ?? 0),
+      labRequestsToday: asNumber(overview?.lab_requests_today ?? 0),
+      prescriptionsIssued: asNumber(overview?.prescriptions_issued ?? 0),
+      prescriptionsDispensed: asNumber(overview?.prescriptions_dispensed ?? 0),
+    },
+    trends: trendResult.rows.map((row) => ({
+      date: row.date,
+      appointments: asNumber(row.appointments),
+      completed: asNumber(row.completed),
+      cancelled: asNumber(row.cancelled),
+      noShows: asNumber(row.no_shows),
+      online: asNumber(row.online),
+      inPerson: asNumber(row.in_person),
+    })),
+    doctorPerformance: doctorResult.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      specialization: row.specialization,
+      completedConsultations: asNumber(row.completed_consultations),
+      currentAppointmentCount: asNumber(row.current_appointment_count),
+      patientLoad: asNumber(row.patient_load),
+      activeQueueCount: asNumber(row.active_queue_count),
+    })),
+    departmentPerformance: departmentResult.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      doctorCount: asNumber(row.doctor_count),
+      onDutyDoctorCount: asNumber(row.on_duty_doctor_count),
+      appointmentCount: asNumber(row.appointment_count),
+      patientVolume: asNumber(row.patient_volume),
+    })),
+    laboratory: {
+      requested: asNumber(laboratory?.requested ?? 0),
+      processing: asNumber(laboratory?.processing ?? 0),
+      completed: asNumber(laboratory?.completed ?? 0),
+      reportsCompleted: asNumber(laboratory?.reports_completed ?? 0),
+    },
+    pharmacy: {
+      dispensed: asNumber(pharmacy?.dispensed ?? 0),
+      medicineValueCents: asNumber(pharmacy?.medicine_value_cents ?? 0),
+      lowStockCount: asNumber(pharmacy?.low_stock_count ?? 0),
+      outOfStockCount: asNumber(pharmacy?.out_of_stock_count ?? 0),
+      nearExpiryCount: asNumber(pharmacy?.near_expiry_count ?? 0),
+    },
+    billing: {
+      revenueCents: asNumber(billing?.revenue_cents ?? 0),
+      paidInvoices: asNumber(billing?.paid_invoices ?? 0),
+      unpaidInvoices: asNumber(billing?.unpaid_invoices ?? 0),
+      outstandingAmountCents: asNumber(billing?.outstanding_amount_cents ?? 0),
+      consultationRevenueCents: asNumber(billing?.consultation_revenue_cents ?? 0),
+      labRevenueCents: asNumber(billing?.lab_revenue_cents ?? 0),
+      pharmacyRevenueCents: asNumber(billing?.pharmacy_revenue_cents ?? 0),
+    },
+  };
+}
+
 function validateLabRequestDraft(state: HospitalState, draft: LabRequestDraft) {
   const errors: Partial<Record<keyof LabRequestDraft, string>> = {};
   const currentDate = getCurrentLocalDateIso();
@@ -2015,10 +2455,6 @@ function validateLabReportDraft(draft: LabReportDraft) {
 
     if (!attachmentPayload) {
       errors.attachment = "The uploaded PDF file could not be processed.";
-    }
-
-    if (sanitizeAttachmentFileName(draft.attachment.fileName) !== draft.attachment.fileName) {
-      errors.attachment = "Use a PDF file name without unsupported characters.";
     }
 
     if (attachmentPayload && !isPdfPayload(attachmentPayload)) {
@@ -2746,10 +3182,13 @@ export async function getScopedHospitalStateForUser(user: SafeUser): Promise<Hos
   const noShowReconciledState = await measurePerfStep("scope.reconcile-no-shows", () =>
     reconcileNoShowAppointments(state),
   );
-  const repairedInvoices = await measurePerfStep("scope.repair-zero-invoices", () =>
-    repairBrokenZeroValueInvoices(noShowReconciledState),
+  const labReconciledState = await measurePerfStep("scope.reconcile-lab-requests", () =>
+    reconcileStaleLabRequests(noShowReconciledState),
   );
-  const repairedState = buildInvoiceStateWithUpdates(noShowReconciledState, repairedInvoices);
+  const repairedInvoices = await measurePerfStep("scope.repair-zero-invoices", () =>
+    repairBrokenZeroValueInvoices(labReconciledState),
+  );
+  const repairedState = buildInvoiceStateWithUpdates(labReconciledState, repairedInvoices);
   const reconciledInvoices = await measurePerfStep("scope.reconcile-invoices", () =>
     reconcileMissingInvoices(repairedState),
   );
@@ -2846,6 +3285,12 @@ export async function getOperationalAnalytics(
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
+  if (isDatabaseConfigured()) {
+    return {
+      analytics: await buildSqlOperationalAnalytics(user.organizationId, scope),
+    };
+  }
+
   const state = await reconcileNoShowAppointments(await loadHospitalState());
   const scopedState = withScopedState(user.role, user, state);
 
@@ -2876,6 +3321,254 @@ function ensureAdminUser(user: SafeUser) {
   if (user.role !== "administrator") {
     throw createHttpError(403, "You do not have access to this workspace.");
   }
+}
+
+function createBranchId(name: string) {
+  return `branch-${slugify(name)}-${randomBytes(3).toString("hex")}`;
+}
+
+function normalizeBranchCode(value: string) {
+  return value.trim().replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").toUpperCase();
+}
+
+function mapBranch(row: Record<string, unknown>): HospitalBranchRecord {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    code: String(row.code),
+    name: String(row.name),
+    address: String(row.address),
+    city: String(row.city),
+    state: asString(row.state),
+    postalCode: asString(row.postal_code),
+    phone: asString(row.phone),
+    email: asString(row.email),
+    active: row.active === true,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+  };
+}
+
+type BranchDraft = {
+  code?: string;
+  name: string;
+  address: string;
+  city: string;
+  state?: string;
+  postalCode?: string;
+  phone?: string;
+  email?: string;
+  active?: boolean;
+};
+
+function validateBranchDraft(draft: BranchDraft) {
+  const errors: Partial<Record<keyof BranchDraft, string>> = {};
+
+  if (draft.name.trim().length < 3) {
+    errors.name = "Enter the branch name.";
+  }
+
+  if (draft.address.trim().length < 6) {
+    errors.address = "Enter the branch address.";
+  }
+
+  if (draft.city.trim().length < 2) {
+    errors.city = "Enter the branch city.";
+  }
+
+  if (draft.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim())) {
+    errors.email = "Enter a valid branch email address.";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}
+
+export async function listHospitalBranches(
+  user: SafeUser,
+  input: { query?: string; status?: "All" | "Active" | "Inactive"; page?: number; pageSize?: number },
+) {
+  const page = Math.max(1, input.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
+  const offset = (page - 1) * pageSize;
+  const search = `%${(input.query ?? "").trim().toLowerCase()}%`;
+  const status = input.status ?? "All";
+
+  const result = await query(
+    `select *, count(*) over() as total_count
+     from hospital_branches
+     where organization_id = $1
+       and ($2 = '%%' or lower(name || ' ' || code || ' ' || city || ' ' || address) like $2)
+       and ($3 = 'All' or ($3 = 'Active' and active = true) or ($3 = 'Inactive' and active = false))
+     order by active desc, name asc
+     limit $4 offset $5`,
+    [user.organizationId, search, status, pageSize, offset],
+  );
+
+  return {
+    branches: result.rows.map(mapBranch),
+    pagination: {
+      page,
+      pageSize,
+      total: asNumber(result.rows[0]?.total_count ?? 0),
+    },
+  };
+}
+
+export async function createHospitalBranch(user: SafeUser, draft: BranchDraft) {
+  ensureAdminUser(user);
+  const validation = validateBranchDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the branch details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const branch: HospitalBranchRecord = {
+    id: createBranchId(draft.name),
+    organizationId: user.organizationId,
+    code: normalizeBranchCode(draft.code?.trim() || draft.name),
+    name: draft.name.trim(),
+    address: draft.address.trim(),
+    city: draft.city.trim(),
+    state: draft.state?.trim() || undefined,
+    postalCode: draft.postalCode?.trim() || undefined,
+    phone: draft.phone?.trim() || undefined,
+    email: draft.email?.trim() || undefined,
+    active: draft.active ?? true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await query(
+    `insert into hospital_branches (
+      id, organization_id, code, name, address, city, state, postal_code, phone, email, active, created_at, updated_at
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      branch.id,
+      branch.organizationId,
+      branch.code,
+      branch.name,
+      branch.address,
+      branch.city,
+      branch.state ?? null,
+      branch.postalCode ?? null,
+      branch.phone ?? null,
+      branch.email ?? null,
+      branch.active,
+      branch.createdAt,
+      branch.updatedAt,
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "branch.created",
+    entityType: "branch",
+    entityId: branch.id,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function updateHospitalBranch(user: SafeUser, branchId: string, draft: BranchDraft) {
+  ensureAdminUser(user);
+  const validation = validateBranchDraft(draft);
+  if (!validation.isValid) {
+    throw createHttpError(400, "Please review the branch details provided.", {
+      errors: validation.errors,
+    });
+  }
+
+  const existing = await query("select id from hospital_branches where id = $1 and organization_id = $2", [
+    branchId,
+    user.organizationId,
+  ]);
+  if (!existing.rows.length) {
+    throw createHttpError(404, "Branch not found.");
+  }
+
+  await query(
+    `update hospital_branches
+     set code = $3,
+         name = $4,
+         address = $5,
+         city = $6,
+         state = $7,
+         postal_code = $8,
+         phone = $9,
+         email = $10,
+         active = $11,
+         updated_at = $12
+     where id = $1 and organization_id = $2`,
+    [
+      branchId,
+      user.organizationId,
+      normalizeBranchCode(draft.code?.trim() || draft.name),
+      draft.name.trim(),
+      draft.address.trim(),
+      draft.city.trim(),
+      draft.state?.trim() || null,
+      draft.postalCode?.trim() || null,
+      draft.phone?.trim() || null,
+      draft.email?.trim() || null,
+      draft.active ?? true,
+      new Date().toISOString(),
+    ],
+  );
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "branch.updated",
+    entityType: "branch",
+    entityId: branchId,
+  });
+
+  return getScopedHospitalStateForUser(user);
+}
+
+export async function updateDoctorBranch(user: SafeUser, doctorId: string, branchId?: string) {
+  ensureAdminUser(user);
+
+  const doctorResult = await query("select id from doctors where id = $1 and organization_id = $2", [
+    doctorId,
+    user.organizationId,
+  ]);
+  if (!doctorResult.rows.length) {
+    throw createHttpError(404, "Doctor not found.");
+  }
+
+  if (branchId) {
+    const branchResult = await query(
+      "select id from hospital_branches where id = $1 and organization_id = $2 and active = true",
+      [branchId, user.organizationId],
+    );
+    if (!branchResult.rows.length) {
+      throw createHttpError(400, "Select an active hospital branch.");
+    }
+  }
+
+  await query("update doctors set branch_id = $3 where id = $1 and organization_id = $2", [
+    doctorId,
+    user.organizationId,
+    branchId ?? null,
+  ]);
+
+  await writeAuditLog({
+    organizationId: user.organizationId,
+    actorUserId: user.id,
+    action: "doctor.branch.updated",
+    entityType: "doctor",
+    entityId: doctorId,
+    metadata: { branchId },
+  });
+
+  return getScopedHospitalStateForUser(user);
 }
 
 export async function getAdminBillingDaySummaries(
@@ -3664,6 +4357,11 @@ export async function getJourneyByToken(user: SafeUser, token: string) {
     ? state.queueEntries.find((item) => item.id === journey.queueEntryId)
     : undefined;
   const currentStep = getJourneyCurrentStep(state, appointment, queueEntry);
+  const queueEstimate = queueEntry
+    ? formatQueueWaitEstimate(getQueueWaitEstimate(state, queueEntry))
+    : appointment && appointment.status !== "Completed" && appointment.status !== "Cancelled"
+      ? "Available after check-in"
+      : undefined;
 
   return {
     journey: {
@@ -3681,7 +4379,7 @@ export async function getJourneyByToken(user: SafeUser, token: string) {
           : queueEntry
             ? state.departments.find((department) => department.id === queueEntry.departmentId)?.name
             : undefined,
-      estimatedWait: queueEntry ? getQueueWaitEstimate(state, queueEntry) : undefined,
+      estimatedWait: queueEstimate,
     },
   };
 }
@@ -4077,7 +4775,11 @@ export async function createLabReport(
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
-  if (request.status !== "Processing" && request.status !== "Completed") {
+  if (
+    request.status !== "Sample Collected" &&
+    request.status !== "Processing" &&
+    request.status !== "Completed"
+  ) {
     throw createHttpError(400, "A report can only be added after processing has started.");
   }
 
@@ -4093,6 +4795,19 @@ export async function createLabReport(
     });
   }
 
+  const attachmentContentBase64 = draft.attachment?.contentBase64;
+  const sanitizedAttachmentFileName = draft.attachment
+    ? sanitizeAttachmentFileName(draft.attachment.fileName.trim())
+    : undefined;
+  const storedAttachment = draft.attachment && attachmentContentBase64
+    ? await storeClinicalFileWithFallback({
+        contentBase64: attachmentContentBase64,
+        fileName: sanitizedAttachmentFileName ?? draft.attachment.fileName,
+        contentType: draft.attachment.contentType,
+        folder: `medivanta/${request.organizationId}/lab-reports`,
+      })
+    : null;
+
   const report: LabReportRecord = {
     id: createLabReportId(state),
     labRequestId,
@@ -4107,7 +4822,19 @@ export async function createLabReport(
       id: user.id,
       name: user.displayName,
     },
-    attachment: draft.attachment,
+    attachment: draft.attachment
+      ? {
+          ...draft.attachment,
+          fileName: sanitizedAttachmentFileName ?? draft.attachment.fileName,
+          contentBase64: storedAttachment ? undefined : draft.attachment.contentBase64,
+          storageProvider: storedAttachment?.storageProvider,
+          storageUrl: storedAttachment?.storageUrl,
+          storagePublicId: storedAttachment?.storagePublicId,
+          originalFileName: storedAttachment?.originalFileName,
+          mimeType: storedAttachment?.mimeType,
+          storageSize: storedAttachment?.storageSize,
+        }
+      : undefined,
   };
 
   const updatedRequest: LabRequestRecord = {
@@ -4993,6 +5720,53 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     throw createHttpError(403, "You do not have access to this workspace.");
   }
 
+  if (user.role === "patient") {
+    const branch = effectiveDraft.branchId
+      ? (state.branches ?? []).find((item) => item.id === effectiveDraft.branchId)
+      : undefined;
+
+    if (!branch || !branch.active) {
+      throw createHttpError(400, "Please select a hospital branch.", {
+        errors: { branchId: "Select a hospital branch." },
+      });
+    }
+
+  if (doctor.branchId && doctor.branchId !== branch.id) {
+    throw createHttpError(400, "Please select a doctor available at this branch.", {
+      errors: { doctorId: "Select a doctor available at this branch." },
+    });
+  }
+  }
+
+  const users = await loadUsers();
+  const doctorUsers = users.filter(
+    (currentUser) =>
+      currentUser.role === "doctor" &&
+      currentUser.organizationId === doctor.organizationId &&
+      currentUser.doctorId === doctor.id,
+  );
+  const activeDoctorUsers = doctorUsers.filter(isActiveStaffUser);
+  if (doctorUsers.length > 0 && activeDoctorUsers.length === 0) {
+    throw createHttpError(400, "This doctor is not available for new appointments.");
+  }
+
+  const doctorUser = activeDoctorUsers[0] ?? doctorUsers[0];
+  const consultationFeeCents = parseCurrencyTextToCents(doctorUser?.consultationFee);
+
+  if (user.role === "patient") {
+    const paymentErrors: Partial<Record<keyof AppointmentDraft, string>> = {};
+
+    if (!draft.paymentMethod) {
+      paymentErrors.paymentMethod = "Select a payment method.";
+    }
+
+    if (Object.keys(paymentErrors).length > 0) {
+      throw createHttpError(400, "Please complete payment before booking this appointment.", {
+        errors: paymentErrors,
+      });
+    }
+  }
+
   const appointment: AppointmentRecord = {
     id: createAppointmentId(state),
     organizationId: doctor.organizationId,
@@ -5023,20 +5797,169 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-
-    await measurePerfStep("appointment.create.write", async () => {
-      await insertAppointment(appointment);
-      if (journey) {
-        await insertPatientJourney(journey);
+  const prepaidInvoice =
+    user.role === "patient"
+      ? buildInvoiceRecord({
+          patientId: user.id,
+          patientName: appointment.patientName,
+          familyMemberId: appointment.familyMemberId,
+          organizationId: appointment.organizationId,
+          hospitalId: appointment.organizationId,
+          sourceType: "appointment",
+          sourceId: appointment.id,
+          dueDate: appointment.appointmentDate,
+          items: [
+            {
+              description: `Consultation with ${doctorUser?.displayName ?? doctor.name}`,
+              category: "Consultation",
+              quantity: 1,
+              unitAmountCents: consultationFeeCents,
+            },
+          ],
+        })
+      : null;
+  const prepaidPayment: PaymentRecord | null = prepaidInvoice
+    ? {
+        id: createPaymentId(),
+        invoiceId: prepaidInvoice.id,
+        patientId: prepaidInvoice.patientId,
+        organizationId: prepaidInvoice.organizationId,
+        amountCents: prepaidInvoice.totalCents,
+        method: draft.paymentMethod ?? "UPI",
+        ...(draft.paymentReferenceNumber?.trim()
+          ? { referenceNumber: draft.paymentReferenceNumber.trim() }
+          : {}),
+        paidAt: new Date().toISOString(),
+        recordedBy: {
+          id: user.id,
+          name: user.displayName,
+        },
       }
-    });
-    const users = await loadUsers();
-    const doctorUsers = users.filter(
-      (currentUser) =>
-        currentUser.role === "doctor" &&
-        currentUser.organizationId === appointment.organizationId &&
-        currentUser.doctorId === appointment.doctorId,
-    );
+    : null;
+
+  if (prepaidInvoice && prepaidPayment) {
+    prepaidInvoice.amountPaidCents = prepaidPayment.amountCents;
+    prepaidInvoice.amountDueCents = 0;
+    prepaidInvoice.paymentStatus = "Paid";
+    prepaidInvoice.payments = [prepaidPayment];
+  }
+
+  await measurePerfStep("appointment.create.write", () =>
+    withTransaction(async (client) => {
+      await client.query(
+        `insert into appointments (
+          id, organization_id, patient_id, patient_name, family_member_id, doctor_id, department_id,
+          appointment_date, appointment_time, reason_for_appointment, consultation_mode, status
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          appointment.id,
+          appointment.organizationId,
+          appointment.patientId ?? null,
+          appointment.patientName,
+          appointment.familyMemberId ?? null,
+          appointment.doctorId,
+          appointment.departmentId,
+          appointment.appointmentDate,
+          appointment.appointmentTime,
+          appointment.reasonForAppointment,
+          appointment.consultationMode,
+          appointment.status,
+        ],
+      );
+
+      if (journey) {
+        await client.query(
+          `insert into patient_journeys (
+            id, organization_id, token, appointment_id, queue_entry_id, patient_id,
+            family_member_id, patient_name, created_at, updated_at
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            journey.id,
+            journey.organizationId,
+            journey.token,
+            journey.appointmentId ?? null,
+            journey.queueEntryId ?? null,
+            journey.patientId ?? null,
+            journey.familyMemberId ?? null,
+            journey.patientName,
+            journey.createdAt,
+            journey.updatedAt,
+          ],
+        );
+      }
+
+      if (prepaidInvoice && prepaidPayment) {
+        await client.query(
+          `insert into invoices (
+            id, invoice_number, organization_id, hospital_id, patient_id, patient_name, family_member_id,
+            source_type, source_id, due_date, subtotal_cents, discount_cents, tax_cents, total_cents,
+            amount_paid_cents, amount_due_cents, payment_status, created_at, updated_at
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          [
+            prepaidInvoice.id,
+            prepaidInvoice.invoiceNumber,
+            prepaidInvoice.organizationId,
+            prepaidInvoice.hospitalId,
+            prepaidInvoice.patientId,
+            prepaidInvoice.patientName,
+            prepaidInvoice.familyMemberId ?? null,
+            prepaidInvoice.sourceType ?? null,
+            prepaidInvoice.sourceId ?? null,
+            prepaidInvoice.dueDate ?? null,
+            prepaidInvoice.subtotalCents,
+            prepaidInvoice.discountCents,
+            prepaidInvoice.taxCents,
+            prepaidInvoice.totalCents,
+            prepaidInvoice.amountPaidCents,
+            prepaidInvoice.amountDueCents,
+            prepaidInvoice.paymentStatus,
+            prepaidInvoice.createdAt,
+            prepaidInvoice.createdAt,
+          ],
+        );
+
+        for (const item of prepaidInvoice.items) {
+          await client.query(
+            `insert into invoice_items (
+              id, invoice_id, organization_id, description, category, quantity, unit_amount_cents,
+              total_amount_cents, source_type, source_id
+            ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              item.id,
+              item.invoiceId,
+              item.organizationId,
+              item.description,
+              item.category,
+              item.quantity,
+              item.unitAmountCents,
+              item.totalAmountCents,
+              item.sourceType ?? null,
+              item.sourceId ?? null,
+            ],
+          );
+        }
+
+        await client.query(
+          `insert into payments (
+            id, invoice_id, organization_id, patient_id, amount_cents, method, reference_number,
+            paid_at, recorded_by_id, recorded_by_name
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            prepaidPayment.id,
+            prepaidPayment.invoiceId,
+            prepaidPayment.organizationId,
+            prepaidPayment.patientId,
+            prepaidPayment.amountCents,
+            prepaidPayment.method,
+            prepaidPayment.referenceNumber ?? null,
+            prepaidPayment.paidAt,
+            prepaidPayment.recordedBy?.id ?? null,
+            prepaidPayment.recordedBy?.name ?? null,
+          ],
+        );
+      }
+    }),
+  );
     const createdNotifications = await notifyUsers({
       organizationId: appointment.organizationId,
       userIds: [
@@ -5064,12 +5987,14 @@ export async function createAppointment(user: SafeUser, draft: AppointmentDraft)
     ...state,
     appointments: [appointment, ...state.appointments],
     patientJourneys: journey ? [journey, ...(state.patientJourneys ?? [])] : state.patientJourneys,
+    invoices: prepaidInvoice ? [prepaidInvoice, ...state.invoices] : state.invoices,
   };
 
   return {
       patch: {
         appointments: [appointment],
         patientJourneys: journey ? [journey] : [],
+        invoices: prepaidInvoice ? [prepaidInvoice] : [],
         notifications: createdNotifications.filter((notification) => notification.userId === user.id),
         meta: {
           appointmentSlotLoads: getAppointmentSlotLoads(nextState, appointment.organizationId),
@@ -5674,9 +6599,12 @@ type HospitalSettingsDraft = {
 type StaffDraft = {
   displayName: string;
   email: string;
-  role: "doctor" | "receptionist" | "laboratory" | "pharmacist";
+  temporaryPassword: string;
+  role: "doctor" | "receptionist" | "laboratory" | "pharmacist" | "administrator";
   departmentId?: string;
+  branchId?: string;
   specialization?: string;
+  consultationFee?: string;
   status: string;
 };
 
@@ -5815,8 +6743,23 @@ function validateStaffDraft(state: HospitalState, users: UserRecord[], draft: St
     errors.email = "Enter a valid email address.";
   }
 
-  if (users.some((user) => user.email.toLowerCase() === email)) {
+  const duplicateUser = users.find((user) => user.email.toLowerCase() === email);
+  const canRepairDoctorProfile =
+    duplicateUser?.role === "doctor" &&
+    draft.role === "doctor" &&
+    duplicateUser.organizationId === state.organization.id &&
+    duplicateUser.doctorId &&
+    !state.doctors.some((doctor) => doctor.id === duplicateUser.doctorId);
+
+  if (duplicateUser && !canRepairDoctorProfile) {
     errors.email = "An account already exists with that email address.";
+  }
+
+  const passwordErrors = getPasswordPolicyErrors(draft.temporaryPassword ?? "");
+  if (!draft.temporaryPassword?.trim()) {
+    errors.temporaryPassword = "Temporary password is required.";
+  } else if (passwordErrors.length > 0) {
+    errors.temporaryPassword = passwordErrors[0] ?? "Enter a stronger temporary password.";
   }
 
   if (draft.role === "doctor") {
@@ -5824,8 +6767,20 @@ function validateStaffDraft(state: HospitalState, users: UserRecord[], draft: St
       errors.departmentId = "Select a department for the doctor.";
     }
 
-    if (!draft.specialization || draft.specialization.trim().length < 2) {
-      errors.specialization = "Enter a doctor specialization.";
+    if (parseCurrencyTextToCents(draft.consultationFee) <= 0) {
+      errors.consultationFee = "Enter the doctor's consultation fee.";
+    }
+
+    if (
+      draft.branchId &&
+      !state.branches?.some(
+        (branch) =>
+          branch.id === draft.branchId &&
+          branch.organizationId === state.organization.id &&
+          branch.active,
+      )
+    ) {
+      errors.branchId = "Select an active hospital branch.";
     }
   }
 
@@ -6637,22 +7592,34 @@ export async function createStaffMember(user: SafeUser, draft: StaffDraft) {
     });
   }
 
-  const passwordHash = await hashPassword(DEMO_ACCOUNT_PASSWORD);
+  const passwordHash = await hashPassword(draft.temporaryPassword);
+  const email = draft.email.trim().toLowerCase();
+  const existingUser = users.find((currentUser) => currentUser.email.toLowerCase() === email);
+  const department = draft.departmentId
+    ? state.departments.find((currentDepartment) => currentDepartment.id === draft.departmentId)
+    : undefined;
+  const specialization =
+    draft.specialization?.trim() || department?.name || "General Medicine";
+  const doctorId =
+    existingUser?.role === "doctor" && existingUser.doctorId
+      ? existingUser.doctorId
+      : `doc-${slugify(draft.displayName)}-${randomBytes(3).toString("hex")}`;
   const nextUser: UserRecord = {
-    id: `user-staff-${randomBytes(6).toString("hex")}`,
+    id: existingUser?.id ?? `user-staff-${randomBytes(6).toString("hex")}`,
     organizationId: user.organizationId,
-    email: draft.email.trim().toLowerCase(),
+    email,
     displayName: draft.displayName.trim(),
     role: draft.role,
-    passwordHash,
+    passwordHash: existingUser?.passwordHash ?? passwordHash,
     departmentId: draft.departmentId,
+    consultationFee: draft.role === "doctor" ? draft.consultationFee?.trim() || undefined : undefined,
     staffStatus: draft.status.trim(),
+    passwordResetRequired: true,
   };
 
   let nextState = state;
 
   if (draft.role === "doctor") {
-    const doctorId = `doc-${slugify(draft.displayName)}-${randomBytes(3).toString("hex")}`;
     nextUser.doctorId = doctorId;
 
     nextState = {
@@ -6662,21 +7629,135 @@ export async function createStaffMember(user: SafeUser, draft: StaffDraft) {
           id: doctorId,
           organizationId: user.organizationId,
           name: draft.displayName.trim(),
-          specialization: draft.specialization!.trim(),
+          specialization,
           departmentId: draft.departmentId!,
+          branchId: draft.branchId,
           status: mapDoctorStatus(draft.status),
           availability: "Available for scheduling",
           shiftLabel: "Shift to be assigned",
         },
-        ...state.doctors,
+        ...state.doctors.filter((doctor) => doctor.id !== doctorId),
       ],
     };
   }
 
-  await Promise.all([
-    saveUsers([...users, nextUser]),
-    saveHospitalState(nextState),
-  ]);
+  if (isDatabaseConfigured()) {
+    await withTransaction(async (client) => {
+      await client.query(
+        `insert into users (
+          id, organization_id, email, display_name, role, password_hash, doctor_id,
+          assigned_doctor_id, status, email_verified, password_reset_required, updated_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, now())
+        on conflict (id) do update set
+          organization_id = excluded.organization_id,
+          email = excluded.email,
+          display_name = excluded.display_name,
+          role = excluded.role,
+          password_hash = excluded.password_hash,
+          doctor_id = excluded.doctor_id,
+          assigned_doctor_id = excluded.assigned_doctor_id,
+          status = excluded.status,
+          updated_at = now()`,
+        [
+          nextUser.id,
+          nextUser.organizationId,
+          nextUser.email,
+          nextUser.displayName,
+          nextUser.role,
+          nextUser.passwordHash,
+          nextUser.doctorId ?? null,
+          nextUser.assignedDoctorId ?? null,
+          nextUser.staffStatus ?? null,
+        ],
+      );
+
+      if (draft.role === "doctor") {
+        const hasBranchColumn = await client.query(
+          `select exists (
+             select 1
+             from information_schema.columns
+             where table_name = 'doctors' and column_name = 'branch_id'
+           ) as exists`,
+        );
+        const canPersistBranch = Boolean(hasBranchColumn.rows[0]?.exists);
+
+        if (canPersistBranch) {
+          await client.query(
+            `insert into doctors (
+              id, organization_id, name, specialization, department_id, status,
+              availability, shift_label, branch_id, break_windows
+            ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, '[]'::jsonb)
+            on conflict (id) do update set
+              name = excluded.name,
+              specialization = excluded.specialization,
+              department_id = excluded.department_id,
+              status = excluded.status,
+              availability = excluded.availability,
+              shift_label = excluded.shift_label,
+              branch_id = excluded.branch_id,
+              break_windows = excluded.break_windows`,
+            [
+              doctorId,
+              user.organizationId,
+              draft.displayName.trim(),
+              specialization,
+              draft.departmentId!,
+              mapDoctorStatus(draft.status),
+              "Available for scheduling",
+              "Shift to be assigned",
+              draft.branchId ?? null,
+            ],
+          );
+        } else {
+          await client.query(
+            `insert into doctors (
+              id, organization_id, name, specialization, department_id, status,
+              availability, shift_label, break_windows
+            ) values ($1, $2, $3, $4, $5, $6, $7, $8, '[]'::jsonb)
+            on conflict (id) do update set
+              name = excluded.name,
+              specialization = excluded.specialization,
+              department_id = excluded.department_id,
+              status = excluded.status,
+              availability = excluded.availability,
+              shift_label = excluded.shift_label,
+              break_windows = excluded.break_windows`,
+            [
+              doctorId,
+              user.organizationId,
+              draft.displayName.trim(),
+              specialization,
+              draft.departmentId!,
+              mapDoctorStatus(draft.status),
+              "Available for scheduling",
+              "Shift to be assigned",
+            ],
+          );
+        }
+        await client.query(
+          `insert into doctor_profiles (user_id, department_id, specialization, consultation_fee)
+           values ($1, $2, $3, $4)
+           on conflict (user_id) do update set
+             department_id = excluded.department_id,
+             specialization = excluded.specialization,
+             consultation_fee = excluded.consultation_fee`,
+          [nextUser.id, draft.departmentId ?? null, specialization, nextUser.consultationFee ?? null],
+        );
+      } else {
+        await client.query(
+          `insert into staff_profiles (user_id, department_id)
+           values ($1, $2)
+           on conflict (user_id) do update set
+             department_id = excluded.department_id`,
+          [nextUser.id, draft.departmentId ?? null],
+        );
+      }
+    });
+  } else {
+    await saveUsers([...users.filter((currentUser) => currentUser.id !== nextUser.id), nextUser]);
+    await saveHospitalState(nextState);
+  }
+
   await writeAuditLog({
     organizationId: user.organizationId,
     actorUserId: user.id,
@@ -7019,6 +8100,12 @@ export async function createClinicalAttachment(
     patientId: draft.patientId,
     familyMemberId: draft.familyMemberId,
   });
+  const storedFile = await storeClinicalFileWithFallback({
+    contentBase64: draft.contentBase64,
+    fileName: draft.fileName,
+    contentType: draft.contentType,
+    folder: `medivanta/${user.organizationId}/clinical-attachments`,
+  });
 
   const attachment: ClinicalAttachmentRecord = {
     id: `ATT-${Date.now()}-${randomBytes(3).toString("hex")}`,
@@ -7030,7 +8117,13 @@ export async function createClinicalAttachment(
     fileName: sanitizeAttachmentFileName(draft.fileName.trim()),
     contentType: draft.contentType,
     fileSize: draft.fileSize,
-    contentBase64: draft.contentBase64,
+    contentBase64: storedFile ? undefined : draft.contentBase64,
+    storageProvider: storedFile?.storageProvider,
+    storageUrl: storedFile?.storageUrl,
+    storagePublicId: storedFile?.storagePublicId,
+    originalFileName: storedFile?.originalFileName,
+    mimeType: storedFile?.mimeType,
+    storageSize: storedFile?.storageSize,
     uploadedByUserId: user.id,
     uploadedByName: user.displayName,
     createdAt: new Date().toISOString(),
@@ -7039,8 +8132,9 @@ export async function createClinicalAttachment(
   await query(
     `insert into clinical_attachments (
       id, organization_id, patient_user_id, family_member_id, medical_record_id, label, file_name,
-      content_type, file_size, content_base64, uploaded_by_user_id, uploaded_by_name, created_at
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      content_type, file_size, content_base64, uploaded_by_user_id, uploaded_by_name, created_at,
+      storage_provider, storage_url, storage_public_id, original_filename, mime_type, storage_size
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
     [
       attachment.id,
       attachment.organizationId,
@@ -7051,10 +8145,16 @@ export async function createClinicalAttachment(
       attachment.fileName,
       attachment.contentType,
       attachment.fileSize,
-      attachment.contentBase64,
+      attachment.contentBase64 ?? null,
       attachment.uploadedByUserId,
       attachment.uploadedByName,
       attachment.createdAt,
+      attachment.storageProvider ?? null,
+      attachment.storageUrl ?? null,
+      attachment.storagePublicId ?? null,
+      attachment.originalFileName ?? null,
+      attachment.mimeType ?? null,
+      attachment.storageSize ?? null,
     ],
   );
 
@@ -7361,6 +8461,10 @@ export async function setTelemedicineSessionStatus(
     throw createHttpError(404, "Consultation session not found.");
   }
 
+  if (status === "Ended" && user.role !== "doctor") {
+    throw createHttpError(403, "Only the assigned doctor can complete this consultation.");
+  }
+
   const startedAt =
     status === "Live" ? context.session.startedAt ?? new Date().toISOString() : context.session.startedAt;
   const endedAt = status === "Ended" ? new Date().toISOString() : context.session.endedAt;
@@ -7376,6 +8480,34 @@ export async function setTelemedicineSessionStatus(
     [sessionId, context.session.organizationId, status, startedAt ?? null, endedAt ?? null, updatedAt],
   );
 
+  let updatedAppointment = context.appointment;
+  if (
+    status === "Live" &&
+    (context.appointment.status === "Scheduled" || context.appointment.status === "Checked in")
+  ) {
+    updatedAppointment = { ...context.appointment, status: "In consultation" };
+    await updateAppointmentStatusById({
+      appointmentId: context.appointment.id,
+      organizationId: context.appointment.organizationId,
+      status: "In consultation",
+    });
+    await updateQueueStatusesByAppointment({
+      organizationId: context.appointment.organizationId,
+      appointmentId: context.appointment.id,
+      status: "In consultation",
+      updatedAt,
+      excludeCompleted: true,
+    });
+  }
+
+  if (status === "Ended" && context.appointment.status !== "Completed") {
+    const appointmentResult = await setAppointmentStatus(user, context.appointment.id, "Completed");
+    updatedAppointment = appointmentResult.patch.appointments[0] ?? {
+      ...context.appointment,
+      status: "Completed",
+    };
+  }
+
   await writeAuditLog({
     organizationId: context.session.organizationId,
     actorUserId: user.id,
@@ -7385,6 +8517,7 @@ export async function setTelemedicineSessionStatus(
   });
 
   return {
+    appointment: updatedAppointment,
     session: {
       ...context.session,
       status,

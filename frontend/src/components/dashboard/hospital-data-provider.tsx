@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -57,6 +58,9 @@ type HospitalMeta = {
   appointmentSlotLoads?: AppointmentSlotLoadRecord[];
   labSlotLoads?: LabSlotLoadRecord[];
 };
+
+const backendApiBaseUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 type OperationalAnalytics = {
   overview: {
@@ -140,6 +144,7 @@ type DoctorHandoffSummary = {
 
 type HospitalMutationPatch = {
   organization?: Organization;
+  branches?: HospitalState["branches"];
   bookingCapacity?: HospitalState["bookingCapacity"];
   medicineCatalog?: HospitalState["medicineCatalog"];
   appointments?: HospitalState["appointments"];
@@ -211,14 +216,21 @@ type HospitalContextValue = {
   createStaffMember: (draft: {
     displayName: string;
     email: string;
-    role: "doctor" | "receptionist" | "laboratory" | "pharmacist";
+    temporaryPassword: string;
+    role: "doctor" | "receptionist" | "laboratory" | "pharmacist" | "administrator";
     departmentId?: string;
+    branchId?: string;
     specialization?: string;
+    consultationFee?: string;
     status: string;
   }) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
   updateUserAccountStatus: (
     userId: string,
     status: "Active" | "Deactivated",
+  ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
+  updateDoctorBranch: (
+    doctorId: string,
+    branchId?: string,
   ) => Promise<{ ok: boolean; message?: string; fieldErrors?: Record<string, string> }>;
   createAppointment: (draft: AppointmentDraft) => Promise<ValidationResult>;
   createMedicalRecord: (draft: MedicalRecordDraft) => Promise<{
@@ -404,6 +416,7 @@ export function HospitalDataProvider({
         normalizeHospitalState({
           ...current,
           organization: response.patch?.organization ?? current.organization,
+          branches: mergeById(current.branches ?? [], response.patch?.branches),
           bookingCapacity: response.patch?.bookingCapacity ?? current.bookingCapacity,
           medicineCatalog: mergeById(current.medicineCatalog, response.patch?.medicineCatalog),
           appointments: mergeById(current.appointments, response.patch?.appointments),
@@ -473,6 +486,67 @@ export function HospitalDataProvider({
   const activeQueueEntries = useMemo(() => getActiveQueueEntries(state), [state]);
   const metrics = useMemo(() => getDashboardMetrics(state), [state]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof EventSource === "undefined") {
+      return;
+    }
+
+    let closed = false;
+    let reconnectTimer: number | undefined;
+    let source: EventSource | null = null;
+
+    const handleNotifications = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          notifications?: HospitalState["notifications"];
+        };
+        if (!payload.notifications) {
+          return;
+        }
+
+        setState((current) =>
+          normalizeHospitalState({
+            ...current,
+            notifications: mergeById(current.notifications, payload.notifications),
+          }),
+        );
+      } catch {
+        // Ignore malformed stream payloads and keep the current persisted state.
+      }
+    };
+
+    const connect = () => {
+      if (closed || source) {
+        return;
+      }
+
+      source = new EventSource(`${backendApiBaseUrl}/api/hospital/notifications/stream`, {
+        withCredentials: true,
+      });
+      source.addEventListener("notifications", handleNotifications);
+      source.onerror = () => {
+        source?.removeEventListener("notifications", handleNotifications);
+        source?.close();
+        source = null;
+        if (!closed) {
+          reconnectTimer = window.setTimeout(connect, 5000);
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      source?.removeEventListener("notifications", handleNotifications);
+      source?.close();
+      source = null;
+    };
+  }, []);
+
   const createDepartment = useCallback(
     async (draft: {
       code: string;
@@ -504,7 +578,7 @@ export function HospitalDataProvider({
     async (scope: "today" | "7d" | "30d") => {
       try {
         const response = await apiRequest<HospitalApiResponse>(
-          `/api/hospital/analytics?scope=${encodeURIComponent(scope)}`,
+          `/api/hospital/admin/analytics?scope=${encodeURIComponent(scope)}`,
         );
         return { ok: true, analytics: response.analytics };
       } catch (error) {
@@ -626,9 +700,12 @@ export function HospitalDataProvider({
     async (draft: {
       displayName: string;
       email: string;
-      role: "doctor" | "receptionist" | "laboratory" | "pharmacist";
+      temporaryPassword: string;
+      role: "doctor" | "receptionist" | "laboratory" | "pharmacist" | "administrator";
       departmentId?: string;
+      branchId?: string;
       specialization?: string;
+      consultationFee?: string;
       status: string;
     }) => {
       try {
@@ -658,6 +735,30 @@ export function HospitalDataProvider({
           {
             method: "PATCH",
             body: JSON.stringify({ status }),
+          },
+        );
+        updateFromResponse(response);
+        return { ok: true };
+      } catch (error) {
+        const maybeError = error as Error & { fieldErrors?: Record<string, string> };
+        return {
+          ok: false,
+          message: maybeError.message,
+          fieldErrors: maybeError.fieldErrors,
+        };
+      }
+    },
+    [updateFromResponse],
+  );
+
+  const updateDoctorBranch = useCallback(
+    async (doctorId: string, branchId?: string) => {
+      try {
+        const response = await apiRequest<HospitalApiResponse>(
+          `/api/hospital/doctors/${doctorId}/branch`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ branchId }),
           },
         );
         updateFromResponse(response);
@@ -1281,6 +1382,7 @@ export function HospitalDataProvider({
       createDepartment,
       createStaffMember,
       updateUserAccountStatus,
+      updateDoctorBranch,
       createAppointment,
       createMedicalRecord,
       updateMedicalRecord,
@@ -1322,6 +1424,7 @@ export function HospitalDataProvider({
       fetchOperationalAnalytics,
       fetchPatientJourney,
       updateUserAccountStatus,
+      updateDoctorBranch,
       createAppointment,
       createMedicalRecord,
       updateMedicalRecord,

@@ -1,15 +1,18 @@
 import { Inbox } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Card } from "@/components/ui/card";
 
 type EmptyStateProps = {
   title?: string;
   description?: string;
+  action?: ReactNode;
 };
 
 export function EmptyState({
   title = "No records to show",
   description = "Relevant records will appear here when matching data becomes available.",
+  action,
 }: EmptyStateProps) {
   return (
     <Card className="flex min-h-56 flex-col items-center justify-center text-center">
@@ -20,6 +23,7 @@ export function EmptyState({
       <p className="mt-2 max-w-sm text-sm text-[color:var(--muted-foreground)]">
         {description}
       </p>
+      {action ? <div className="mt-5">{action}</div> : null}
     </Card>
   );
 }

@@ -28,6 +28,7 @@ export const openApiDocument = {
     { name: "Appointments" },
     { name: "Queue/Emergency" },
     { name: "Doctors" },
+    { name: "Branches" },
     { name: "Medical Records/EMR" },
     { name: "Prescriptions" },
     { name: "Laboratory" },
@@ -51,6 +52,18 @@ export const openApiDocument = {
       post: {
         tags: ["Authentication"],
         summary: "Sign out and clear the active session",
+      },
+    },
+    "/api/auth/google": {
+      get: {
+        tags: ["Authentication"],
+        summary: "Start Google OAuth sign in for patient accounts",
+      },
+    },
+    "/api/auth/google/callback": {
+      get: {
+        tags: ["Authentication"],
+        summary: "Complete Google OAuth sign in and issue the MediVanta session",
       },
     },
     "/api/auth/register": {
@@ -89,6 +102,12 @@ export const openApiDocument = {
         summary: "Load the authenticated hospital workspace state",
       },
     },
+    "/api/hospital/notifications/stream": {
+      get: {
+        tags: ["Notifications"],
+        summary: "Stream authenticated user notifications with server-sent events",
+      },
+    },
     "/api/hospital/search": {
       get: {
         tags: ["Search"],
@@ -111,6 +130,34 @@ export const openApiDocument = {
       patch: {
         tags: ["Appointments", "Queue/Emergency"],
         summary: "Update appointment workflow status",
+      },
+    },
+    "/api/hospital/branches": {
+      get: {
+        tags: ["Branches"],
+        summary: "List hospital branches with search and status filtering",
+      },
+      post: {
+        tags: ["Branches"],
+        summary: "Create a hospital branch",
+      },
+    },
+    "/api/hospital/branches/{branchId}": {
+      patch: {
+        tags: ["Branches"],
+        summary: "Update branch details or active status",
+      },
+    },
+    "/api/hospital/doctors/{doctorId}/branch": {
+      patch: {
+        tags: ["Branches", "Doctors"],
+        summary: "Assign a doctor to a hospital branch",
+      },
+    },
+    "/api/public/doctor-ratings": {
+      get: {
+        tags: ["Doctors"],
+        summary: "Load public aggregate doctor ratings",
       },
     },
     "/api/hospital/queue/{queueEntryId}/status": {

@@ -20,6 +20,8 @@ import {
   type AppointmentSlotLoadRecord,
   type BookingCapacityRecord,
   getCurrentLocalDateIso,
+  isDoctorOnBreakAtSlot,
+  isClosedAppointmentTimeSlot,
   isPastLocalTimeSlot,
   getSessionForTime,
   type AppointmentDraft,
@@ -27,6 +29,8 @@ import {
   type DepartmentRecord,
   type DoctorRecord,
   type FamilyMemberRecord,
+  type HospitalBranchRecord,
+  type PaymentMethod,
 } from "@/lib/hospital-data";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +39,7 @@ type AppointmentFormModalProps = {
   organizationName: string;
   bookingCapacity: BookingCapacityRecord;
   appointmentSlotLoads: AppointmentSlotLoadRecord[];
+  branches?: HospitalBranchRecord[];
   departments: DepartmentRecord[];
   doctors: DoctorRecord[];
   appointments: AppointmentRecord[];
@@ -53,13 +58,18 @@ type AppointmentFormModalProps = {
   }>;
 };
 
+type PatientBookingStep = "details" | "payment" | "review";
+
 const emptyDraft: AppointmentDraft = {
   patientName: "",
+  branchId: "",
   doctorId: "",
   appointmentDate: "",
   appointmentTime: "",
   reasonForAppointment: "",
   consultationMode: "In Person",
+  paymentMethod: "UPI",
+  paymentReferenceNumber: "",
 };
 
 const weekdayLabels = [
@@ -96,6 +106,36 @@ const timeSlots = [
   "18:00",
 ];
 
+const appointmentPaymentMethods: PaymentMethod[] = [
+  "UPI",
+  "Credit Card",
+  "Debit Card",
+  "Net Banking",
+];
+
+function parseCurrencyTextToCents(value?: string) {
+  if (!value) {
+    return 0;
+  }
+
+  const amount = Number(value.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
+}
+
+function formatMoney(cents: number) {
+  return `INR ${(cents / 100).toFixed(2)}`;
+}
+
+function isActiveDoctorProfile(profile?: SafeUser) {
+  return !profile || profile.staffStatus?.trim().toLowerCase() !== "deactivated";
+}
+
+function formatBranchOptionLabel(branch: HospitalBranchRecord) {
+  return branch.name.toLowerCase().includes(branch.city.toLowerCase())
+    ? branch.name
+    : `${branch.name} - ${branch.city}`;
+}
+
 function getDraftFromAppointment(initialAppointment?: AppointmentRecord | null): AppointmentDraft {
   if (!initialAppointment) {
     return emptyDraft;
@@ -104,6 +144,7 @@ function getDraftFromAppointment(initialAppointment?: AppointmentRecord | null):
   return {
     patientName: initialAppointment.patientName,
     familyMemberId: initialAppointment.familyMemberId,
+    branchId: "",
     doctorId: initialAppointment.doctorId,
     appointmentDate: initialAppointment.appointmentDate,
     appointmentTime: initialAppointment.appointmentTime,
@@ -377,6 +418,8 @@ type TimePickerFieldProps = {
   error?: string;
   selectedDate: string;
   unavailableSlots: Set<string>;
+  unavailableReasons?: Map<string, string>;
+  hiddenSlots?: Set<string>;
   onChange: (value: string) => void;
 };
 
@@ -385,6 +428,8 @@ export function TimePickerField({
   error,
   selectedDate,
   unavailableSlots,
+  unavailableReasons,
+  hiddenSlots = new Set<string>(),
   onChange,
 }: TimePickerFieldProps) {
   const [open, setOpen] = useState(false);
@@ -419,7 +464,7 @@ export function TimePickerField({
             </p>
           </div>
           <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto p-4">
-            {timeSlots.map((slot) => {
+            {timeSlots.filter((slot) => !hiddenSlots.has(slot)).map((slot) => {
               const isSelected = slot === value;
               const isUnavailable =
                 (!isSelected && unavailableSlots.has(slot)) ||
@@ -444,7 +489,12 @@ export function TimePickerField({
                     setOpen(false);
                   }}
                 >
-                  {slot}
+                  <span className="block">{slot}</span>
+                  {isUnavailable && unavailableReasons?.has(slot) ? (
+                    <span className="mt-1 block text-[0.68rem] leading-4">
+                      {unavailableReasons.get(slot)}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
@@ -461,6 +511,7 @@ export function AppointmentFormModal({
   organizationName,
   bookingCapacity,
   appointmentSlotLoads,
+  branches = [],
   departments,
   doctors,
   appointments,
@@ -483,11 +534,23 @@ export function AppointmentFormModal({
   const [errors, setErrors] = useState<Partial<Record<keyof AppointmentDraft, string>>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const initialDoctor = initialAppointment
+    ? doctors.find((doctor) => doctor.id === initialAppointment.doctorId)
+    : undefined;
+  const activeBranches = useMemo(() => branches.filter((branch) => branch.active), [branches]);
+  const [selectedHospitalName, setSelectedHospitalName] = useState(
+    initialAppointment ? organizationName : "",
+  );
+  const [selectedBranchId, setSelectedBranchId] = useState(
+    initialDoctor?.branchId ?? "",
+  );
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(
     initialAppointment?.departmentId ?? "",
   );
   const [languageFilter, setLanguageFilter] = useState("all");
   const [availabilityFilter, setAvailabilityFilter] = useState("all");
+  const [bookingStep, setBookingStep] = useState<PatientBookingStep>("details");
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   const doctorProfileMap = useMemo(
     () =>
@@ -513,10 +576,21 @@ export function AppointmentFormModal({
     [doctorProfiles],
   );
 
+  const visibleDepartments = useMemo(() => {
+    if (!patientMode || !selectedHospitalName || !selectedBranchId) {
+      return departments;
+    }
+
+    return departments;
+  }, [departments, patientMode, selectedBranchId, selectedHospitalName]);
+
   const visibleDoctors = useMemo(
     () => {
       return doctors.filter((doctor) => {
         const profile = doctorProfileMap.get(doctor.id);
+        const matchesAccountStatus = isActiveDoctorProfile(profile);
+        const matchesHospital = patientMode ? Boolean(selectedHospitalName) : true;
+        const matchesBranch = patientMode ? Boolean(selectedBranchId) && doctor.branchId === selectedBranchId : true;
         const matchesDepartment = patientMode ? !selectedDepartmentId || doctor.departmentId === selectedDepartmentId : true;
         const matchesLanguage =
           languageFilter === "all" ||
@@ -532,7 +606,7 @@ export function AppointmentFormModal({
             : profile?.consultationMode?.toLowerCase().includes("video") ||
               profile?.consultationMode?.toLowerCase().includes("online"));
 
-        return matchesDepartment && matchesLanguage && matchesAvailability;
+        return matchesAccountStatus && matchesHospital && matchesBranch && matchesDepartment && matchesLanguage && matchesAvailability;
       });
     },
     [
@@ -541,12 +615,31 @@ export function AppointmentFormModal({
       doctors,
       languageFilter,
       patientMode,
+      selectedBranchId,
       selectedDepartmentId,
+      selectedHospitalName,
     ],
   );
 
   const selectedDoctor = doctors.find((doctor) => doctor.id === draft.doctorId);
+  const selectedDepartment = departments.find((department) => department.id === selectedDepartmentId);
   const selectedDoctorProfile = selectedDoctor ? doctorProfileMap.get(selectedDoctor.id) : undefined;
+  const consultationFeeCents = parseCurrencyTextToCents(selectedDoctorProfile?.consultationFee);
+  const shouldCollectAppointmentFee = patientMode && !initialAppointment;
+  const showDetailsStep = !shouldCollectAppointmentFee || bookingStep === "details";
+  const showPaymentStep = shouldCollectAppointmentFee && bookingStep === "payment";
+  const showReviewStep = shouldCollectAppointmentFee && bookingStep === "review";
+  const visibleSubmitError =
+    submitError === "Please complete payment before booking this appointment." ? null : submitError;
+  const hiddenTimeSlots = useMemo(
+    () =>
+      new Set(
+        timeSlots.filter(
+          (slot) => isClosedAppointmentTimeSlot(slot) || isDoctorOnBreakAtSlot(selectedDoctor, slot),
+        ),
+      ),
+    [selectedDoctor],
+  );
   const unavailableTimeSlots = useMemo(() => {
     if (!draft.doctorId || !draft.appointmentDate) {
       return new Set<string>();
@@ -644,6 +737,61 @@ export function AppointmentFormModal({
     organizationName,
   ]);
 
+  const validateDetailsStep = () => {
+    const nextErrors: Partial<Record<keyof AppointmentDraft, string>> = {};
+
+    if (!selectedHospitalName) {
+      nextErrors.branchId = "Select a hospital.";
+    } else if (activeBranches.length > 0 && !selectedBranchId) {
+      nextErrors.branchId = "Select a hospital branch.";
+    }
+
+    if (!selectedDepartmentId) {
+      nextErrors.doctorId = "Select a department and doctor.";
+    }
+
+    if (!draft.doctorId || !selectedDoctor) {
+      nextErrors.doctorId = "Select a doctor.";
+    }
+
+    if (!draft.appointmentDate) {
+      nextErrors.appointmentDate = "Select an appointment date.";
+    }
+
+    if (!draft.appointmentTime) {
+      nextErrors.appointmentTime = "Select an appointment time.";
+    } else if (
+      hiddenTimeSlots.has(draft.appointmentTime) ||
+      unavailableTimeSlots.has(draft.appointmentTime)
+    ) {
+      nextErrors.appointmentTime = "This appointment time is not available. Please choose another slot.";
+    }
+
+    if (draft.appointmentDate && isPastLocalTimeSlot(draft.appointmentDate, draft.appointmentTime)) {
+      nextErrors.appointmentTime = "Select a future appointment time.";
+    }
+
+    if (draft.reasonForAppointment.trim().length < 3) {
+      nextErrors.reasonForAppointment = "Please enter the reason for appointment.";
+    }
+
+    setErrors(nextErrors);
+    setSubmitError(null);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validatePaymentStep = () => {
+    const nextErrors: Partial<Record<keyof AppointmentDraft, string>> = {};
+
+    if (!draft.paymentMethod) {
+      nextErrors.paymentMethod = "Select a payment method.";
+    }
+
+    setErrors(nextErrors);
+    setSubmitError(null);
+    return Object.keys(nextErrors).length === 0;
+  };
+
   return (
     <Modal
       open={open}
@@ -659,6 +807,22 @@ export function AppointmentFormModal({
         className="space-y-4"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (shouldCollectAppointmentFee && bookingStep !== "review") {
+            if (bookingStep === "details" && validateDetailsStep()) {
+              setBookingStep("payment");
+            } else if (bookingStep === "payment" && validatePaymentStep()) {
+              setPaymentConfirmed(true);
+              setBookingStep("review");
+            }
+            return;
+          }
+
+          if (shouldCollectAppointmentFee && !paymentConfirmed) {
+            setBookingStep("payment");
+            validatePaymentStep();
+            return;
+          }
+
           setSubmitting(true);
           const result = await onSubmit({
             ...draft,
@@ -670,10 +834,17 @@ export function AppointmentFormModal({
 
           if (result.isValid) {
             setSubmitError(null);
+            setBookingStep("details");
+            setPaymentConfirmed(false);
             onClose();
+          } else if (shouldCollectAppointmentFee && Object.keys(result.errors).length > 0) {
+            setBookingStep("details");
+            setPaymentConfirmed(false);
           }
         }}
       >
+        {showDetailsStep ? (
+          <>
         {patientMode ? (
           <>
             <div>
@@ -708,10 +879,60 @@ export function AppointmentFormModal({
               <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
                 Hospital
               </label>
-              <Select value={organizationName} disabled aria-label="Hospital">
+              <Select
+                value={selectedHospitalName}
+                aria-label="Hospital"
+                onChange={(event) => {
+                  const nextHospitalName = event.target.value;
+                  setSelectedHospitalName(nextHospitalName);
+                  setSelectedBranchId("");
+                  setSelectedDepartmentId("");
+                  setDraft((current) => ({
+                    ...current,
+                    branchId: "",
+                    doctorId: "",
+                  }));
+                }}
+              >
+                <option value="">Select hospital</option>
                 <option value={organizationName}>{organizationName}</option>
               </Select>
+              {!selectedHospitalName && errors.branchId ? (
+                <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.branchId}</p>
+              ) : null}
             </div>
+            {activeBranches.length > 0 ? (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+                  Hospital branch
+                </label>
+                <Select
+                  aria-label="Hospital branch"
+                  value={selectedBranchId}
+                  disabled={!selectedHospitalName}
+                  onChange={(event) => {
+                    const nextBranchId = event.target.value;
+                    setSelectedBranchId(nextBranchId);
+                    setSelectedDepartmentId("");
+                    setDraft((current) => ({
+                      ...current,
+                      branchId: nextBranchId,
+                      doctorId: "",
+                    }));
+                  }}
+                >
+                  <option value="">Select branch</option>
+                  {activeBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {formatBranchOptionLabel(branch)}
+                    </option>
+                  ))}
+                </Select>
+                {selectedHospitalName && errors.branchId ? (
+                  <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.branchId}</p>
+                ) : null}
+              </div>
+            ) : null}
             <div>
               <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
                 Department or service
@@ -719,6 +940,7 @@ export function AppointmentFormModal({
               <Select
                 aria-label="Department"
                 value={selectedDepartmentId}
+                disabled={patientMode && activeBranches.length > 0 && !selectedBranchId}
                 onChange={(event) => {
                   const nextDepartmentId = event.target.value;
                   setSelectedDepartmentId(nextDepartmentId);
@@ -726,7 +948,7 @@ export function AppointmentFormModal({
                 }}
               >
                 <option value="">Select department</option>
-                {departments.map((department) => (
+                {visibleDepartments.map((department) => (
                   <option key={department.id} value={department.id}>
                     {department.name}
                   </option>
@@ -783,9 +1005,15 @@ export function AppointmentFormModal({
           <Select
             aria-label="Doctor"
             value={draft.doctorId}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, doctorId: event.target.value }))
-            }
+            onChange={(event) => {
+              const nextDoctorId = event.target.value;
+              const nextDoctor = doctors.find((doctor) => doctor.id === nextDoctorId);
+              setDraft((current) => ({
+                ...current,
+                branchId: selectedBranchId || nextDoctor?.branchId || current.branchId,
+                doctorId: nextDoctorId,
+              }));
+            }}
           >
             <option value="">Select doctor</option>
             {visibleDoctors.map((doctor) => (
@@ -802,6 +1030,14 @@ export function AppointmentFormModal({
                 <p>Specialization: {selectedDoctor.specialization}</p>
                 <p>Availability: {selectedDoctor.availability}</p>
                 <p>Shift: {selectedDoctor.shiftLabel}</p>
+                {selectedDoctor.breakWindows?.length ? (
+                  <p>
+                    Break:{" "}
+                    {selectedDoctor.breakWindows
+                      .map((breakWindow) => `${breakWindow.label} ${breakWindow.startTime}-${breakWindow.endTime}`)
+                      .join(", ")}
+                  </p>
+                ) : null}
                 {selectedDoctorProfile?.qualifications ? <p>Qualifications: {selectedDoctorProfile.qualifications}</p> : null}
                 {selectedDoctorProfile?.experience ? <p>Experience: {selectedDoctorProfile.experience}</p> : null}
                 {selectedDoctorProfile?.languages ? <p>Languages: {selectedDoctorProfile.languages}</p> : null}
@@ -852,6 +1088,7 @@ export function AppointmentFormModal({
             error={errors.appointmentTime}
             selectedDate={draft.appointmentDate}
             unavailableSlots={unavailableTimeSlots}
+            hiddenSlots={hiddenTimeSlots}
             onChange={(value) =>
               setDraft((current) => ({ ...current, appointmentTime: value }))
             }
@@ -874,18 +1111,197 @@ export function AppointmentFormModal({
             <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.reasonForAppointment}</p>
           ) : null}
         </div>
+          </>
+        ) : null}
 
-        <div className="flex justify-end">
-          {submitError ? (
-            <p className="mr-auto max-w-md text-sm text-[color:var(--danger)]">{submitError}</p>
+        {showPaymentStep ? (
+          <div className="space-y-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-4">
+            <div className="flex flex-col gap-2 border-b border-[color:var(--border)] pb-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--accent)]">
+                  Appointment invoice
+                </p>
+                <p className="mt-2 text-lg font-semibold text-[color:var(--foreground)]">
+                  Consultation fee
+                </p>
+                <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                  Review the fee and record payment before booking.
+                </p>
+              </div>
+              <p className="text-xl font-semibold text-[color:var(--foreground)]">
+                {consultationFeeCents > 0 ? formatMoney(consultationFeeCents) : "Demo payment"}
+              </p>
+            </div>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Patient</span>
+                <span className="font-medium text-[color:var(--foreground)]">{draft.patientName}</span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Doctor</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {selectedDoctor?.name ?? "Not selected"}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Date and time</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {draft.appointmentDate} at {draft.appointmentTime}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Mode</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {draft.consultationMode ?? "In Person"}
+                </span>
+              </p>
+            </div>
+            <div className="grid gap-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[color:var(--foreground)]">
+                  Payment method
+                </label>
+                <Select
+                  aria-label="Payment method"
+                  value={draft.paymentMethod ?? "UPI"}
+                  onChange={(event) => {
+                    setPaymentConfirmed(false);
+                    setDraft((current) => ({
+                      ...current,
+                      paymentMethod: event.target.value as PaymentMethod,
+                    }));
+                  }}
+                >
+                  {appointmentPaymentMethods.map((method) => (
+                    <option key={method} value={method}>
+                      {method}
+                    </option>
+                  ))}
+                </Select>
+                {errors.paymentMethod ? (
+                  <p className="mt-2 text-sm text-[color:var(--danger)]">{errors.paymentMethod}</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showReviewStep ? (
+          <div className="space-y-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--accent)]">
+                Book appointment
+              </p>
+              <p className="mt-2 text-lg font-semibold text-[color:var(--foreground)]">
+                Confirm appointment details
+              </p>
+              <p className="mt-1 text-sm text-[color:var(--muted-foreground)]">
+                Payment has been recorded. Confirm these details to finish booking.
+              </p>
+            </div>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Patient</span>
+                <span className="font-medium text-[color:var(--foreground)]">{draft.patientName}</span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Hospital</span>
+                <span className="font-medium text-[color:var(--foreground)]">{organizationName}</span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Department</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {selectedDepartment?.name ?? selectedDoctor?.departmentId.replace("dept-", "").replaceAll("-", " ") ?? "Not selected"}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Doctor</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {selectedDoctor?.name ?? "Not selected"}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Date and time</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {draft.appointmentDate} at {draft.appointmentTime}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Consultation mode</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {draft.consultationMode ?? "In Person"}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Amount paid</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {consultationFeeCents > 0 ? formatMoney(consultationFeeCents) : "Demo payment"}
+                </span>
+              </p>
+              <p>
+                <span className="block text-[color:var(--muted-foreground)]">Payment method</span>
+                <span className="font-medium text-[color:var(--foreground)]">
+                  {draft.paymentMethod ?? "UPI"}
+                </span>
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-[color:var(--muted-foreground)]">Reason for Appointment</p>
+              <p className="mt-1 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-3 text-sm text-[color:var(--foreground)]">
+                {draft.reasonForAppointment}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {visibleSubmitError ? (
+            <p className="mr-auto max-w-md text-sm text-[color:var(--danger)]">{visibleSubmitError}</p>
           ) : null}
-          <Button type="submit" disabled={submitting}>
-            {submitting
-              ? "Saving..."
-              : initialAppointment
-                ? "Save changes"
-                : "Create appointment"}
-          </Button>
+          {shouldCollectAppointmentFee && bookingStep !== "details" ? (
+            <Button
+              type="button"
+              variant="secondary"
+              className="min-w-24 whitespace-nowrap"
+              onClick={() => {
+                setBookingStep(bookingStep === "review" ? "payment" : "details");
+              }}
+            >
+              Back
+            </Button>
+          ) : null}
+          {shouldCollectAppointmentFee && bookingStep === "details" ? (
+            <Button
+              type="button"
+              onClick={() => {
+                if (validateDetailsStep()) {
+                  setBookingStep("payment");
+                }
+              }}
+            >
+              Continue to payment
+            </Button>
+          ) : shouldCollectAppointmentFee && bookingStep === "payment" ? (
+            <Button
+              type="button"
+              onClick={() => {
+                if (validatePaymentStep()) {
+                  setPaymentConfirmed(true);
+                  setBookingStep("review");
+                }
+              }}
+            >
+              Pay now
+            </Button>
+          ) : (
+            <Button type="submit" disabled={submitting}>
+              {submitting
+                ? "Saving..."
+                : initialAppointment
+                  ? "Save changes"
+                  : "Book appointment"}
+            </Button>
+          )}
         </div>
       </form>
     </Modal>

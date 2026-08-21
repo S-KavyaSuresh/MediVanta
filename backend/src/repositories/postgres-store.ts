@@ -8,6 +8,7 @@ import type {
   DoctorRecord,
   EmergencyVisitRecord,
   FamilyMemberRecord,
+  HospitalBranchRecord,
   HospitalState,
   InventoryItemRecord,
   InvoiceItemRecord,
@@ -61,6 +62,42 @@ function asTimestampString(value: unknown) {
   }
 
   return typeof value === "string" ? value : undefined;
+}
+
+function asDoctorBreakWindows(value: unknown): DoctorRecord["breakWindows"] {
+  type DoctorBreakWindow = NonNullable<DoctorRecord["breakWindows"]>[number];
+  let parsed = value;
+
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed
+    .map((entry): DoctorBreakWindow | null => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const label = asString(record.label);
+      const startTime = asString(record.startTime);
+      const endTime = asString(record.endTime);
+
+      if (!label || !startTime || !endTime) {
+        return null;
+      }
+
+      return { label, startTime, endTime };
+    })
+    .filter((entry): entry is DoctorBreakWindow => Boolean(entry));
 }
 
 function chunk<T>(items: T[], size: number) {
@@ -866,8 +903,10 @@ export async function insertLabReport(report: LabReportRecord) {
     `insert into lab_reports (
       id, organization_id, lab_request_id, patient_id, hospital_id, family_member_id, test_name,
       report_title, result_summary, uploaded_at, uploaded_by_id, uploaded_by_name,
-      attachment_file_name, attachment_file_size, attachment_content_base64
-    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      attachment_file_name, attachment_file_size, attachment_content_base64,
+      attachment_storage_provider, attachment_storage_url, attachment_storage_public_id,
+      attachment_original_filename, attachment_mime_type, attachment_storage_size
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
     [
       report.id,
       report.organizationId,
@@ -884,6 +923,12 @@ export async function insertLabReport(report: LabReportRecord) {
       report.attachment?.fileName ?? null,
       report.attachment?.fileSize ?? null,
       report.attachment?.contentBase64 ?? null,
+      report.attachment?.storageProvider ?? null,
+      report.attachment?.storageUrl ?? null,
+      report.attachment?.storagePublicId ?? null,
+      report.attachment?.originalFileName ?? null,
+      report.attachment?.mimeType ?? null,
+      report.attachment?.storageSize ?? null,
     ],
   );
 }
@@ -904,7 +949,13 @@ export async function loadLabReportById(labReportId: string, organizationId: str
       uploaded_by_name,
       attachment_file_name,
       attachment_file_size,
-      attachment_content_base64
+      attachment_content_base64,
+      attachment_storage_provider,
+      attachment_storage_url,
+      attachment_storage_public_id,
+      attachment_original_filename,
+      attachment_mime_type,
+      attachment_storage_size
     from lab_reports
     where id = $1 and organization_id = $2
     limit 1`,
@@ -935,7 +986,16 @@ export async function loadLabReportById(labReportId: string, organizationId: str
           fileName: String(row.attachment_file_name),
           contentType: "application/pdf" as const,
           fileSize: asNumber(row.attachment_file_size),
-          contentBase64: String(row.attachment_content_base64),
+          contentBase64: asString(row.attachment_content_base64),
+          storageProvider: asString(row.attachment_storage_provider) as NonNullable<LabReportRecord["attachment"]>["storageProvider"],
+          storageUrl: asString(row.attachment_storage_url),
+          storagePublicId: asString(row.attachment_storage_public_id),
+          originalFileName: asString(row.attachment_original_filename),
+          mimeType: asString(row.attachment_mime_type),
+          storageSize:
+            row.attachment_storage_size === null || row.attachment_storage_size === undefined
+              ? undefined
+              : asNumber(row.attachment_storage_size),
         }
       : undefined,
   } satisfies LabReportRecord;
@@ -1989,6 +2049,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
   const [
     settingsResult,
     sessionsResult,
+    branchesResult,
     departmentsResult,
     doctorsResult,
     medicineCatalogResult,
@@ -2015,6 +2076,7 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
     await Promise.all([
       query("select * from hospital_settings where organization_id = $1 limit 1", [organizationId]),
       query("select * from booking_session_capacities where organization_id = $1 order by start_time asc", [organizationId]),
+      query("select * from hospital_branches where organization_id = $1 order by active desc, name asc", [organizationId]),
       query("select * from departments where organization_id = $1 order by name asc", [organizationId]),
       query("select * from doctors where organization_id = $1 order by name asc", [organizationId]),
       query("select * from medicine_catalog where organization_id = $1 order by name asc, unit asc", [organizationId]),
@@ -2132,6 +2194,21 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
 
   return {
     organization: mapOrganization(organizationRow, settingsRow),
+    branches: branchesResult.rows.map((row): HospitalBranchRecord => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      code: String(row.code),
+      name: String(row.name),
+      address: String(row.address),
+      city: String(row.city),
+      state: asString(row.state),
+      postalCode: asString(row.postal_code),
+      phone: asString(row.phone),
+      email: asString(row.email),
+      active: asBoolean(row.active),
+      createdAt: new Date(String(row.created_at)).toISOString(),
+      updatedAt: new Date(String(row.updated_at)).toISOString(),
+    })),
     departments: departmentsResult.rows.map((row): DepartmentRecord => ({
       id: String(row.id),
       organizationId,
@@ -2150,6 +2227,8 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       status: row.status as DoctorRecord["status"],
       availability: String(row.availability),
       shiftLabel: String(row.shift_label),
+      branchId: asString(row.branch_id),
+      breakWindows: asDoctorBreakWindows(row.break_windows),
     })),
     medicineCatalog: medicineCatalogResult.rows.map((row): MedicineCatalogRecord => ({
       id: String(row.id),
@@ -2310,7 +2389,16 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
             fileSize: asNumber(row.attachment_file_size),
             contentBase64: options?.includeLabReportAttachmentContent === false
               ? undefined
-              : String(row.attachment_content_base64),
+              : asString(row.attachment_content_base64),
+            storageProvider: asString(row.attachment_storage_provider) as NonNullable<LabReportRecord["attachment"]>["storageProvider"],
+            storageUrl: asString(row.attachment_storage_url),
+            storagePublicId: asString(row.attachment_storage_public_id),
+            originalFileName: asString(row.attachment_original_filename),
+            mimeType: asString(row.attachment_mime_type),
+            storageSize:
+              row.attachment_storage_size === null || row.attachment_storage_size === undefined
+                ? undefined
+                : asNumber(row.attachment_storage_size),
           }
         : undefined,
     })),
@@ -2406,7 +2494,16 @@ export async function loadHospitalStateSnapshot(options?: { includeLabReportAtta
       fileName: String(row.file_name),
       contentType: String(row.content_type) as ClinicalAttachmentRecord["contentType"],
       fileSize: asNumber(row.file_size),
-      contentBase64: String(row.content_base64),
+      contentBase64: asString(row.content_base64),
+      storageProvider: asString(row.storage_provider) as ClinicalAttachmentRecord["storageProvider"],
+      storageUrl: asString(row.storage_url),
+      storagePublicId: asString(row.storage_public_id),
+      originalFileName: asString(row.original_filename),
+      mimeType: asString(row.mime_type),
+      storageSize:
+        row.storage_size === null || row.storage_size === undefined
+          ? undefined
+          : asNumber(row.storage_size),
       uploadedByUserId: String(row.uploaded_by_user_id),
       uploadedByName: String(row.uploaded_by_name),
       createdAt: new Date(String(row.created_at)).toISOString(),
@@ -2533,6 +2630,7 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
   await client.query("delete from lab_requests where organization_id = $1", [state.organization.id]);
   await client.query("delete from lab_tests where organization_id = $1", [state.organization.id]);
   await client.query("delete from doctors where organization_id = $1", [state.organization.id]);
+  await client.query("delete from hospital_branches where organization_id = $1", [state.organization.id]);
   await client.query("delete from departments where organization_id = $1", [state.organization.id]);
 
   await insertRows(
@@ -2551,8 +2649,42 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
     );
   await insertRows(
       client,
+      "hospital_branches",
+      [
+        "id",
+        "organization_id",
+        "code",
+        "name",
+        "address",
+        "city",
+        "state",
+        "postal_code",
+        "phone",
+        "email",
+        "active",
+        "created_at",
+        "updated_at",
+      ],
+      (state.branches ?? []).map((branch) => [
+        branch.id,
+        state.organization.id,
+        branch.code,
+        branch.name,
+        branch.address,
+        branch.city,
+        branch.state ?? null,
+        branch.postalCode ?? null,
+        branch.phone ?? null,
+        branch.email ?? null,
+        branch.active,
+        branch.createdAt,
+        branch.updatedAt,
+      ]),
+    );
+  await insertRows(
+      client,
       "doctors",
-      ["id", "organization_id", "name", "specialization", "department_id", "status", "availability", "shift_label"],
+      ["id", "organization_id", "name", "specialization", "department_id", "status", "availability", "shift_label", "branch_id", "break_windows"],
       state.doctors.map((doctor) => [
         doctor.id,
         state.organization.id,
@@ -2562,6 +2694,8 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         doctor.status,
         doctor.availability,
         doctor.shiftLabel,
+        doctor.branchId ?? null,
+        JSON.stringify(doctor.breakWindows ?? []),
       ]),
     );
   await insertRows(
@@ -2661,6 +2795,12 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         "attachment_file_name",
         "attachment_file_size",
         "attachment_content_base64",
+        "attachment_storage_provider",
+        "attachment_storage_url",
+        "attachment_storage_public_id",
+        "attachment_original_filename",
+        "attachment_mime_type",
+        "attachment_storage_size",
       ],
       state.labReports.map((report) => [
         report.id,
@@ -2677,6 +2817,12 @@ async function saveHospitalStateSnapshotWithClient(client: SqlClient, state: Hos
         report.attachment?.fileName ?? null,
         report.attachment?.fileSize ?? null,
         report.attachment?.contentBase64 ?? null,
+        report.attachment?.storageProvider ?? null,
+        report.attachment?.storageUrl ?? null,
+        report.attachment?.storagePublicId ?? null,
+        report.attachment?.originalFileName ?? null,
+        report.attachment?.mimeType ?? null,
+        report.attachment?.storageSize ?? null,
       ]),
     );
   await insertRows(

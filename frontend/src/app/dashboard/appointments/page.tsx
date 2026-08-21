@@ -268,6 +268,7 @@ export default function AppointmentsPage() {
           organizationName={state.organization.name}
           bookingCapacity={state.bookingCapacity}
           appointmentSlotLoads={meta?.appointmentSlotLoads ?? []}
+          branches={state.branches}
           departments={state.departments}
           doctors={state.doctors.filter((doctor) => doctor.status !== "Off duty")}
           appointments={state.appointments}

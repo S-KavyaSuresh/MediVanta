@@ -16,7 +16,11 @@ function getCurrentLocalTimeValue(now = new Date()) {
   return now.getHours() * 60 + now.getMinutes();
 }
 
-function getSlotTimeValue(value: string) {
+function getSlotTimeValue(value?: string) {
+  if (!value) {
+    return Number.NaN;
+  }
+
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
 }
@@ -26,15 +30,19 @@ function isCapacityConsumingAppointment(status: AppointmentStatus) {
 }
 
 function isCapacityConsumingLabRequest(status: LabRequestStatus) {
-  return status !== "Completed";
+  return status !== "Completed" && status !== "Missed";
 }
 
 export function getSessionForTime(state: HospitalState, time: string) {
+  const timeValue = getSlotTimeValue(time);
+
   return (
     state.bookingCapacity.sessions.find(
       (session) =>
-        getSlotTimeValue(time) >= getSlotTimeValue(session.startTime) &&
-        getSlotTimeValue(time) <= getSlotTimeValue(session.endTime),
+        Number.isFinite(getSlotTimeValue(session.startTime)) &&
+        Number.isFinite(getSlotTimeValue(session.endTime)) &&
+        timeValue >= getSlotTimeValue(session.startTime) &&
+        timeValue <= getSlotTimeValue(session.endTime),
     ) ?? null
   );
 }
@@ -128,6 +136,56 @@ export function isDoctorSessionFullyBooked(
       excludeAppointmentId,
     ) >= session.maxAppointments
   );
+}
+
+export function isDoctorOnBreakAtSlot(doctor: DoctorRecord | undefined, appointmentTime: string) {
+  if (!doctor?.breakWindows?.length) {
+    return false;
+  }
+
+  const slotValue = getSlotTimeValue(appointmentTime);
+  if (!Number.isFinite(slotValue)) {
+    return false;
+  }
+
+  return doctor.breakWindows.some((breakWindow) => {
+    const startValue = getSlotTimeValue(breakWindow.startTime);
+    const endValue = getSlotTimeValue(breakWindow.endTime);
+
+    return (
+      Number.isFinite(startValue) &&
+      Number.isFinite(endValue) &&
+      slotValue >= startValue &&
+      slotValue < endValue
+    );
+  });
+}
+
+export function getDoctorBreakLabel(doctor: DoctorRecord | undefined, appointmentTime: string) {
+  if (!doctor?.breakWindows?.length) {
+    return undefined;
+  }
+
+  const slotValue = getSlotTimeValue(appointmentTime);
+  if (!Number.isFinite(slotValue)) {
+    return undefined;
+  }
+
+  return doctor.breakWindows.find((breakWindow) => {
+    const startValue = getSlotTimeValue(breakWindow.startTime);
+    const endValue = getSlotTimeValue(breakWindow.endTime);
+
+    return (
+      Number.isFinite(startValue) &&
+      Number.isFinite(endValue) &&
+      slotValue >= startValue &&
+      slotValue < endValue
+    );
+  })?.label;
+}
+
+export function isClosedAppointmentTimeSlot(appointmentTime: string) {
+  return appointmentTime === "13:00" || appointmentTime === "13:30";
 }
 
 export function getDoctorCapacityStatus(
@@ -321,10 +379,18 @@ export function getTelemedicineJoinAvailability(
   }
 
   const opensAt = scheduledAt.getTime() - 10 * 60 * 1000;
+  const closesAt = scheduledAt.getTime() + 30 * 60 * 1000;
   if (now.getTime() < opensAt) {
     return {
       allowed: false,
       reason: "Available 10 minutes before the appointment.",
+    };
+  }
+
+  if (now.getTime() > closesAt && appointment.status !== "In consultation") {
+    return {
+      allowed: false,
+      reason: "This consultation window has closed.",
     };
   }
 
@@ -390,7 +456,8 @@ export type LabRequestStatus =
   | "Scheduled"
   | "Sample Collected"
   | "Processing"
-  | "Completed";
+  | "Completed"
+  | "Missed";
 
 export type PrescriptionStatus = "Issued" | "Dispensed";
 
@@ -428,14 +495,37 @@ export type DepartmentRecord = {
   location: string;
 };
 
+export type HospitalBranchRecord = {
+  id: string;
+  organizationId: string;
+  code: string;
+  name: string;
+  address: string;
+  city: string;
+  state?: string;
+  postalCode?: string;
+  phone?: string;
+  email?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DoctorRecord = {
   id: string;
+  organizationId?: string;
   name: string;
   specialization: string;
   departmentId: string;
   status: DoctorStatus;
   availability: string;
   shiftLabel: string;
+  branchId?: string;
+  breakWindows?: Array<{
+    label: string;
+    startTime: string;
+    endTime: string;
+  }>;
 };
 
 export type AppointmentRecord = {
@@ -556,6 +646,12 @@ export type LabReportAttachmentRecord = {
   contentType: "application/pdf";
   fileSize: number;
   contentBase64?: string;
+  storageProvider?: "cloudinary" | "local";
+  storageUrl?: string;
+  storagePublicId?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  storageSize?: number;
 };
 
 export type LabReportRecord = {
@@ -829,6 +925,12 @@ export type ClinicalAttachmentRecord = {
   contentType: "application/pdf" | "image/png" | "image/jpeg";
   fileSize: number;
   contentBase64?: string;
+  storageProvider?: "cloudinary" | "local";
+  storageUrl?: string;
+  storagePublicId?: string;
+  originalFileName?: string;
+  mimeType?: string;
+  storageSize?: number;
   uploadedByUserId: string;
   uploadedByName: string;
   createdAt: string;
@@ -908,6 +1010,7 @@ export type HospitalState = {
     occupiedBeds?: number;
   };
   departments: DepartmentRecord[];
+  branches?: HospitalBranchRecord[];
   doctors: DoctorRecord[];
   medicineCatalog: MedicineCatalogRecord[];
   appointments: AppointmentRecord[];
@@ -933,11 +1036,14 @@ export type HospitalState = {
 export type AppointmentDraft = {
   patientName: string;
   familyMemberId?: string;
+  branchId?: string;
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
   reasonForAppointment: string;
   consultationMode?: "In Person" | "Online";
+  paymentMethod?: PaymentMethod;
+  paymentReferenceNumber?: string;
 };
 
 export type LabRequestDraft = {
@@ -1174,6 +1280,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Consulting",
     availability: clinicians[0].availability,
     shiftLabel: "08:00 - 14:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Morning break", startTime: "10:30", endTime: "11:00" }],
   },
   {
     id: "doc-rohan-mehta",
@@ -1183,6 +1291,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Emergency duty",
     availability: clinicians[1].availability,
     shiftLabel: "07:00 - 19:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Meal break", startTime: "13:30", endTime: "14:00" }],
   },
   {
     id: "doc-meera-iqbal",
@@ -1192,6 +1302,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Available",
     availability: clinicians[2].availability,
     shiftLabel: "10:00 - 18:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Lunch break", startTime: "13:00", endTime: "14:00" }],
   },
   {
     id: "doc-vivek-menon",
@@ -1201,6 +1313,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Available",
     availability: clinicians[3].availability,
     shiftLabel: "09:00 - 17:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Lunch break", startTime: "12:30", endTime: "13:30" }],
   },
   {
     id: "doc-neha-sen",
@@ -1210,6 +1324,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Consulting",
     availability: "Imaging sessions in progress",
     shiftLabel: "08:00 - 16:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Reporting break", startTime: "12:30", endTime: "13:00" }],
   },
   {
     id: "doc-kiran-iyer",
@@ -1219,6 +1335,8 @@ const doctorsSeed: DoctorRecord[] = [
     status: "On break",
     availability: "Returns at 13:00",
     shiftLabel: "08:00 - 16:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Break", startTime: "12:00", endTime: "13:00" }],
   },
   {
     id: "doc-sana-reddy",
@@ -1228,6 +1346,7 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Off duty",
     availability: "Next clinic tomorrow",
     shiftLabel: "Off duty today",
+    branchId: "branch-medivanta-general-main",
   },
   {
     id: "doc-arjun-roy",
@@ -1237,6 +1356,25 @@ const doctorsSeed: DoctorRecord[] = [
     status: "Available",
     availability: "Review clinic active",
     shiftLabel: "11:00 - 19:00",
+    branchId: "branch-medivanta-general-main",
+    breakWindows: [{ label: "Evening break", startTime: "15:30", endTime: "16:00" }],
+  },
+];
+
+const branchesSeed: HospitalBranchRecord[] = [
+  {
+    id: "branch-medivanta-general-main",
+    organizationId: "org-medivanta-general",
+    code: "MAIN",
+    name: "MediVanta General Hospital",
+    address: "221 Care Avenue",
+    city: "Chennai",
+    state: "Tamil Nadu",
+    phone: "+91 44 4000 2200",
+    email: "hello@medivanta.demo",
+    active: true,
+    createdAt: "2026-08-01T08:00:00.000Z",
+    updatedAt: "2026-08-01T08:00:00.000Z",
   },
 ];
 
@@ -1489,6 +1627,10 @@ export const defaultBookingCapacity: BookingCapacityRecord = {
 export function normalizeHospitalState(state: HospitalState): HospitalState {
   return {
     ...state,
+    doctors: (state.doctors ?? doctorsSeed).map((doctor) => ({
+      ...doctor,
+      breakWindows: doctor.breakWindows ?? [],
+    })),
     appointments: (state.appointments ?? appointmentsSeed).map((appointment) => ({
       ...appointment,
       consultationMode: appointment.consultationMode ?? "In Person",
@@ -1500,6 +1642,7 @@ export function normalizeHospitalState(state: HospitalState): HospitalState {
     medicineCatalog: state.medicineCatalog ?? [],
     medicalRecords: state.medicalRecords ?? medicalRecordsSeed,
     prescriptions: state.prescriptions ?? prescriptionsSeed,
+    branches: state.branches ?? branchesSeed,
     invoices: (state.invoices ?? []).map((invoice) => ({
       ...invoice,
       discountCents: invoice.discountCents ?? 0,
@@ -1525,6 +1668,7 @@ export function createInitialHospitalState(): HospitalState {
       slug: "medivanta-general",
     },
     departments: structuredClone(departmentsSeed),
+    branches: structuredClone(branchesSeed),
     doctors: structuredClone(doctorsSeed),
     medicineCatalog: [],
     appointments: structuredClone(appointmentsSeed),
@@ -1662,6 +1806,15 @@ export function validateAppointmentDraft(
     errors.doctorId = "Select a valid doctor.";
   }
 
+  if (draft.branchId) {
+    const branch = (state.branches ?? []).find((item) => item.id === draft.branchId);
+    if (!branch || !branch.active) {
+      errors.branchId = "Select an active hospital branch.";
+    } else if (doctor?.branchId && doctor.branchId !== draft.branchId) {
+      errors.doctorId = "Select a doctor available at this branch.";
+    }
+  }
+
   if (!draft.appointmentDate) {
     errors.appointmentDate = "Select an appointment date.";
   } else if (draft.appointmentDate < currentLocalDate) {
@@ -1674,6 +1827,10 @@ export function validateAppointmentDraft(
     errors.appointmentTime = "Select a valid appointment time.";
   } else if (draft.appointmentDate && isPastLocalTimeSlot(draft.appointmentDate, draft.appointmentTime)) {
     errors.appointmentTime = "Select a future appointment time.";
+  } else if (isClosedAppointmentTimeSlot(draft.appointmentTime)) {
+    errors.appointmentTime = "This appointment time is not available. Please choose another slot.";
+  } else if (doctor && isDoctorOnBreakAtSlot(doctor, draft.appointmentTime)) {
+    errors.appointmentTime = "This doctor is on break at that time. Please choose another slot.";
   }
 
   if (draft.reasonForAppointment.trim().length < 3) {

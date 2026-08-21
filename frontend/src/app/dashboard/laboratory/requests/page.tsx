@@ -22,6 +22,7 @@ const nextStatusLabels: Record<LabRequestRecord["status"], LabRequestRecord["sta
   "Sample Collected": "Processing",
   Processing: null,
   Completed: null,
+  Missed: null,
 };
 
 export default function LaboratoryRequestsPage() {
@@ -52,17 +53,27 @@ export default function LaboratoryRequestsPage() {
 
       {state.labRequests.length > 0 ? (
         <div className="space-y-4">
-          {state.labRequests.map((request) => {
-            const nextStatus = nextStatusLabels[request.status];
-            const existingReport = reportsByRequestId.get(request.id);
-            const slotLoad = getLabSlotCapacityStatus(
-              state,
-              request.requestedDate,
-              request.requestedTime,
-            );
+          {[...state.labRequests]
+            .sort((left, right) =>
+              `${right.requestedDate}${right.requestedTime}`.localeCompare(
+                `${left.requestedDate}${left.requestedTime}`,
+              ),
+            )
+            .map((request) => {
+              const nextStatus = nextStatusLabels[request.status];
+              const existingReport = reportsByRequestId.get(request.id);
+              const canAddReport =
+                request.status === "Sample Collected" ||
+                request.status === "Processing" ||
+                request.status === "Completed";
+              const slotLoad = getLabSlotCapacityStatus(
+                state,
+                request.requestedDate,
+                request.requestedTime,
+              );
 
-            return (
-              <Card key={request.id} className="space-y-4">
+              return (
+                <Card key={request.id} className="space-y-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <StatusBadge status={request.status} />
                   <p className="text-sm text-[color:var(--muted-foreground)]">
@@ -99,7 +110,7 @@ export default function LaboratoryRequestsPage() {
                     </Button>
                   ) : null}
 
-                  {request.status === "Processing" || request.status === "Completed" ? (
+                  {canAddReport ? (
                     existingReport ? (
                       <Button
                         type="button"
@@ -115,9 +126,9 @@ export default function LaboratoryRequestsPage() {
                     )
                   ) : null}
                 </div>
-              </Card>
-            );
-          })}
+                </Card>
+              );
+            })}
         </div>
       ) : (
         <EmptyState

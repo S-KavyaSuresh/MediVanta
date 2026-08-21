@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import { Router } from "express";
 import { z } from "zod";
@@ -19,6 +19,7 @@ import {
 } from "../auth/session-cookie.js";
 import { requireAuthenticatedUser } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rate-limit.js";
+import { env } from "../config/env.js";
 import {
   loadUserByEmail,
   loadUserById,
@@ -37,8 +38,10 @@ import { writeAuditLog } from "../services/audit-service.js";
 import { DEMO_ORGANIZATION } from "../services/demo-data.js";
 import { loadUsers, saveUsers } from "../services/seed-service.js";
 import { getCurrentLocalDateIso } from "../utils/date.js";
+import type { UserRecord } from "../domain/types.js";
 
 const authRouter = Router();
+const GOOGLE_OAUTH_STATE_COOKIE = "medivanta_google_oauth_state";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -310,6 +313,94 @@ function createOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+function getGoogleRedirectUri() {
+  return env.GOOGLE_OAUTH_REDIRECT_URI ?? `${env.CLIENT_ORIGIN.replace(/\/+$/, "")}/api/auth/google/callback`;
+}
+
+function createOAuthState() {
+  const nonce = randomBytes(16).toString("hex");
+  const issuedAt = String(Date.now());
+  const value = `${nonce}.${issuedAt}`;
+  const signature = createHmac("sha256", env.SESSION_SECRET).update(value).digest("hex");
+
+  return `${value}.${signature}`;
+}
+
+function isValidOAuthState(state: string, expectedState?: string) {
+  if (!state || !expectedState || state !== expectedState) {
+    return false;
+  }
+
+  const [nonce, issuedAt, signature] = state.split(".");
+  if (!nonce || !issuedAt || !signature) {
+    return false;
+  }
+
+  const expectedSignature = createHmac("sha256", env.SESSION_SECRET)
+    .update(`${nonce}.${issuedAt}`)
+    .digest("hex");
+  const ageMs = Date.now() - Number(issuedAt);
+
+  return signature === expectedSignature && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 10 * 60 * 1000;
+}
+
+type GoogleTokenResponse = {
+  access_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  id_token?: string;
+  error?: string;
+  error_description?: string;
+};
+
+type GoogleUserInfo = {
+  sub?: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+};
+
+async function exchangeGoogleCode(code: string) {
+  if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) {
+    throw new Error("Google OAuth is not configured.");
+  }
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_OAUTH_CLIENT_ID,
+      client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+      redirect_uri: getGoogleRedirectUri(),
+      grant_type: "authorization_code",
+    }),
+  });
+  const tokenPayload = (await tokenResponse.json()) as GoogleTokenResponse;
+
+  if (!tokenResponse.ok || !tokenPayload.access_token) {
+    throw new Error(tokenPayload.error_description ?? "Google sign in could not be completed.");
+  }
+
+  const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: {
+      authorization: `Bearer ${tokenPayload.access_token}`,
+    },
+  });
+  const profile = (await profileResponse.json()) as GoogleUserInfo;
+
+  if (!profileResponse.ok || !profile.email || !profile.email_verified) {
+    throw new Error("Google account email could not be verified.");
+  }
+
+  return {
+    email: profile.email.trim().toLowerCase(),
+    displayName: profile.name?.trim() || profile.email.split("@")[0],
+  };
+}
+
 async function writeLoginAudit(input: {
   action: string;
   userId?: string;
@@ -327,6 +418,122 @@ async function writeLoginAudit(input: {
     },
   });
 }
+
+authRouter.get("/google", rateLimit({ key: "auth-google-start", limit: 20, windowMs: 60_000 }), (request, response) => {
+  if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) {
+    response.status(503).json({
+      success: false,
+      message: "Google sign in is not configured yet.",
+    });
+    return;
+  }
+
+  const state = createOAuthState();
+  response.cookie(GOOGLE_OAUTH_STATE_COOKIE, state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: env.NODE_ENV === "production",
+    maxAge: 10 * 60 * 1000,
+    path: "/api/auth/google",
+  });
+
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.searchParams.set("client_id", env.GOOGLE_OAUTH_CLIENT_ID);
+  authUrl.searchParams.set("redirect_uri", getGoogleRedirectUri());
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", "openid email profile");
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("prompt", "select_account");
+
+  response.redirect(authUrl.toString());
+});
+
+authRouter.get(
+  "/google/callback",
+  rateLimit({ key: "auth-google-callback", limit: 30, windowMs: 60_000 }),
+  async (request, response, next) => {
+  try {
+    const code = typeof request.query.code === "string" ? request.query.code : "";
+    const state = typeof request.query.state === "string" ? request.query.state : "";
+    const cookies = parseCookies(request.headers.cookie);
+
+    response.clearCookie(GOOGLE_OAUTH_STATE_COOKIE, { path: "/api/auth/google" });
+
+    if (!code || !isValidOAuthState(state, cookies[GOOGLE_OAUTH_STATE_COOKIE])) {
+      response.redirect(`${env.CLIENT_ORIGIN}/login?error=google`);
+      return;
+    }
+
+    const googleProfile = await exchangeGoogleCode(code);
+    let user = await loadUserByEmail(googleProfile.email);
+
+    if (user && user.role !== "patient") {
+      await writeLoginAudit({
+        action: "auth.google.staff-denied",
+        userId: user.id,
+        organizationId: user.organizationId,
+        email: user.email,
+      });
+      response.redirect(`${env.CLIENT_ORIGIN}/login?error=google-staff`);
+      return;
+    }
+
+    if (!user) {
+      const users = await loadUsers();
+      user = {
+        id: `user-patient-google-${randomBytes(6).toString("hex")}`,
+        organizationId: DEMO_ORGANIZATION.id,
+        email: googleProfile.email,
+        displayName: googleProfile.displayName,
+        role: "patient",
+        passwordHash: await hashPassword(randomBytes(24).toString("hex")),
+        patientName: googleProfile.displayName,
+        preferredLanguage: "English",
+        allergies: "None reported",
+        medicalConditions: "None reported",
+        staffStatus: "Active",
+        emailVerified: true,
+      } satisfies UserRecord;
+
+      await saveUsers([...users, user]);
+      await writeAuditLog({
+        organizationId: user.organizationId,
+        actorUserId: user.id,
+        action: "auth.google.patient-created",
+        entityType: "user",
+        entityId: user.id,
+      });
+    } else if (user.emailVerified === false) {
+      await updateUserAuthState(user.id, {
+        emailVerified: true,
+        verificationOtpHash: null,
+        verificationTokenHash: null,
+        verificationExpiresAt: null,
+      });
+      user = { ...user, emailVerified: true };
+    }
+
+    const session = await issueAuthSession(user, true, request.headers["user-agent"]);
+    setAuthCookies(response, session);
+    await writeLoginAudit({
+      action: "auth.google.succeeded",
+      userId: user.id,
+      organizationId: user.organizationId,
+      email: user.email,
+    });
+
+    const sessionPayload = await buildSessionPayload(user);
+    response.redirect(`${env.CLIENT_ORIGIN}${sessionPayload.landingPath}`);
+  } catch (error) {
+    if (response.headersSent) {
+      next(error);
+      return;
+    }
+
+    response.redirect(`${env.CLIENT_ORIGIN}/login?error=google`);
+  }
+  },
+);
 
 authRouter.post(
   "/login",

@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 type AppError = Error & {
   status?: number;
+  errors?: Record<string, string>;
 };
 
 export function errorHandler(
@@ -36,5 +37,6 @@ export function errorHandler(
     success: false,
     message:
       statusCode >= 500 ? "An unexpected MediVanta API error occurred." : error.message,
+    ...(error.errors ? { errors: error.errors } : {}),
   });
 }

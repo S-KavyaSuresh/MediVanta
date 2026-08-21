@@ -1,4 +1,5 @@
 import { PublicShell } from "@/components/marketing/public-shell";
+import { PublicDoctorRating } from "@/components/marketing/public-doctor-rating";
 import { SectionIntro } from "@/components/marketing/section-intro";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -24,6 +25,7 @@ export default function DoctorsPage() {
                 <div>
                   <h2 className="text-2xl font-semibold">{doctor.name}</h2>
                   <p className="mt-2 text-base text-[color:var(--muted-foreground)]">{doctor.specialty}</p>
+                  <PublicDoctorRating doctorName={doctor.name} />
                 </div>
                 <Badge variant="success">{doctor.availability}</Badge>
               </div>
