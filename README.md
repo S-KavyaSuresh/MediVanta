@@ -1006,10 +1006,10 @@ MediVanta includes demonstration accounts for each supported hospital role.
 | Role | Email | Password | Workspace |
 |---|---|---|---|
 | 👤 Patient | `patient@medivanta.demo` | `Medi2026!Care` | `/dashboard/patient` |
-| 🩺 Doctor | `doctor@medivanta.demo` | `Medi2026!Care` | `/dashboard/doctor` |
-| 🏢 Receptionist | `receptionist@medivanta.demo` | `Medi2026!Care` | `/dashboard/reception` |
-| 🧪 Laboratory Staff | `lab@medivanta.demo` | `Medi2026!Care` | `/dashboard/laboratory` |
-| 💊 Pharmacist | `pharmacist@medivanta.demo` | `Medi2026!Care` | `/dashboard/pharmacy` |
+| 🩺 Doctor | `doctor@Medivanta.demo` | `Medi2026!Care` | `/dashboard/doctor` |
+| 🏢 Receptionist | `receptionist@Medivanta.demo` | `Medi2026!Care` | `/dashboard/reception` |
+| 🧪 Laboratory Staff | `lab@Medivanta.demo` | `Medi2026!Care` | `/dashboard/laboratory` |
+| 💊 Pharmacist | `pharmacist@Medivanta.demo` | `Medi2026!Care` | `/dashboard/pharmacy` |
 | 🛡️ Administrator | `admin@medivanta.demo` | `Medi2026!Care` | `/dashboard/admin` |
 
 These credentials are intended exclusively for demonstration and project evaluation.
