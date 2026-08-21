@@ -38,6 +38,7 @@ export function AuthProvider({
         } catch {
           // Clear local auth state even when the backend is temporarily unavailable.
         }
+        window.dispatchEvent(new Event("medivanta:logout"));
         setSession((current) => ({
           ...current,
           permissions: [],

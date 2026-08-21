@@ -515,6 +515,16 @@ export function HospitalDataProvider({
       }
     };
 
+    const closeStream = () => {
+      closed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      source?.removeEventListener("notifications", handleNotifications);
+      source?.close();
+      source = null;
+    };
+
     const connect = () => {
       if (closed || source) {
         return;
@@ -528,22 +538,33 @@ export function HospitalDataProvider({
         source?.removeEventListener("notifications", handleNotifications);
         source?.close();
         source = null;
-        if (!closed) {
-          reconnectTimer = window.setTimeout(connect, 5000);
+        if (closed) {
+          return;
         }
+
+        void fetch(`${backendApiBaseUrl}/api/auth/me`, {
+          credentials: "include",
+        }).then((response) => {
+          if (closed || response.status === 401 || response.status === 403) {
+            closeStream();
+            return;
+          }
+
+          reconnectTimer = window.setTimeout(connect, 5000);
+        }).catch(() => {
+          if (!closed) {
+            reconnectTimer = window.setTimeout(connect, 5000);
+          }
+        });
       };
     };
 
+    window.addEventListener("medivanta:logout", closeStream);
     connect();
 
     return () => {
-      closed = true;
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-      }
-      source?.removeEventListener("notifications", handleNotifications);
-      source?.close();
-      source = null;
+      window.removeEventListener("medivanta:logout", closeStream);
+      closeStream();
     };
   }, []);
 

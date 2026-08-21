@@ -9,7 +9,7 @@ export const LEGACY_SESSION_COOKIE_NAME = "medivanta_session";
 function getCookieOptions(maxAgeSeconds: number) {
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
+    sameSite: env.NODE_ENV === "production" ? ("none" as const) : ("lax" as const),
     secure: env.NODE_ENV === "production",
     path: "/",
     maxAge: maxAgeSeconds * 1000,
@@ -40,7 +40,7 @@ export function setAuthCookies(
 export function clearAuthCookies(response: Response) {
   const options = {
     httpOnly: true,
-    sameSite: "lax" as const,
+    sameSite: env.NODE_ENV === "production" ? ("none" as const) : ("lax" as const),
     secure: env.NODE_ENV === "production",
     path: "/",
   };

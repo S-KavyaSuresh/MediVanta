@@ -53,8 +53,6 @@ export function LandingHeader({ session }: { session: AuthSession | null }) {
   const handleLogout = async () => {
     try {
       await apiRequest("/api/auth/logout", { method: "POST" });
-      router.push("/");
-      router.refresh();
     } catch (error) {
       pushToast(
         "Unable to sign out",
@@ -63,8 +61,11 @@ export function LandingHeader({ session }: { session: AuthSession | null }) {
           : "MediVanta could not complete sign out right now.",
       );
     } finally {
+      window.dispatchEvent(new Event("medivanta:logout"));
       setProfileOpen(false);
       setOpen(false);
+      router.push("/login");
+      router.refresh();
     }
   };
 

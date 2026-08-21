@@ -2300,7 +2300,12 @@ async function buildSqlOperationalAnalytics(organizationId: string, scope: "toda
          where ii.organization_id = $1 and ii.category = 'Medicine' and i.created_at::date between $2::date and $3::date) as medicine_value_cents,
         (select count(*) from inventory_items where organization_id = $1 and quantity_in_stock <= reorder_level and quantity_in_stock > 0) as low_stock_count,
         (select count(*) from inventory_items where organization_id = $1 and quantity_in_stock <= 0) as out_of_stock_count,
-        (select count(*) from inventory_items where organization_id = $1 and expiry_date >= $3 and expiry_date <= $4) as near_expiry_count`,
+        (select count(*)
+         from inventory_items
+         where organization_id = $1
+           and expiry_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
+           and expiry_date::date >= $3::date
+           and expiry_date::date <= $4::date) as near_expiry_count`,
       [organizationId, minDate, today, nearExpiryDate],
     ), []),
     safeAnalyticsQuery("billing", query<{

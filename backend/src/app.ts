@@ -4,6 +4,7 @@ import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 
 import { env } from "./config/env.js";
+import { isAllowedClientOrigin } from "./config/origins.js";
 import { openApiDocument } from "./docs/openapi.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
@@ -16,12 +17,12 @@ export const app = express();
 app.use(
   cors({
     origin(origin, callback) {
-      const allowedOrigins = new Set([
-        env.CLIENT_ORIGIN,
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-      ]);
-      callback(null, !origin || allowedOrigins.has(origin) ? origin : env.CLIENT_ORIGIN);
+      if (!origin || isAllowedClientOrigin(origin)) {
+        callback(null, origin ?? env.CLIENT_ORIGIN);
+        return;
+      }
+
+      callback(null, false);
     },
     credentials: true,
   }),
